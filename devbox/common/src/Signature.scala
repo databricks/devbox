@@ -17,25 +17,33 @@ object Signature{
     // Files within symlinked folders are None
     else if (!os.followLink(p/os.up).contains(p/os.up)) None
     // Anything else is Some (even broken symlinks)
-    else Some{
-      os.stat(p, followLinks = false).fileType match{
-        case os.FileType.SymLink => Symlink(Files.readSymbolicLink(p.toNIO).toString)
-        case os.FileType.Dir => Dir(os.perms(p).toInt())
-        case os.FileType.File =>
-          val digest = MessageDigest.getInstance("MD5")
-          val chunks = mutable.ArrayBuffer.empty[Bytes]
-          var size = 0L
-          for(d <- Util.readChunks(p, blockSize)){
-            val (buffer, n) = d
-            size += n
-            digest.reset()
-            digest.update(buffer, 0, n)
+    else {
+      val stat = os.stat(p, followLinks = false)
 
-            chunks.append(Bytes(digest.digest()))
-          }
-          File(os.perms(p).toInt, chunks, size)
+      stat.fileType match{
+        case os.FileType.SymLink => Some(Symlink(Files.readSymbolicLink(p.toNIO).toString))
+        case os.FileType.Dir =>
+          if (!os.followLink(p).exists(_.last == p.last)) None
+          else Some(Dir(os.perms(p).toInt()))
+        case os.FileType.File =>
+          if (!os.followLink(p).exists(_.last == p.last)) None
+          else {
+            val digest = MessageDigest.getInstance("MD5")
+            val chunks = mutable.ArrayBuffer.empty[Bytes]
+            var size = 0L
+            for(d <- Util.readChunks(p, blockSize)){
+              val (buffer, n) = d
+              size += n
+              digest.reset()
+              digest.update(buffer, 0, n)
+
+              chunks.append(Bytes(digest.digest()))
+            }
+            Some(File(os.perms(p).toInt, chunks, size))
+        }
       }
     }
+
   }
 
   case class File(perms: Int, blockHashes: Seq[Bytes], size: Long) extends Signature

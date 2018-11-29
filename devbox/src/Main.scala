@@ -17,14 +17,17 @@ object Main {
     val localSignatures = for(p <- paths) yield (p, Signature.compute(p))
     val dataOut = new DataOutputStream(commandRunner.stdin)
     val dataIn = new DataInputStream(commandRunner.stdout)
-    for((p, _) <- localSignatures) {
-      Util.writeMsg(dataOut, Rpc.CheckHash(p.relativeTo(src).toString))
-    }
-    val remoteSignatures = for(p <- paths) yield {
-      Util.readMsg[Option[Signature]](dataIn)
-    }
+    val remoteSignatures = for {
+      ps <- paths.grouped(1000)
+      remoteSigOpt <- {
+        for(p <- ps) Util.writeMsg(dataOut, Rpc.CheckHash(p.relativeTo(src).toString))
+        for(p <- ps) yield Util.readMsg[Option[Signature]](dataIn)
+      }
+    } yield remoteSigOpt
 
-    val signatureMapping = localSignatures.zip(remoteSignatures)
+
+
+    val signatureMapping = localSignatures.zip(remoteSignatures.toArray[Option[Signature]])
 
     var writes = 0
     def performAction[T <: Action: upickle.default.Writer](p: T) = {
@@ -34,6 +37,7 @@ object Main {
           val (name, folder) = stateVfs.resolveParent(path).get
           assert(!folder.value.contains(name))
           folder.value(name) = Vfs.File(perms, (0, Nil))
+
         case Rpc.Remove(path) =>
           stateVfs.resolveParent(path).foreach{
             case (name, folder) => folder.value.remove(name)
@@ -43,10 +47,12 @@ object Main {
           val (name, folder) = stateVfs.resolveParent(path).get
           assert(!folder.value.contains(name))
           folder.value(name) = Vfs.Folder(perms, mutable.LinkedHashMap.empty[String, Vfs.Node[(Long, Seq[Bytes]), Int]])
+
         case Rpc.PutLink(path, dest) =>
           val (name, folder) = stateVfs.resolveParent(path).get
           assert(!folder.value.contains(name))
           folder.value(name) = Vfs.Symlink(dest)
+
         case Rpc.WriteChunk(path, offset, bytes, hash) =>
           assert(offset % Signature.blockSize == 0)
           val index = offset / Signature.blockSize
@@ -57,9 +63,11 @@ object Main {
             else if (index == currentFile.value._2.length) currentFile.value._2 :+ hash
             else ???
           )
+
         case Rpc.Truncate(path, offset) =>
           val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[(Long, Seq[Bytes]), Int]]
           currentFile.value = (offset, currentFile.value._2)
+
         case Rpc.SetPerms(path, perms) =>
           stateVfs.resolve(path) match{
             case Some(f @ Vfs.File(_, _)) => f.metadata = perms
@@ -124,6 +132,10 @@ object Main {
           }
 
           performAction(Rpc.Truncate(segments, size))
+      }
+      if (writes == 1000){
+        for(i <- 0 until writes) assert(Util.readMsg[Int](dataIn) == 0)
+        writes = 0
       }
     }
     for(i <- 0 until writes) assert(Util.readMsg[Int](dataIn) == 0)

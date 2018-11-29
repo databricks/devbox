@@ -30,45 +30,48 @@ object DevboxTests extends TestSuite{
       )
     }
   }
-  def tests = Tests{
-    'hello - {
-      val src = os.pwd / "out" / "scratch" / "edges" / "src"
-      val dest = os.pwd / "out" / "scratch" / "edges" / "dest"
-      os.remove.all(src)
-      os.makeDir.all(src)
-      os.remove.all(dest)
-      os.makeDir.all(dest)
+  def check(label: String, uri: String) = {
+    val src = os.pwd / "out" / "scratch" / label / "src"
+    val dest = os.pwd / "out" / "scratch" / label / "dest"
+    os.remove.all(src)
+    os.makeDir.all(src)
+    os.remove.all(dest)
+    os.makeDir.all(dest)
 
-      println("SRC: " + src)
-      println("DEST: " + dest)
-      val agentExecutable = System.getenv("AGENT_EXECUTABLE")
+    val agentExecutable = System.getenv("AGENT_EXECUTABLE")
 
-      val repo = Git.cloneRepository()
-        .setURI(getClass.getResource("/edge.bundle").toURI.toString)
-        .setDirectory(src.toIO)
-        .call()
+    val repo = Git.cloneRepository()
+      .setURI(uri)
+      .setDirectory(src.toIO)
+      .call()
 
-      val commits = repo.log().call().asScala.toSeq.reverse
-      val agent = os.proc(agentExecutable).spawn(cwd = dest, stderr = os.Inherit)
+    val commits = repo.log().call().asScala.toSeq.reverse
+    val agent = os.proc(agentExecutable).spawn(cwd = dest, stderr = os.Inherit)
 
-      val vfs = new Vfs[(Long, Seq[Bytes]), Int](0)
+    val vfs = new Vfs[(Long, Seq[Bytes]), Int](0)
 
-      var lastInterestingFiles = Seq.empty[os.Path]
+    var lastInterestingFiles = Seq.empty[os.Path]
 
-      for(commit <- commits){
-        println("="*80)
-        println("Checking " + commit.getName + " " + commit.getFullMessage)
-        repo.checkout().setName(commit.getName).call()
-        println("syncRepo")
+    for(commit <- commits){
+//      println("="*80)
+      println("Checking " + commit.getName + " " + commit.getFullMessage)
+      repo.checkout().setName(commit.getName).call()
+//      println("syncRepo")
 
-        val interestingFiles = os.walk(src, _.segments.contains(".git"))
+      val interestingFiles = os.walk(src, _.segments.contains(".git"))
 
-        Main.syncRepo(agent, src, dest.segments.toSeq, vfs, (lastInterestingFiles ++ interestingFiles).distinct)
+      Main.syncRepo(agent, src, dest.segments.toSeq, vfs, (lastInterestingFiles ++ interestingFiles).distinct)
 
-        validate(src, dest, _.segments.contains(".git"))
+      validate(src, dest, _.segments.contains(".git"))
 
-        lastInterestingFiles = interestingFiles
-      }
+      lastInterestingFiles = interestingFiles
     }
+  }
+  def tests = Tests{
+    'edge - check("edge-cases", getClass.getResource("/edge-cases.bundle").toURI.toString)
+    'scalatags - check("scalatags", System.getenv("SCALATAGS_BUNDLE"))
+    'oslib - check("oslib", System.getenv("OSLIB_BUNDLE"))
+    'mill - check("mill", System.getenv("MILL_BUNDLE"))
+    'ammonite - check("ammonite", System.getenv("AMMONITE_BUNDLE"))
   }
 }

@@ -13,11 +13,10 @@ object Agent {
     val dataOut = new DataOutputStream(System.out)
     while (true){
       val msg = Util.readMsg[Rpc](dataIn)
-      System.err.println("AGENT " + msg)
+      //      System.err.println("AGENT " + msg)
       msg match{
         case Rpc.CheckHash(path) =>
           val sig = Signature.compute(os.Path(path, os.pwd))
-          System.err.println(sig)
           Util.writeMsg(dataOut, sig)
 
         case Rpc.Remove(path) =>
@@ -49,6 +48,10 @@ object Agent {
           val channel = FileChannel.open(os.Path(path, os.pwd) toNIO, StandardOpenOption.WRITE)
           try channel.truncate(offset)
           finally channel.close()
+          Util.writeMsg(dataOut, 0)
+
+        case Rpc.SetPerms(path, perms) =>
+          os.perms.set.apply(os.Path(path, os.pwd), perms)
           Util.writeMsg(dataOut, 0)
       }
     }
