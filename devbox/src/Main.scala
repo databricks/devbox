@@ -35,8 +35,10 @@ object Main {
           assert(!folder.value.contains(name))
           folder.value(name) = Vfs.File(perms, (0, Nil))
         case Rpc.Remove(path) =>
-          val (name, folder) = stateVfs.resolveParent(path).get
-          folder.value.remove(name)
+          stateVfs.resolveParent(path).foreach{
+            case (name, folder) => folder.value.remove(name)
+          }
+
         case Rpc.PutDir(path, perms) =>
           val (name, folder) = stateVfs.resolveParent(path).get
           assert(!folder.value.contains(name))

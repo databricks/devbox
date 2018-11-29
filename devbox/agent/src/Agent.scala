@@ -16,10 +16,14 @@ object Agent {
       System.err.println("AGENT " + msg)
       msg match{
         case Rpc.CheckHash(path) =>
-          Util.writeMsg(dataOut, Signature.compute(os.Path(path, os.pwd)))
+          val sig = Signature.compute(os.Path(path, os.pwd))
+          System.err.println(sig)
+          Util.writeMsg(dataOut, sig)
 
         case Rpc.Remove(path) =>
-          os.remove.all(os.Path(path, os.pwd))
+          val p = os.Path(path, os.pwd)
+          if (os.isLink(p)) os.remove(p)
+          else os.remove.all(p)
           Util.writeMsg(dataOut, 0)
 
         case Rpc.PutFile(path, perms) =>

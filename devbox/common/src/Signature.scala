@@ -12,7 +12,11 @@ object Signature{
 
   val blockSize = 4 * 1024 * 1024
   def compute(p: os.Path): Option[Signature] = {
+    // Non-existent files are None
     if (!os.exists(p, followLinks = false)) None
+    // Files within symlinked folders are None
+    else if (!os.followLink(p/os.up).contains(p/os.up)) None
+    // Anything else is Some (even broken symlinks)
     else Some{
       os.stat(p, followLinks = false).fileType match{
         case os.FileType.SymLink => Symlink(Files.readSymbolicLink(p.toNIO).toString)
