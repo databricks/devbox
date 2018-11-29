@@ -14,7 +14,7 @@ object Signature{
   def compute(p: os.Path): Option[Signature] = {
     if (!os.exists(p, followLinks = false)) None
     else Some{
-      os.stat(p).fileType match{
+      os.stat(p, followLinks = false).fileType match{
         case os.FileType.SymLink => Symlink(Files.readSymbolicLink(p.toNIO).toString)
         case os.FileType.Dir => Dir(os.perms(p).toInt())
         case os.FileType.File =>
@@ -51,6 +51,13 @@ case class Bytes(value: Array[Byte]){
   override def equals(other: Any) = other match{
     case o: Bytes => java.util.Arrays.equals(value, o.value)
     case _ => false
+  }
+
+  override def toString = {
+    val cutoff = 100
+    val hex = upickle.core.Util.bytesToString(value.take(cutoff))
+    val dots = if(value.length > cutoff) "..." else ""
+    s"Bytes(${value.length}, $hex$dots)"
   }
 }
 

@@ -10,6 +10,7 @@ object Util {
     val blob = upickle.default.writeBinary(t)
     out.writeInt(blob.length)
     out.write(blob)
+    out.flush()
   }
   def readMsg[T: upickle.default.Reader](in: DataInputStream): T = {
     val length = in.readInt()
