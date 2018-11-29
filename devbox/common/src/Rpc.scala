@@ -3,6 +3,9 @@ import upickle.default.{ReadWriter, macroRW}
 sealed trait Rpc
 sealed trait Action
 object Rpc{
+  case class FullScan(path: String) extends Rpc
+  object FullScan{ implicit val rw: ReadWriter[FullScan] = macroRW }
+
   case class CheckHash(path: String) extends Rpc
   object CheckHash{ implicit val rw: ReadWriter[CheckHash] = macroRW }
 

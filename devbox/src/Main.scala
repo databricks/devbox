@@ -13,21 +13,37 @@ object Main {
                src: os.Path,
                dest: Seq[String],
                stateVfs: Vfs[(Long, Seq[Bytes]), Int],
-               paths: Seq[os.Path]) = {
-    val localSignatures = for(p <- paths) yield (p, Signature.compute(p))
+               interestingBases: Seq[os.Path]) = {
+
+    println("interestingBases: " + interestingBases)
     val dataOut = new DataOutputStream(commandRunner.stdin)
     val dataIn = new DataInputStream(commandRunner.stdout)
-    val remoteSignatures = for {
-      ps <- paths.grouped(1000)
-      remoteSigOpt <- {
-        for(p <- ps) Util.writeMsg(dataOut, Rpc.CheckHash(p.relativeTo(src).toString))
-        for(p <- ps) yield Util.readMsg[Option[Signature]](dataIn)
+    val signatureMapping = interestingBases.flatMap { p =>
+      val listed =
+        if (!os.exists(p, followLinks = false)) Nil
+        else os.stat(p, followLinks = false).fileType match {
+          case os.FileType.Dir => os.list(p).map(_.relativeTo(src).toString)
+          case _ => Seq(p.relativeTo(src).toString)
+        }
+
+      val virtual = stateVfs.resolve(p.relativeTo(src).toString).fold(Seq[String]()) {
+        case f: Vfs.File[_, _] => Seq(p.relativeTo(src).toString)
+        case f: Vfs.Folder[_, _] => f.value.keys.map(k => (p.relativeTo(src) / k).toString).toSeq
+        case f: Vfs.Symlink => Seq(p.relativeTo(src).toString)
       }
-    } yield remoteSigOpt
 
-
-
-    val signatureMapping = localSignatures.zip(remoteSignatures.toArray[Option[Signature]])
+      (listed ++ virtual).map { p1 =>
+        (
+          src / os.RelPath(p1),
+          Signature.compute(src / os.RelPath(p1)),
+          stateVfs.resolve(p1).map {
+            case f: Vfs.File[(Long, Seq[Bytes]), Int] => Signature.File(f.metadata, f.value._2, f.value._1)
+            case f: Vfs.Folder[(Long, Seq[Bytes]), Int] => Signature.Dir(f.metadata)
+            case f: Vfs.Symlink => Signature.Symlink(f.value)
+          }
+        )
+      }
+    }
 
     var writes = 0
     def performAction[T <: Action: upickle.default.Writer](p: T) = {
@@ -76,62 +92,64 @@ object Main {
       }
       writes += 1
     }
+    for((p, localSig, remoteSig) <- signatureMapping.sortBy(x => (x._1.segmentCount, x._1.toString))){
 
-    for(((p, localSig), remoteSig) <- signatureMapping){
       val segments = p.relativeTo(src).toString
-      if (localSig != remoteSig) (localSig, remoteSig) match{
-        case (None, _) =>
-          performAction(Rpc.Remove(segments))
-        case (Some(Signature.Dir(perms)), remote) =>
-          remote match{
-            case None =>
-              performAction(Rpc.PutDir(segments, perms))
-            case Some(Signature.Dir(remotePerms)) =>
-              performAction(Rpc.SetPerms(segments, perms))
-            case Some(_) =>
-              performAction(Rpc.Remove(segments))
-              performAction(Rpc.PutDir(segments, perms))
-          }
-
-        case (Some(Signature.Symlink(dest)), remote) =>
-          remote match {
-            case None =>
-              performAction(Rpc.PutLink(segments, dest))
-            case Some(_) =>
-              performAction(Rpc.Remove(segments))
-              performAction(Rpc.PutLink(segments, dest))
-          }
-        case (Some(Signature.File(perms, blockHashes, size)), remote) =>
-          if (remote.exists(!_.isInstanceOf[Signature.File])){
+      if (localSig != remoteSig) {
+        (localSig, remoteSig) match{
+          case (None, _) =>
             performAction(Rpc.Remove(segments))
-          }
-
-          val otherHashes = remote match{
-            case Some(Signature.File(otherPerms, otherBlockHashes, _)) =>
-              if (perms != otherPerms) {
+          case (Some(Signature.Dir(perms)), remote) =>
+            remote match{
+              case None =>
+                performAction(Rpc.PutDir(segments, perms))
+              case Some(Signature.Dir(remotePerms)) =>
                 performAction(Rpc.SetPerms(segments, perms))
-              }
-              otherBlockHashes
-            case _ =>
-              performAction(Rpc.PutFile(segments, perms))
-              Nil
-          }
+              case Some(_) =>
+                performAction(Rpc.Remove(segments))
+                performAction(Rpc.PutDir(segments, perms))
+            }
 
-          for{
-            i <- blockHashes.indices
-            if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
-          }{
-            performAction(
-              Rpc.WriteChunk(
-                segments,
-                i * Signature.blockSize,
-                Bytes(os.read.bytes(p, i * Signature.blockSize, (i + 1) * Signature.blockSize)),
-                blockHashes(i)
+          case (Some(Signature.Symlink(dest)), remote) =>
+            remote match {
+              case None =>
+                performAction(Rpc.PutLink(segments, dest))
+              case Some(_) =>
+                performAction(Rpc.Remove(segments))
+                performAction(Rpc.PutLink(segments, dest))
+            }
+          case (Some(Signature.File(perms, blockHashes, size)), remote) =>
+            if (remote.exists(!_.isInstanceOf[Signature.File])){
+              performAction(Rpc.Remove(segments))
+            }
+
+            val otherHashes = remote match{
+              case Some(Signature.File(otherPerms, otherBlockHashes, _)) =>
+                if (perms != otherPerms) {
+                  performAction(Rpc.SetPerms(segments, perms))
+                }
+                otherBlockHashes
+              case _ =>
+                performAction(Rpc.PutFile(segments, perms))
+                Nil
+            }
+
+            for{
+              i <- blockHashes.indices
+              if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
+            }{
+              performAction(
+                Rpc.WriteChunk(
+                  segments,
+                  i * Signature.blockSize,
+                  Bytes(os.read.bytes(p, i * Signature.blockSize, (i + 1) * Signature.blockSize)),
+                  blockHashes(i)
+                )
               )
-            )
-          }
+            }
 
-          performAction(Rpc.Truncate(segments, size))
+            performAction(Rpc.Truncate(segments, size))
+        }
       }
       if (writes == 1000){
         for(i <- 0 until writes) assert(Util.readMsg[Int](dataIn) == 0)
@@ -140,46 +158,46 @@ object Main {
     }
     for(i <- 0 until writes) assert(Util.readMsg[Int](dataIn) == 0)
   }
-//
-//  def syncAllRepos(commandRunner: os.SubProcess,
-//                   mapping: Seq[(os.Path, Seq[String])],
-//                   skip: os.Path => Boolean) = {
-//
-//    // initial sync
-//    for((src, dest) <- mapping){
+
+  def syncAllRepos(commandRunner: os.SubProcess,
+                   mapping: Seq[(os.Path, Seq[String])],
+                   skip: os.Path => Boolean) = {
+
+    // initial sync
+    for((src, dest) <- mapping){
 //      syncRepo(commandRunner, src, dest, os.walk(src))
-//    }
-//    // watch and incremental syncs
-//    val eventDirs = new AtomicReference(Set.empty[os.Path])
-//    val watcher = DirectoryWatcher
-//      .builder
-//      .paths(mapping.map(_._1.toNIO).asJava)
-//      .listener{ event =>
-//        val dir = os.Path(event.path())
-//        if (!skip(dir)) {
-//          while(!eventDirs.compareAndSet(eventDirs.get, eventDirs.get + dir)) Thread.sleep(1)
-//        }
-//      }
-//      .build
-//    watcher.watchAsync()
-//
-//    while(true){
-//      Thread.sleep(50)
-//      if (eventDirs.get.nonEmpty){
-//        val startEventDirs = eventDirs.get
-//        Thread.sleep(50)
-//        if (startEventDirs eq eventDirs.get){
-//          val currentEventDirs = eventDirs.getAndSet(Set.empty)
-//          for((src, dest) <- mapping){
-//            val srcEventDirs = currentEventDirs.filter(_.startsWith(src))
-//            if (srcEventDirs.nonEmpty){
+    }
+    // watch and incremental syncs
+    val eventDirs = new AtomicReference(Set.empty[os.Path])
+    val watcher = DirectoryWatcher
+      .builder
+      .paths(mapping.map(_._1.toNIO).asJava)
+      .listener{ event =>
+        val dir = os.Path(event.path())
+        if (!skip(dir)) {
+          while(!eventDirs.compareAndSet(eventDirs.get, eventDirs.get + dir)) Thread.sleep(1)
+        }
+      }
+      .build
+    watcher.watchAsync()
+
+    while(true){
+      Thread.sleep(50)
+      if (eventDirs.get.nonEmpty){
+        val startEventDirs = eventDirs.get
+        Thread.sleep(50)
+        if (startEventDirs eq eventDirs.get){
+          val currentEventDirs = eventDirs.getAndSet(Set.empty)
+          for((src, dest) <- mapping){
+            val srcEventDirs = currentEventDirs.filter(_.startsWith(src))
+            if (srcEventDirs.nonEmpty){
 //              syncRepo(commandRunner, src, dest, srcEventDirs.toSeq.flatMap(os.list))
-//            }
-//          }
-//        }
-//      }
-//    }
-//  }
+            }
+          }
+        }
+      }
+    }
+  }
   def main(args: Array[String]): Unit = {
 
   }
