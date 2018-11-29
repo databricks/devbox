@@ -1,5 +1,6 @@
 package devbox
 import java.io.{DataInputStream, DataOutputStream}
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicReference
 
 import devbox.common.{Bytes, Rpc, Signature, Util}
@@ -39,7 +40,7 @@ object DevboxTests extends TestSuite{
       )
     }
   }
-  def check(label: String, uri: String) = {
+  def check(label: String, uri: String, stride: Int) = {
     val src = os.pwd / "out" / "scratch" / label / "src"
     val dest = os.pwd / "out" / "scratch" / label / "dest"
     os.remove.all(src)
@@ -62,7 +63,7 @@ object DevboxTests extends TestSuite{
 
 
     // watch and incremental syncs
-    val eventDirs = new AtomicReference(Set.empty[os.Path])
+
     println("="*80)
     println("Initial Sync")
     val dataOut = new DataOutputStream(agent.stdin)
@@ -87,30 +88,37 @@ object DevboxTests extends TestSuite{
         folder.value(name) = Vfs.Symlink(dest)
 
     }
-    Main.syncRepo(agent, src, dest.segments.toSeq, vfs, os.walk(src, _.segments.contains(".git")))
+    Main.syncRepo(
+      agent,
+      src,
+      dest.segments.toSeq,
+      vfs,
+      os.walk(src, _.segments.contains(".git"), includeTarget = true).filter(os.isDir)
+    )
 
 
     println("="*80)
     println("Incremental Sync")
 
-    new Thread(() => {
+    val eventQueue = new ConcurrentLinkedQueue[Array[String]]()
+
+    val thread = new Thread(() => {
+      val callback = new FSEventStreamCallback{
+        def invoke(streamRef: FSEventStreamRef,
+                   clientCallBackInfo: Pointer,
+                   numEvents: NativeLong,
+                   eventPaths: Pointer,
+                   eventFlags: Pointer,
+                   eventIds: Pointer) = {
+          val length = numEvents.intValue
+          eventQueue.add(eventPaths.getStringArray(0, length))
+
+//          println("FSINVOKE " + arr.toSeq)
+        }
+      }
       val streamRef = CarbonAPI.INSTANCE.FSEventStreamCreate(
         Pointer.NULL,
-        new FSEventStreamCallback{
-          def invoke(streamRef: FSEventStreamRef,
-                     clientCallBackInfo: Pointer,
-                     numEvents: NativeLong,
-                     eventPaths: Pointer,
-                     eventFlags: Pointer,
-                     eventIds: Pointer) = {
-            println("FXINVOKE0")
-            val length = numEvents.intValue
-            val arr = eventPaths.getStringArray(0, length)
-            println("FSINVOKE " + arr.toSeq)
-            eventDirs.getAndUpdate(_ ++ arr.map(os.Path(_)))
-            println("FSINVOKEX")
-          }
-        },
+        callback,
         Pointer.NULL,
         CarbonAPI.INSTANCE.CFArrayCreate(
           null,
@@ -119,7 +127,7 @@ object DevboxTests extends TestSuite{
           null
         ),
         -1,
-        0.1,
+        0.01,
         0
       )
       CarbonAPI.INSTANCE.FSEventStreamScheduleWithRunLoop(
@@ -129,36 +137,65 @@ object DevboxTests extends TestSuite{
       )
       CarbonAPI.INSTANCE.FSEventStreamStart(streamRef)
       CarbonAPI.INSTANCE.CFRunLoopRun()
-    }).start()
+    })
 
-    Thread.sleep(100)
+    thread.start()
+
+    Thread.sleep(50)
     try {
-      for (commit <- commits.drop(1)) {
+      for ((commit, i) <- commits.drop(1).zipWithIndex) {
         println("="*80)
 
-        println("Checking " + commit.getName + " " + commit.getFullMessage)
+        println(s"[$i/${commits.length}] Checking ${commit.getName} ${commit.getFullMessage}")
         repo.checkout().setName(commit.getName).call()
         println("syncRepo")
 
-        Thread.sleep(1000)
+        val interestingBases = mutable.Buffer.empty[String]
 
-        val interestingBases = eventDirs.getAndSet(Set.empty).toSeq
+        /**
+          * Keep pulling stuff out of the [[eventQueue]], until the queue has
+          * stopped changing and is empty twice in a row.
+          */
+        def await(onRetry: Boolean): Unit = {
+          eventQueue.poll() match{
+            case null =>
+              if (onRetry){
+                () // terminate
+              }else{
+                Thread.sleep(50)
+                await(true)
+              }
+            case arr =>
+              interestingBases.appendAll(arr)
+              await(false)
+          }
+        }
+        await(false)
 
-        println("X " + interestingBases.filter(!_.segments.contains(".git")))
-        Main.syncRepo(agent, src, dest.segments.toSeq, vfs, interestingBases.filter(!_.segments.contains(".git")))
+        Main.syncRepo(
+          agent,
+          src,
+          dest.segments.toSeq,
+          vfs,
+          interestingBases.distinct.map(os.Path(_)).filter(!_.segments.contains(".git"))
+        )
 
-        validate(src, dest, _.segments.contains(".git"))
+        // Allow validation not-every-commit, because validation is really slow
+        // and hopefully if something gets messed up it'll get caught in a later
+        // validation anyway.
+        if (i % stride == 0) validate(src, dest, _.segments.contains(".git"))
       }
     }finally{
+//      Thread.sleep(999999)
 //     watcher.close()
     }
   }
 
   def tests = Tests{
-    'edge - check("edge-cases", getClass.getResource("/edge-cases.bundle").toURI.toString)
-    'scalatags - check("scalatags", System.getenv("SCALATAGS_BUNDLE"))
-    'oslib - check("oslib", System.getenv("OSLIB_BUNDLE"))
-    'mill - check("mill", System.getenv("MILL_BUNDLE"))
-    'ammonite - check("ammonite", System.getenv("AMMONITE_BUNDLE"))
+    'edge - check("edge-cases", getClass.getResource("/edge-cases.bundle").toURI.toString, 1)
+    'oslib - check("oslib", System.getenv("OSLIB_BUNDLE"), 2)
+    'scalatags - check("scalatags", System.getenv("SCALATAGS_BUNDLE"), 3)
+    'mill - check("mill", System.getenv("MILL_BUNDLE"), 4)
+    'ammonite - check("ammonite", System.getenv("AMMONITE_BUNDLE"), 5)
   }
 }

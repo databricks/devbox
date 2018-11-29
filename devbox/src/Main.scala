@@ -1,6 +1,7 @@
 package devbox
 import collection.JavaConverters._
 import java.io.{DataInputStream, DataOutputStream}
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicReference
 
 import devbox.common._
@@ -15,37 +16,41 @@ object Main {
                stateVfs: Vfs[(Long, Seq[Bytes]), Int],
                interestingBases: Seq[os.Path]) = {
 
-    println("interestingBases: " + interestingBases)
     val dataOut = new DataOutputStream(commandRunner.stdin)
     val dataIn = new DataInputStream(commandRunner.stdout)
-    val signatureMapping = interestingBases.flatMap { p =>
-      val listed =
-        if (!os.exists(p, followLinks = false)) Nil
-        else os.stat(p, followLinks = false).fileType match {
-          case os.FileType.Dir => os.list(p).map(_.relativeTo(src).toString)
-          case _ => Seq(p.relativeTo(src).toString)
+    // interestingBases.foreach(x => println("BASE " + x))
+    val signatureMapping = interestingBases
+      // Only bother looking at paths which are canonical; changes to non-
+      // canonical paths can be ignored because we'd also get the canonical
+      // path that we can operate on.
+      .filter(p => os.followLink(p).contains(p))
+      .sortBy(_.segmentCount)
+      .flatMap { p =>
+        val listed =
+          if (!os.exists(p, followLinks = false)) Nil
+          else os.list(p).map(_.relativeTo(src).toString)
+
+        val virtual = stateVfs.resolve(p.relativeTo(src).toString).fold(Seq[String]()) {
+          case f: Vfs.File[_, _] => Seq(p.relativeTo(src).toString)
+          case f: Vfs.Folder[_, _] => f.value.keys.map(k => (p.relativeTo(src) / k).toString).toSeq
+          case f: Vfs.Symlink => Seq(p.relativeTo(src).toString)
         }
 
-      val virtual = stateVfs.resolve(p.relativeTo(src).toString).fold(Seq[String]()) {
-        case f: Vfs.File[_, _] => Seq(p.relativeTo(src).toString)
-        case f: Vfs.Folder[_, _] => f.value.keys.map(k => (p.relativeTo(src) / k).toString).toSeq
-        case f: Vfs.Symlink => Seq(p.relativeTo(src).toString)
+        (listed ++ virtual).map { p1 =>
+          (
+            src / os.RelPath(p1),
+            Signature.compute(src / os.RelPath(p1)),
+            stateVfs.resolve(p1).map {
+              case f: Vfs.File[(Long, Seq[Bytes]), Int] => Signature.File(f.metadata, f.value._2, f.value._1)
+              case f: Vfs.Folder[(Long, Seq[Bytes]), Int] => Signature.Dir(f.metadata)
+              case f: Vfs.Symlink => Signature.Symlink(f.value)
+            }
+          )
+        }
       }
 
-      (listed ++ virtual).map { p1 =>
-        (
-          src / os.RelPath(p1),
-          Signature.compute(src / os.RelPath(p1)),
-          stateVfs.resolve(p1).map {
-            case f: Vfs.File[(Long, Seq[Bytes]), Int] => Signature.File(f.metadata, f.value._2, f.value._1)
-            case f: Vfs.Folder[(Long, Seq[Bytes]), Int] => Signature.Dir(f.metadata)
-            case f: Vfs.Symlink => Signature.Symlink(f.value)
-          }
-        )
-      }
-    }
-
-    var writes = 0
+    var totalWrites = 0
+    var pipelinedWrites = 0
     def performAction[T <: Action: upickle.default.Writer](p: T) = {
       Util.writeMsg(dataOut, p)
       p match{
@@ -90,8 +95,10 @@ object Main {
             case Some(f @ Vfs.Folder(_, _)) => f.metadata = perms
           }
       }
-      writes += 1
+      pipelinedWrites += 1
+      totalWrites += 1
     }
+    // signatureMapping.map(_._1).foreach(x => println("SIG " + x))
     for((p, localSig, remoteSig) <- signatureMapping.sortBy(x => (x._1.segmentCount, x._1.toString))){
 
       val segments = p.relativeTo(src).toString
@@ -123,40 +130,63 @@ object Main {
               performAction(Rpc.Remove(segments))
             }
 
-            val otherHashes = remote match{
-              case Some(Signature.File(otherPerms, otherBlockHashes, _)) =>
+            val (otherHashes, otherSize) = remote match{
+              case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
                 if (perms != otherPerms) {
                   performAction(Rpc.SetPerms(segments, perms))
                 }
-                otherBlockHashes
+                otherBlockHashes -> otherSize
               case _ =>
                 performAction(Rpc.PutFile(segments, perms))
-                Nil
+                Nil -> 0L
             }
 
-            for{
-              i <- blockHashes.indices
-              if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
-            }{
-              performAction(
-                Rpc.WriteChunk(
-                  segments,
-                  i * Signature.blockSize,
-                  Bytes(os.read.bytes(p, i * Signature.blockSize, (i + 1) * Signature.blockSize)),
-                  blockHashes(i)
+            val channel = p.toSource.getChannel()
+            val byteArr = new Array[Byte](Signature.blockSize)
+            val buf = ByteBuffer.wrap(byteArr)
+            try {
+              for {
+                i <- blockHashes.indices
+                if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
+              } {
+                buf.rewind()
+                channel.position(i * Signature.blockSize)
+                var n = 0
+                while({
+                  if (n == Signature.blockSize) false
+                  else channel.read(buf) match{
+                    case -1 => false
+                    case d =>
+                      n += d
+                      true
+                  }
+                })()
+
+
+                performAction(
+                  Rpc.WriteChunk(
+                    segments,
+                    i * Signature.blockSize,
+                    Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr),
+                    blockHashes(i)
+                  )
                 )
-              )
+              }
+            }finally{
+              channel.close()
             }
 
             performAction(Rpc.Truncate(segments, size))
         }
       }
-      if (writes == 1000){
-        for(i <- 0 until writes) assert(Util.readMsg[Int](dataIn) == 0)
-        writes = 0
+      if (pipelinedWrites == 1000){
+        for(i <- 0 until pipelinedWrites) assert(Util.readMsg[Int](dataIn) == 0)
+        pipelinedWrites = 0
       }
     }
-    for(i <- 0 until writes) assert(Util.readMsg[Int](dataIn) == 0)
+    for(i <- 0 until pipelinedWrites) assert(Util.readMsg[Int](dataIn) == 0)
+
+    println("Total writes: " + totalWrites)
   }
 
   def syncAllRepos(commandRunner: os.SubProcess,

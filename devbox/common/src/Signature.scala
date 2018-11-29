@@ -66,7 +66,7 @@ case class Bytes(value: Array[Byte]){
   }
 
   override def toString = {
-    val cutoff = 100
+    val cutoff = 10
     val hex = upickle.core.Util.bytesToString(value.take(cutoff))
     val dots = if(value.length > cutoff) "..." else ""
     s"Bytes(${value.length}, $hex$dots)"
