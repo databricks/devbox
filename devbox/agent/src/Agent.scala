@@ -37,7 +37,7 @@ object Agent {
           )
           Util.writeMsg(dataOut, 0)
 
-        case Rpc.WriteChunk(path, offset, data) =>
+        case Rpc.WriteChunk(path, offset, data, hash) =>
           os.write.write(os.Path(path, os.pwd), data.value, Seq(StandardOpenOption.WRITE), 0, offset)
           Util.writeMsg(dataOut, 0)
 

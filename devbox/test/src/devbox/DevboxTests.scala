@@ -1,5 +1,5 @@
 package devbox
-import devbox.common.Signature
+import devbox.common.{Bytes, Signature}
 import org.eclipse.jgit.api.Git
 
 import collection.JavaConverters._
@@ -13,7 +13,7 @@ object DevboxTests extends TestSuite{
     val destRelPaths = destPaths.map(_.relativeTo(dest)).toSet
     if (srcRelPaths != destRelPaths){
       throw new Exception(
-        "Path list difference" + ((srcRelPaths -- destRelPaths) ++ (destRelPaths -- srcRelPaths))
+        "Path list difference, src: " + (srcRelPaths -- destRelPaths) + ", dest: " + (destRelPaths -- srcRelPaths)
       )
     }
 
@@ -51,14 +51,23 @@ object DevboxTests extends TestSuite{
       val commits = repo.log().call().asScala.toSeq.reverse
       val agent = os.proc(agentExecutable).spawn(cwd = dest, stderr = os.Inherit)
 
+      val vfs = new Vfs[(Long, Seq[Bytes]), Int](0)
+
+      var lastInterestingFiles = Seq.empty[os.Path]
+
       for(commit <- commits){
         println("="*80)
         println("Checking " + commit.getName + " " + commit.getFullMessage)
         repo.checkout().setName(commit.getName).call()
         println("syncRepo")
-        Main.syncRepo(agent, src, dest.segments.toSeq, os.walk(src, _.segments.contains(".git")))
+
+        val interestingFiles = os.walk(src, _.segments.contains(".git"))
+
+        Main.syncRepo(agent, src, dest.segments.toSeq, vfs, (lastInterestingFiles ++ interestingFiles).distinct)
 
         validate(src, dest, _.segments.contains(".git"))
+
+        lastInterestingFiles = interestingFiles
       }
     }
   }
