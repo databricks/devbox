@@ -2,20 +2,143 @@ package devbox
 import collection.JavaConverters._
 import java.io.{DataInputStream, DataOutputStream}
 import java.nio.ByteBuffer
+import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
 
 import devbox.common._
 import io.methvin.watcher.DirectoryWatcher
 
+import scala.annotation.tailrec
 import scala.collection.mutable
 
-object Main {
+class Syncer(mapping: Seq[(os.Path, Seq[String])]) {
+
+
+  private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
+  private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
+    eventQueue.add(p)
+//    println("FSEVENT " + p.toList)
+  })
+
+  val workCount = new Semaphore(0)
+
+  def syncAllRepos(commandRunner: os.SubProcess,
+                   skip: os.Path => Boolean,
+                   debounceTime: Int) = {
+
+
+    println("LOCK")
+    val thread = new Thread(() => watcher.start())
+
+    val vfsArr = for (_ <- mapping.indices) yield new Vfs[(Long, Seq[Bytes]), Int](0)
+
+    println("="*80)
+    println("Initial Sync")
+
+    val dataOut = new DataOutputStream(commandRunner.stdin)
+    val dataIn = new DataInputStream(commandRunner.stdout)
+
+    // initial sync
+    for (((src, dest), i) <- mapping.zipWithIndex) {
+
+      Util.writeMsg(dataOut, Rpc.FullScan(""))
+      val initial = Util.readMsg[Seq[(String, Signature)]](dataIn)
+
+      val vfs = vfsArr(i)
+      for((p, sig) <- initial) sig match{
+        case Signature.File(perms, hashes, size) =>
+          val (name, folder) = vfs.resolveParent(p).get
+          assert(!folder.value.contains(name))
+          folder.value(name) = Vfs.File(perms, (size, hashes))
+
+        case Signature.Dir(perms) =>
+          val (name, folder) = vfs.resolveParent(p).get
+          assert(!folder.value.contains(name))
+          folder.value(name) = Vfs.Folder(perms, mutable.LinkedHashMap.empty[String, Vfs.Node[(Long, Seq[Bytes]), Int]])
+
+        case Signature.Symlink(dest) =>
+          val (name, folder) = vfs.resolveParent(p).get
+          assert(!folder.value.contains(name))
+          folder.value(name) = Vfs.Symlink(dest)
+      }
+
+      Syncer.syncRepo(
+        commandRunner,
+        src,
+        dest,
+        vfsArr(i),
+        os.walk(src, p => skip(p) || !os.isDir(p, followLinks = false), includeTarget = true),
+        skip
+      )
+    }
+    workCount.release()
+    thread.start()
+
+    try {
+      while (true) {
+
+        println("="*80)
+        println("Incremental Sync")
+
+        val interestingBases = Syncer.debouncedDeque(eventQueue, debounceTime)
+
+        for (((src, dest), i) <- mapping.zipWithIndex) {
+          val srcEventDirs = interestingBases
+            .map(os.Path(_))
+            .filter(_.startsWith(src))
+            .filter(!skip(_))
+            .distinct
+
+          if (srcEventDirs.nonEmpty) {
+            Syncer.syncRepo(commandRunner, src, dest, vfsArr(i), srcEventDirs, skip)
+          }
+        }
+        workCount.release()
+      }
+    } finally{
+      watcher.stop()
+      thread.stop()
+    }
+  }
+}
+object Syncer{
+  def debouncedDeque[T](eventQueue: BlockingQueue[Array[T]], debounceTime: Int) = {
+    val interestingBases = mutable.Buffer.empty[T]
+
+    /**
+      * Keep pulling stuff out of the [[eventQueue]], until the queue has
+      * stopped changing and is empty twice in a row.
+      */
+    @tailrec def await(first: Boolean, alreadyRetried: Boolean): Unit = {
+      if (first) {
+        interestingBases.appendAll(eventQueue.take())
+        await(false, false)
+      } else eventQueue.poll() match {
+        case null =>
+          if (alreadyRetried) () // terminate
+          else {
+            Thread.sleep(debounceTime)
+            await(false, true)
+          }
+        case arr =>
+          interestingBases.appendAll(arr)
+          await(false, false)
+      }
+    }
+
+    await(true, false)
+
+    interestingBases
+  }
   def syncRepo(commandRunner: os.SubProcess,
                src: os.Path,
                dest: Seq[String],
                stateVfs: Vfs[(Long, Seq[Bytes]), Int],
-               interestingBases: Seq[os.Path]) = {
+               interestingBases: Seq[os.Path],
+               skip: os.Path => Boolean) = {
 
+    println("INTERESTING BASES " + interestingBases)
     val dataOut = new DataOutputStream(commandRunner.stdin)
     val dataIn = new DataInputStream(commandRunner.stdout)
     // interestingBases.foreach(x => println("BASE " + x))
@@ -28,7 +151,7 @@ object Main {
       .flatMap { p =>
         val listed =
           if (!os.exists(p, followLinks = false)) Nil
-          else os.list(p).map(_.relativeTo(src).toString)
+          else os.list(p).filter(!skip(_)).map(_.relativeTo(src).toString)
 
         val virtual = stateVfs.resolve(p.relativeTo(src).toString).fold(Seq[String]()) {
           case f: Vfs.File[_, _] => Seq(p.relativeTo(src).toString)
@@ -187,48 +310,5 @@ object Main {
     for(i <- 0 until pipelinedWrites) assert(Util.readMsg[Int](dataIn) == 0)
 
     println("Total writes: " + totalWrites)
-  }
-
-  def syncAllRepos(commandRunner: os.SubProcess,
-                   mapping: Seq[(os.Path, Seq[String])],
-                   skip: os.Path => Boolean) = {
-
-    // initial sync
-    for((src, dest) <- mapping){
-//      syncRepo(commandRunner, src, dest, os.walk(src))
-    }
-    // watch and incremental syncs
-    val eventDirs = new AtomicReference(Set.empty[os.Path])
-    val watcher = DirectoryWatcher
-      .builder
-      .paths(mapping.map(_._1.toNIO).asJava)
-      .listener{ event =>
-        val dir = os.Path(event.path())
-        if (!skip(dir)) {
-          while(!eventDirs.compareAndSet(eventDirs.get, eventDirs.get + dir)) Thread.sleep(1)
-        }
-      }
-      .build
-    watcher.watchAsync()
-
-    while(true){
-      Thread.sleep(50)
-      if (eventDirs.get.nonEmpty){
-        val startEventDirs = eventDirs.get
-        Thread.sleep(50)
-        if (startEventDirs eq eventDirs.get){
-          val currentEventDirs = eventDirs.getAndSet(Set.empty)
-          for((src, dest) <- mapping){
-            val srcEventDirs = currentEventDirs.filter(_.startsWith(src))
-            if (srcEventDirs.nonEmpty){
-//              syncRepo(commandRunner, src, dest, srcEventDirs.toSeq.flatMap(os.list))
-            }
-          }
-        }
-      }
-    }
-  }
-  def main(args: Array[String]): Unit = {
-
   }
 }

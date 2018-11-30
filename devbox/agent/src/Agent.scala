@@ -13,10 +13,13 @@ object Agent {
     val dataOut = new DataOutputStream(System.out)
     while (true){
       val msg = Util.readMsg[Rpc](dataIn)
-      // System.err.println("AGENT " + msg)
+//       System.err.println("AGENT " + msg)
       msg match{
         case Rpc.FullScan(path) =>
-          val scanned = os.walk(os.Path(path, os.pwd), _.segments.contains(".git")).map(
+          val scanned = os.walk(
+            os.Path(path, os.pwd),
+            p => p.segments.contains(".git") && !os.isDir(p, followLinks = false)
+          ).map(
             p => (p.relativeTo(os.pwd).toString, Signature.compute(p))
           )
           Util.writeMsg(dataOut, scanned)
