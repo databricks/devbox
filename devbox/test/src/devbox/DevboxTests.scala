@@ -1,14 +1,12 @@
 package devbox
-import java.io.{DataInputStream, DataOutputStream}
 import java.util.concurrent.Semaphore
 
-import devbox.common.{Bytes, Rpc, Signature, Util}
+import devbox.common.Signature
 import org.eclipse.jgit.api.Git
 
 import collection.JavaConverters._
 import utest._
 
-import scala.collection.mutable
 object DevboxTests extends TestSuite{
   def validate(src: os.Path, dest: os.Path, skip: os.Path => Boolean) = {
     val srcPaths = os.walk(src, skip)
@@ -16,6 +14,7 @@ object DevboxTests extends TestSuite{
 
     val srcRelPaths = srcPaths.map(_.relativeTo(src)).toSet
     val destRelPaths = destPaths.map(_.relativeTo(dest)).toSet
+
     if (srcRelPaths != destRelPaths){
       throw new Exception(
         "Path list difference, src: " + (srcRelPaths -- destRelPaths) + ", dest: " + (destRelPaths -- srcRelPaths)
@@ -29,12 +28,14 @@ object DevboxTests extends TestSuite{
       if(srcSig == destSig) None
       else Some((s.relativeTo(src), srcSig, destSig))
     }
+
     if (differentSigs.nonEmpty){
       throw new Exception(
         "Signature list difference" + differentSigs
       )
     }
   }
+
   def check(label: String, uri: String, stride: Int) = {
     val src = os.pwd / "out" / "scratch" / label / "src"
     val dest = os.pwd / "out" / "scratch" / label / "dest"
@@ -54,12 +55,14 @@ object DevboxTests extends TestSuite{
     val agent = os.proc(agentExecutable).spawn(cwd = dest, stderr = os.Inherit)
 
     repo.checkout().setName(commits.head.getName).call()
+
     val workCount = new Semaphore(0)
+
     val syncer = new Syncer(
       agent,
       Seq(src -> Nil),
       _.segments.contains(".git"),
-      50,
+      100,
       () => workCount.release()
     )
 
@@ -71,8 +74,8 @@ object DevboxTests extends TestSuite{
       for ((commit, i) <- commits.drop(1).zipWithIndex) {
         println("=" * 80)
         println(s"[$i/${commits.length - 1}] Checking ${commit.getName} ${commit.getFullMessage}")
+
         repo.checkout().setName(commit.getName).call()
-        println("syncRepo")
 
         workCount.acquire()
 
@@ -82,13 +85,15 @@ object DevboxTests extends TestSuite{
         if (i % stride == 0) validate(src, dest, _.segments.contains(".git"))
       }
     }finally{
-//      Thread.sleep(999999)
-      println("Closing SYncer")
+      println("Closing Syncer")
       syncer.close()
     }
   }
 
   def tests = Tests{
+    // A few example repositories to walk through and make sure the delta syncer
+    // can function on every change of commit. Ordered by increasing levels of
+    // complexity
     'edge - check("edge-cases", getClass.getResource("/edge-cases.bundle").toURI.toString, 1)
     'oslib - check("oslib", System.getenv("OSLIB_BUNDLE"), 2)
     'scalatags - check("scalatags", System.getenv("SCALATAGS_BUNDLE"), 3)

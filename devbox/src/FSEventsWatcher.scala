@@ -13,10 +13,9 @@ class FSEventsWatcher(srcs: Seq[os.Path], onEvent: Array[String] => Unit) {
                eventIds: Pointer) = {
       val length = numEvents.intValue
       onEvent(eventPaths.getStringArray(0, length))
-
-      //          println("FSINVOKE " + arr.toSeq)
     }
   }
+
   val streamRef = CarbonAPI.INSTANCE.FSEventStreamCreate(
     Pointer.NULL,
     callback,
@@ -33,8 +32,8 @@ class FSEventsWatcher(srcs: Seq[os.Path], onEvent: Array[String] => Unit) {
   )
 
   var current: CFRunLoopRef = null
-  def start() = {
 
+  def start() = {
     CarbonAPI.INSTANCE.FSEventStreamScheduleWithRunLoop(
       streamRef,
       CarbonAPI.INSTANCE.CFRunLoopGetCurrent(),

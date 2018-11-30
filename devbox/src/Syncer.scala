@@ -13,30 +13,38 @@ class Syncer(commandRunner: os.SubProcess,
              skip: os.Path => Boolean,
              debounceTime: Int,
              onComplete: () => Unit) {
+
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
     eventQueue.add(p)
-//    println("FSEVENT " + p.toList)
+    println("FSEVENT " + p.toList)
   })
 
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
 
-  @volatile var running: Boolean = false
+  @volatile private[this] var running: Boolean = false
 
+  @volatile private[this] var asyncException: Throwable = null
 
   def start() = {
     running = true
-    watcherThread = new Thread(() => watcher.start())
-    syncThread = new Thread(() => Syncer.syncAllRepos(
-      commandRunner,
-      mapping,
-      onComplete,
-      eventQueue,
-      skip,
-      debounceTime,
-      () => running
-    ))
+    watcherThread = new Thread(() =>
+      try watcher.start()
+      catch {case e: Throwable => asyncException = e}
+    )
+
+    syncThread = new Thread(() =>
+      try Syncer.syncAllRepos(
+        commandRunner,
+        mapping,
+        onComplete,
+        eventQueue,
+        skip,
+        debounceTime,
+        () => running
+      ) catch {case e: Throwable => asyncException = e}
+    )
 
     watcherThread.start()
     syncThread.start()
@@ -48,6 +56,7 @@ class Syncer(commandRunner: os.SubProcess,
     watcherThread.join()
     syncThread.interrupt()
     syncThread.join()
+    if (asyncException != null) throw asyncException
   }
 }
 
@@ -101,11 +110,13 @@ object Syncer{
         skip
       )
     }
+
+    println("ON_COMPLETE")
     onComplete()
 
     while (continue()) {
 
-      println("="*80)
+      println("-"*80)
       println("Incremental Sync")
 
       val interestingBasesOpt =
@@ -113,19 +124,22 @@ object Syncer{
         catch{case e: InterruptedException => None}
 
       for(interestingBases <- interestingBasesOpt){
+        println("interestingBases " + interestingBases.length)
         for (((src, dest), i) <- mapping.zipWithIndex) {
           val srcEventDirs = interestingBases
             .map(os.Path(_))
             .filter(_.startsWith(src))
             .filter(!skip(_))
             .distinct
-
+          println("srcEventDirs " + interestingBases.length)
           if (srcEventDirs.nonEmpty) {
             Syncer.syncRepo(commandRunner, src, dest, vfsArr(i), srcEventDirs, skip)
           }
         }
-        onComplete()
       }
+
+      println("ON_COMPLETE")
+      onComplete()
     }
   }
 
@@ -157,6 +171,7 @@ object Syncer{
 
     interestingBases
   }
+
   def syncRepo(commandRunner: os.SubProcess,
                src: os.Path,
                dest: Seq[String],
@@ -247,6 +262,7 @@ object Syncer{
       pipelinedWrites += 1
       totalWrites += 1
     }
+
     // signatureMapping.map(_._1).foreach(x => println("SIG " + x))
     for((p, localSig, remoteSig) <- signatureMapping.sortBy(x => (x._1.segmentCount, x._1.toString))){
 
@@ -311,7 +327,6 @@ object Syncer{
                   }
                 })()
 
-
                 performAction(
                   Rpc.WriteChunk(
                     segments,
@@ -333,6 +348,7 @@ object Syncer{
         pipelinedWrites = 0
       }
     }
+
     for(i <- 0 until pipelinedWrites) assert(Util.readMsg[Int](dataIn) == 0)
 
     println("Total writes: " + totalWrites)

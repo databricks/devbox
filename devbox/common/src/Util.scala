@@ -1,8 +1,6 @@
 package devbox.common
 
 import java.io.{DataInputStream, DataOutputStream}
-import java.nio.channels.FileChannel
-
 import geny.Generator
 
 object Util {
@@ -12,6 +10,7 @@ object Util {
     out.write(blob)
     out.flush()
   }
+
   def readMsg[T: upickle.default.Reader](in: DataInputStream): T = {
     val length = in.readInt()
     val blob = new Array[Byte](length)

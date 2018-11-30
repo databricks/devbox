@@ -1,7 +1,9 @@
 package devbox.common
 import upickle.default.{ReadWriter, macroRW}
+
 sealed trait Rpc
 sealed trait Action
+
 object Rpc{
   case class FullScan(path: String) extends Rpc
   object FullScan{ implicit val rw: ReadWriter[FullScan] = macroRW }

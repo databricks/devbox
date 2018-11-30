@@ -43,7 +43,6 @@ object Signature{
         }
       }
     }
-
   }
 
   case class File(perms: Int, blockHashes: Seq[Bytes], size: Long) extends Signature

@@ -52,7 +52,7 @@ object devbox extends ScalaModule{
     }
 
 
-    def testFrameworks = Seq("utest.runner.Framework")
+    def testFrameworks = Seq("devbox.UTestFramework")
     def ivyDeps = Agg(ivy"com.lihaoyi::utest:0.6.5")
     def forkEnv = Map(
       "AGENT_EXECUTABLE" -> agent.assembly().path.toString,

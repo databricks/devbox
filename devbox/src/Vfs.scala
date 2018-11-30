@@ -41,6 +41,7 @@ final class Vfs[T, V](rootMetadata: V) {
       current
     }
   }
+
   def resolveParent(p: String): Option[(String, Vfs.Folder[T, V])] = {
     if (p == "") None
     else{
@@ -51,11 +52,11 @@ final class Vfs[T, V](rootMetadata: V) {
     }
   }
 }
+
 object Vfs{
   sealed trait Node[+T, +V]
   case class File[T, V](var metadata: V, var value: T) extends Node[T, V]
   case class Folder[T, V](var metadata: V,
                           value: mutable.LinkedHashMap[String, Node[T, V]]) extends Node[T, V]
   case class Symlink(var value: String) extends Node[Nothing, Nothing]
-
 }
