@@ -11,7 +11,8 @@ object devbox extends ScalaModule{
       ivy"com.lihaoyi::os-lib:0.2.2",
       ivy"com.lihaoyi::upickle:0.7.1",
       ivy"org.eclipse.jgit:org.eclipse.jgit:5.1.3.201810200350-r",
-      ivy"io.methvin:directory-watcher:0.9.0"
+      ivy"io.methvin:directory-watcher:0.9.0",
+      ivy"com.lihaoyi::pprint:0.5.3"
     )
   }
 

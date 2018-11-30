@@ -12,12 +12,13 @@ class Syncer(commandRunner: os.SubProcess,
              mapping: Seq[(os.Path, Seq[String])],
              skip: os.Path => Boolean,
              debounceTime: Int,
-             onComplete: () => Unit) {
+             onComplete: () => Unit,
+             verbose: Boolean) {
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
     eventQueue.add(p)
-    println("FSEVENT " + p.toList)
+    if (verbose) for(path <- p) println("FSEVENT " + p)
   })
 
   private[this] var watcherThread: Thread = null
@@ -42,7 +43,8 @@ class Syncer(commandRunner: os.SubProcess,
         eventQueue,
         skip,
         debounceTime,
-        () => running
+        () => running,
+        verbose
       ) catch {case e: Throwable => asyncException = e}
     )
 
@@ -67,12 +69,12 @@ object Syncer{
                    eventQueue: BlockingQueue[Array[String]],
                    skip: os.Path => Boolean,
                    debounceTime: Int,
-                   continue: () => Boolean) = {
+                   continue: () => Boolean,
+                   verbose: Boolean) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[(Long, Seq[Bytes]), Int](0)
 
-    println("="*80)
-    println("Initial Sync")
+    if (verbose) println("Initial Sync")
 
     val dataOut = new DataOutputStream(commandRunner.stdin)
     val dataIn = new DataInputStream(commandRunner.stdout)
@@ -107,39 +109,37 @@ object Syncer{
         dest,
         vfsArr(i),
         os.walk(src, p => skip(p) || !os.isDir(p, followLinks = false), includeTarget = true),
-        skip
+        skip,
+        verbose
       )
     }
 
-    println("ON_COMPLETE")
-    onComplete()
+    if (eventQueue.isEmpty) onComplete()
 
     while (continue()) {
 
-      println("-"*80)
-      println("Incremental Sync")
+
+      if (verbose) println("Incremental Sync")
 
       val interestingBasesOpt =
         try Some(Syncer.debouncedDeque(eventQueue, debounceTime))
         catch{case e: InterruptedException => None}
 
       for(interestingBases <- interestingBasesOpt){
-        println("interestingBases " + interestingBases.length)
         for (((src, dest), i) <- mapping.zipWithIndex) {
           val srcEventDirs = interestingBases
             .map(os.Path(_))
             .filter(_.startsWith(src))
             .filter(!skip(_))
             .distinct
-          println("srcEventDirs " + interestingBases.length)
+
           if (srcEventDirs.nonEmpty) {
-            Syncer.syncRepo(commandRunner, src, dest, vfsArr(i), srcEventDirs, skip)
+            Syncer.syncRepo(commandRunner, src, dest, vfsArr(i), srcEventDirs, skip, verbose)
           }
         }
       }
 
-      println("ON_COMPLETE")
-      onComplete()
+      if (eventQueue.isEmpty) onComplete()
     }
   }
 
@@ -177,9 +177,11 @@ object Syncer{
                dest: Seq[String],
                stateVfs: Vfs[(Long, Seq[Bytes]), Int],
                interestingBases: Seq[os.Path],
-               skip: os.Path => Boolean) = {
+               skip: os.Path => Boolean,
+               verbose: Boolean) = {
 
-    println("INTERESTING BASES " + interestingBases)
+    if (verbose) for(p <- interestingBases) println("BASE " + p.relativeTo(src))
+
     val dataOut = new DataOutputStream(commandRunner.stdin)
     val dataIn = new DataInputStream(commandRunner.stdout)
     // interestingBases.foreach(x => println("BASE " + x))
@@ -351,6 +353,6 @@ object Syncer{
 
     for(i <- 0 until pipelinedWrites) assert(Util.readMsg[Int](dataIn) == 0)
 
-    println("Total writes: " + totalWrites)
+    if (verbose) println("Total writes: " + totalWrites)
   }
 }

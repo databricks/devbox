@@ -51,8 +51,9 @@ object DevboxTests extends TestSuite{
       .setDirectory(src.toIO)
       .call()
 
+    val verbose = false
     val commits = repo.log().call().asScala.toSeq.reverse
-    val agent = os.proc(agentExecutable).spawn(cwd = dest, stderr = os.Inherit)
+    val agent = os.proc(agentExecutable, verbose.toString).spawn(cwd = dest, stderr = os.Inherit)
 
     repo.checkout().setName(commits.head.getName).call()
 
@@ -63,7 +64,8 @@ object DevboxTests extends TestSuite{
       Seq(src -> Nil),
       _.segments.contains(".git"),
       100,
-      () => workCount.release()
+      () => workCount.release(),
+      false
     )
 
     syncer.start()

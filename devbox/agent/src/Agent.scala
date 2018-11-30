@@ -8,14 +8,15 @@ import devbox.common.{Rpc, Signature, Util}
 
 object Agent {
   def main(args: Array[String]): Unit = {
-    System.err.println("Starting agent in " + os.pwd)
+    val verbose = args(0).toBoolean
+    if (verbose) System.err.println("Starting agent in " + os.pwd)
 
     val dataIn = new DataInputStream(System.in)
     val dataOut = new DataOutputStream(System.out)
 
     while (true){
       val msg = Util.readMsg[Rpc](dataIn)
-      System.err.println("AGENT " + msg)
+      if (verbose) System.err.println("AGENT " + msg)
       msg match{
         case Rpc.FullScan(path) =>
           val scanned = os.walk(
