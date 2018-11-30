@@ -8,9 +8,6 @@ object Rpc{
   case class FullScan(path: String) extends Rpc
   object FullScan{ implicit val rw: ReadWriter[FullScan] = macroRW }
 
-  case class CheckHash(path: String) extends Rpc
-  object CheckHash{ implicit val rw: ReadWriter[CheckHash] = macroRW }
-
   case class PutFile(path: String, perms: Int) extends Rpc with Action
   object PutFile{ implicit val rw: ReadWriter[PutFile] = macroRW }
 

@@ -11,36 +11,35 @@ sealed trait Signature
 object Signature{
 
   val blockSize = 4 * 1024 * 1024
+
+  /**
+    * Computes the signature of a given path, or None if it doesn't exist. Note
+    * that the existence detection may be case-insensitive if the filesystem is
+    * case-insensitive; it is up to the caller to properly recognize such files
+    * and exclude them before calling [[Signature.compute]]
+    */
   def compute(p: os.Path, buffer: Array[Byte]): Option[Signature] = {
     // Non-existent files are None
     if (!os.exists(p, followLinks = false)) None
-    // Files within symlinked folders are None
-    else if (!os.followLink(p/os.up).contains(p/os.up)) None
     // Anything else is Some (even broken symlinks)
     else {
       val stat = os.stat(p, followLinks = false)
-
       stat.fileType match{
         case os.FileType.SymLink => Some(Symlink(Files.readSymbolicLink(p.toNIO).toString))
-        case os.FileType.Dir =>
-          if (!os.followLink(p).exists(_.last == p.last)) None
-          else Some(Dir(os.perms(p).toInt()))
+        case os.FileType.Dir => Some(Dir(os.perms(p).toInt()))
         case os.FileType.File =>
-          if (!os.followLink(p).exists(_.last == p.last)) None
-          else {
-            val digest = MessageDigest.getInstance("MD5")
-            val chunks = mutable.ArrayBuffer.empty[Bytes]
-            var size = 0L
-            for(d <- Util.readChunks(p, buffer)){
-              val (buffer, n) = d
-              size += n
-              digest.reset()
-              digest.update(buffer, 0, n)
+          val digest = MessageDigest.getInstance("MD5")
+          val chunks = mutable.ArrayBuffer.empty[Bytes]
+          var size = 0L
+          for(d <- Util.readChunks(p, buffer)){
+            val (buffer, n) = d
+            size += n
+            digest.reset()
+            digest.update(buffer, 0, n)
 
-              chunks.append(Bytes(digest.digest()))
-            }
-            Some(File(os.perms(p).toInt, chunks, size))
-        }
+            chunks.append(Bytes(digest.digest()))
+          }
+          Some(File(os.perms(p).toInt, chunks, size))
       }
     }
   }

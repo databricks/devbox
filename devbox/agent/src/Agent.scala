@@ -32,11 +32,6 @@ object Agent {
             )
             client.writeMsg(scanned)
 
-          case Rpc.CheckHash(path) =>
-            val sig = Signature.compute(os.Path(path, os.pwd), buffer)
-            System.err.println(sig)
-            client.writeMsg(sig)
-
           case Rpc.Remove(path) =>
             val p = os.Path(path, os.pwd)
             if (os.isLink(p)) os.remove(p)

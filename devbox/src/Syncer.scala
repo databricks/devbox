@@ -214,6 +214,17 @@ object Syncer{
 
     if (verbose) for(p <- interestingBases) println("BASE " + p.relativeTo(src))
 
+    def compute(p: os.Path, forceNone: Boolean) = {
+      (
+        p,
+        if (forceNone) None else Signature.compute(p, buffer),
+        stateVfs.resolve(p.relativeTo(src).toString()).map {
+          case f: Vfs.File[(Long, Seq[Bytes]), Int] => Signature.File(f.metadata, f.value._2, f.value._1)
+          case f: Vfs.Folder[(Long, Seq[Bytes]), Int] => Signature.Dir(f.metadata)
+          case f: Vfs.Symlink => Signature.Symlink(f.value)
+        }
+      )
+    }
     val signatureMapping = interestingBases
       // Only bother looking at paths which are canonical; changes to non-
       // canonical paths can be ignored because we'd also get the canonical
@@ -223,25 +234,23 @@ object Syncer{
       .flatMap { p =>
         val listed =
           if (!os.exists(p, followLinks = false)) Nil
-          else os.list(p).filter(!skip(_)).map(_.relativeTo(src).toString)
+          else os.list(p).filter(!skip(_))
 
-        val virtual = stateVfs.resolve(p.relativeTo(src).toString).fold(Seq[String]()) {
-          case f: Vfs.File[_, _] => Seq(p.relativeTo(src).toString)
-          case f: Vfs.Folder[_, _] => f.value.keys.map(k => (p.relativeTo(src) / k).toString).toSeq
-          case f: Vfs.Symlink => Seq(p.relativeTo(src).toString)
+        val listedNames = listed.map(_.last).toSet
+
+        val virtual = stateVfs.resolve(p.relativeTo(src).toString) match{
+          case None => Nil
+          case Some(f: Vfs.Folder[_, _]) =>
+            // We check the name of the Vfs file against the files we listed
+            // earlier on-disk. This lets us know immediately if the file does
+            // not exist locally, and also check whether the in-vfs file has
+            // the same name-case as the on-disk file, all without hitting the
+            // disk again
+            f.value.keys.map(p / _).toSeq.map { p => compute(p, !listedNames(p.last))}
+          case Some(_) => Seq(compute(p, false))
         }
 
-        (listed ++ virtual).map { p1 =>
-          (
-            src / os.RelPath(p1),
-            Signature.compute(src / os.RelPath(p1), buffer),
-            stateVfs.resolve(p1).map {
-              case f: Vfs.File[(Long, Seq[Bytes]), Int] => Signature.File(f.metadata, f.value._2, f.value._1)
-              case f: Vfs.Folder[(Long, Seq[Bytes]), Int] => Signature.Dir(f.metadata)
-              case f: Vfs.Symlink => Signature.Symlink(f.value)
-            }
-          )
-        }
+        listed.map(compute(_, false)) ++ virtual
       }
 
     var totalWrites = 0
