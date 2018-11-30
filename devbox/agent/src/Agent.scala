@@ -15,6 +15,9 @@ object Agent {
       new DataOutputStream(System.out),
       new DataInputStream(System.in)
     )
+
+    val buffer = new Array[Byte](Signature.blockSize)
+
     try {
       while (true) {
         val msg = client.readMsg[Rpc]()
@@ -25,12 +28,12 @@ object Agent {
               os.Path(path, os.pwd),
               p => p.segments.contains(".git") && !os.isDir(p, followLinks = false)
             ).map(
-              p => (p.relativeTo(os.pwd).toString, Signature.compute(p))
+              p => (p.relativeTo(os.pwd).toString, Signature.compute(p, buffer))
             )
             client.writeMsg(scanned)
 
           case Rpc.CheckHash(path) =>
-            val sig = Signature.compute(os.Path(path, os.pwd))
+            val sig = Signature.compute(os.Path(path, os.pwd), buffer)
             System.err.println(sig)
             client.writeMsg(sig)
 

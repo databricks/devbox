@@ -22,10 +22,11 @@ object DevboxTests extends TestSuite{
         "Path list difference, src: " + (srcRelPaths -- destRelPaths) + ", dest: " + (destRelPaths -- srcRelPaths)
       )
     }
+    val buffer = new Array[Byte](Signature.blockSize)
 
     val differentSigs = srcPaths.zip(destPaths).flatMap{ case (s, d) =>
-      val srcSig = Signature.compute(s)
-      val destSig = Signature.compute(d)
+      val srcSig = Signature.compute(s, buffer)
+      val destSig = Signature.compute(d, buffer)
 
       if(srcSig == destSig) None
       else Some((s.relativeTo(src), srcSig, destSig))
@@ -61,61 +62,64 @@ object DevboxTests extends TestSuite{
     val verbose = false
     val commits = repo.log().call().asScala.toSeq.reverse
     val agent = os.proc(agentExecutable, verbose.toString).spawn(cwd = dest, stderr = os.Inherit)
+    try{
+      repo.checkout().setName(commits.head.getName).call()
 
-    repo.checkout().setName(commits.head.getName).call()
+      val workCount = new Semaphore(0)
 
-    val workCount = new Semaphore(0)
+      val syncer = new Syncer(
+        agent,
+        Seq(src -> Nil),
+        _.segments.contains(".git"),
+        100,
+        () => workCount.release(),
+        verbose
+      )
 
-    val syncer = new Syncer(
-      agent,
-      Seq(src -> Nil),
-      _.segments.contains(".git"),
-      100,
-      () => workCount.release(),
-      verbose
-    )
+      var lastWriteCount = 0
 
-    var lastWriteCount = 0
+      // Fixed random to make the random jumps deterministic
+      val random = new scala.util.Random(31337)
 
-    // Fixed random to make the random jumps deterministic
-    val random = new scala.util.Random(31337)
-
-    val commitsIndicesToCheck =
-      // Step through the commits in order to test "normal" edits
-      (1 until commits.length) ++
-      // Also jump between a bunch of random commits to test robustness against
-      // huge edits modifying lots of different files
-      (0 until 10 * stride).map(_ => random.nextInt(commits.length))
+      val commitsIndicesToCheck =
+        // Step through the commits in order to test "normal" edits
+        (1 until commits.length) ++
+        // Also jump between a bunch of random commits to test robustness against
+        // huge edits modifying lots of different files
+        (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
 
-    printBanner(0, commits.length, 0, commitsIndicesToCheck.length, commits(0))
-    syncer.start()
-    workCount.acquire()
-    println("Write Count: " + (syncer.writeCount - lastWriteCount))
-    validate(src, dest, _.segments.contains(".git"))
+      printBanner(0, commits.length, 0, commitsIndicesToCheck.length, commits(0))
+      syncer.start()
+      workCount.acquire()
+      println("Write Count: " + (syncer.writeCount - lastWriteCount))
+      validate(src, dest, _.segments.contains(".git"))
 
-    lastWriteCount = syncer.writeCount
+      lastWriteCount = syncer.writeCount
 
-    try {
+      try {
 
-      for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
-        val commit = commits(i)
-        printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
-        repo.checkout().setName(commit.getName).call()
-        println("Checkout finished")
+        for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
+          val commit = commits(i)
+          printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
+          repo.checkout().setName(commit.getName).call()
+          println("Checkout finished")
 
-        workCount.acquire()
-        println("Write Count: " + (syncer.writeCount - lastWriteCount))
+          workCount.acquire()
+          println("Write Count: " + (syncer.writeCount - lastWriteCount))
 
-        // Allow validation not-every-commit, because validation is really slow
-        // and hopefully if something gets messed up it'll get caught in a later
-        // validation anyway.
-        if (count % stride == 0) validate(src, dest, _.segments.contains(".git"))
-        lastWriteCount = syncer.writeCount
+          // Allow validation not-every-commit, because validation is really slow
+          // and hopefully if something gets messed up it'll get caught in a later
+          // validation anyway.
+          if (count % stride == 0) validate(src, dest, _.segments.contains(".git"))
+          lastWriteCount = syncer.writeCount
+        }
+      }finally{
+        println("Closing Syncer")
+        syncer.close()
       }
     }finally{
-      println("Closing Syncer")
-      syncer.close()
+      agent.destroy()
     }
   }
 

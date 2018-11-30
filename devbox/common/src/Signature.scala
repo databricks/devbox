@@ -11,7 +11,7 @@ sealed trait Signature
 object Signature{
 
   val blockSize = 4 * 1024 * 1024
-  def compute(p: os.Path): Option[Signature] = {
+  def compute(p: os.Path, buffer: Array[Byte]): Option[Signature] = {
     // Non-existent files are None
     if (!os.exists(p, followLinks = false)) None
     // Files within symlinked folders are None
@@ -31,7 +31,7 @@ object Signature{
             val digest = MessageDigest.getInstance("MD5")
             val chunks = mutable.ArrayBuffer.empty[Bytes]
             var size = 0L
-            for(d <- Util.readChunks(p, blockSize)){
+            for(d <- Util.readChunks(p, buffer)){
               val (buffer, n) = d
               size += n
               digest.reset()

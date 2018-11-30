@@ -4,14 +4,11 @@ import java.io.{DataInputStream, DataOutputStream}
 import geny.Generator
 
 object Util {
-
-
-  def readChunks(p: os.Path, blockSize: Int): geny.Generator[(Array[Byte], Int)] = {
-    val is = os.read.inputStream(p)
-    val buffer = new Array[Byte](blockSize)
-    var bufferOffset = 0
+  def readChunks(p: os.Path, buffer: Array[Byte]): geny.Generator[(Array[Byte], Int)] = {
     new Generator[(Array[Byte], Int)] {
       def generate(handleItem: ((Array[Byte], Int)) => Generator.Action): Generator.Action = {
+        val is = os.read.inputStream(p)
+        var bufferOffset = 0
         var lastAction: Generator.Action = Generator.Continue
         while({
           is.read(buffer, bufferOffset, buffer.length - bufferOffset) match{

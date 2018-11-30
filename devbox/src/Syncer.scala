@@ -36,6 +36,7 @@ class Syncer(commandRunner: os.SubProcess,
       () =>
         try watcher.start()
         catch {case e: Throwable =>
+          e.printStackTrace()
           asyncException = e
           onComplete()
         },
@@ -55,6 +56,7 @@ class Syncer(commandRunner: os.SubProcess,
           verbose,
           writeCount += _
         ) catch {case e: Throwable =>
+          e.printStackTrace()
           asyncException = e
           onComplete()
         },
@@ -87,7 +89,7 @@ object Syncer{
                    countWrite: Int => Unit) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[(Long, Seq[Bytes]), Int](0)
-
+    val buffer = new Array[Byte](Signature.blockSize)
     if (verbose) println("Initial Sync")
 
     val client = new RpcClient(
@@ -126,7 +128,8 @@ object Syncer{
         vfsArr(i),
         os.walk(src, p => skip(p) || !os.isDir(p, followLinks = false), includeTarget = true),
         skip,
-        verbose
+        verbose,
+        buffer
       )
 
       countWrite(count)
@@ -152,7 +155,16 @@ object Syncer{
             .distinct
 
           if (srcEventDirs.nonEmpty) {
-            val count = Syncer.syncRepo(client, src, dest, vfsArr(i), srcEventDirs, skip, verbose)
+            val count = Syncer.syncRepo(
+              client,
+              src,
+              dest,
+              vfsArr(i),
+              srcEventDirs,
+              skip,
+              verbose,
+              buffer
+            )
             countWrite(count)
           }
         }
@@ -197,7 +209,8 @@ object Syncer{
                stateVfs: Vfs[(Long, Seq[Bytes]), Int],
                interestingBases: Seq[os.Path],
                skip: os.Path => Boolean,
-               verbose: Boolean): Int = {
+               verbose: Boolean,
+               buffer: Array[Byte]): Int = {
 
     if (verbose) for(p <- interestingBases) println("BASE " + p.relativeTo(src))
 
@@ -221,7 +234,7 @@ object Syncer{
         (listed ++ virtual).map { p1 =>
           (
             src / os.RelPath(p1),
-            Signature.compute(src / os.RelPath(p1)),
+            Signature.compute(src / os.RelPath(p1), buffer),
             stateVfs.resolve(p1).map {
               case f: Vfs.File[(Long, Seq[Bytes]), Int] => Signature.File(f.metadata, f.value._2, f.value._1)
               case f: Vfs.Folder[(Long, Seq[Bytes]), Int] => Signature.Dir(f.metadata)
