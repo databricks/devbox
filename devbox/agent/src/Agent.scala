@@ -28,7 +28,7 @@ object Agent {
               os.Path(path, os.pwd),
               p => p.segments.contains(".git") && !os.isDir(p, followLinks = false)
             ).map(
-              p => (p.relativeTo(os.pwd).toString, Signature.compute(p, buffer))
+              p => (p.relativeTo(os.pwd).toString, Some(Signature.compute(p, buffer)))
             )
             client.writeMsg(scanned)
 
@@ -58,9 +58,9 @@ object Agent {
             client.writeMsg(0)
 
           case Rpc.Truncate(path, offset) =>
-            val channel = FileChannel.open(os.Path(path, os.pwd) toNIO, StandardOpenOption.WRITE)
-            try channel.truncate(offset)
-            finally channel.close()
+            Util.autoclose(FileChannel.open(os.Path(path, os.pwd) toNIO, StandardOpenOption.WRITE)){ channel =>
+              channel.truncate(offset)
+            }
             client.writeMsg(0)
 
           case Rpc.SetPerms(path, perms) =>

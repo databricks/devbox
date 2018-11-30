@@ -25,8 +25,8 @@ object DevboxTests extends TestSuite{
     val buffer = new Array[Byte](Signature.blockSize)
 
     val differentSigs = srcPaths.zip(destPaths).flatMap{ case (s, d) =>
-      val srcSig = Signature.compute(s, buffer)
-      val destSig = Signature.compute(d, buffer)
+      val srcSig = if (os.exists(s, followLinks = false)) Some(Signature.compute(s, buffer)) else None
+      val destSig = if (os.exists(d, followLinks = false)) Some(Signature.compute(d, buffer)) else None
 
       if(srcSig == destSig) None
       else Some((s.relativeTo(src), srcSig, destSig))
@@ -67,37 +67,33 @@ object DevboxTests extends TestSuite{
 
       val workCount = new Semaphore(0)
 
-      val syncer = new Syncer(
-        agent,
-        Seq(src -> Nil),
-        _.segments.contains(".git"),
-        100,
-        () => workCount.release(),
-        verbose
-      )
-
       var lastWriteCount = 0
 
       // Fixed random to make the random jumps deterministic
       val random = new scala.util.Random(31337)
 
       val commitsIndicesToCheck =
-        // Step through the commits in order to test "normal" edits
+      // Step through the commits in order to test "normal" edits
         (1 until commits.length) ++
         // Also jump between a bunch of random commits to test robustness against
         // huge edits modifying lots of different files
         (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
+      devbox.common.Util.autoclose(new Syncer(
+        agent,
+        Seq(src -> Nil),
+        _.segments.contains(".git"),
+        100,
+        () => workCount.release(),
+        verbose
+      )){ syncer =>
+        printBanner(0, commits.length, 0, commitsIndicesToCheck.length, commits(0))
+        syncer.start()
+        workCount.acquire()
+        println("Write Count: " + (syncer.writeCount - lastWriteCount))
+        validate(src, dest, _.segments.contains(".git"))
 
-      printBanner(0, commits.length, 0, commitsIndicesToCheck.length, commits(0))
-      syncer.start()
-      workCount.acquire()
-      println("Write Count: " + (syncer.writeCount - lastWriteCount))
-      validate(src, dest, _.segments.contains(".git"))
-
-      lastWriteCount = syncer.writeCount
-
-      try {
+        lastWriteCount = syncer.writeCount
 
         for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
           val commit = commits(i)
@@ -114,9 +110,6 @@ object DevboxTests extends TestSuite{
           if (count % stride == 0) validate(src, dest, _.segments.contains(".git"))
           lastWriteCount = syncer.writeCount
         }
-      }finally{
-        println("Closing Syncer")
-        syncer.close()
       }
     }finally{
       agent.destroy()

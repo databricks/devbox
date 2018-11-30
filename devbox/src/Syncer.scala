@@ -13,7 +13,7 @@ class Syncer(commandRunner: os.SubProcess,
              skip: os.Path => Boolean,
              debounceTime: Int,
              onComplete: () => Unit,
-             verbose: Boolean) {
+             verbose: Boolean) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
@@ -217,7 +217,7 @@ object Syncer{
     def compute(p: os.Path, forceNone: Boolean) = {
       (
         p,
-        if (forceNone) None else Signature.compute(p, buffer),
+        if (forceNone) None else Some(Signature.compute(p, buffer)),
         stateVfs.resolve(p.relativeTo(src).toString()).map {
           case f: Vfs.File[(Long, Seq[Bytes]), Int] => Signature.File(f.metadata, f.value._2, f.value._1)
           case f: Vfs.Folder[(Long, Seq[Bytes]), Int] => Signature.Dir(f.metadata)
@@ -367,10 +367,9 @@ object Syncer{
                 Nil -> 0L
             }
 
-            val channel = p.toSource.getChannel()
             val byteArr = new Array[Byte](Signature.blockSize)
             val buf = ByteBuffer.wrap(byteArr)
-            try {
+            Util.autoclose(p.toSource.getChannel()){channel =>
               for {
                 i <- blockHashes.indices
                 if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
@@ -397,8 +396,6 @@ object Syncer{
                   )
                 )
               }
-            }finally{
-              channel.close()
             }
 
             performAction(Rpc.Truncate(segments, size))
