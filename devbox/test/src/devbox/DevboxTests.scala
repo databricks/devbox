@@ -10,6 +10,7 @@ import utest._
 
 object DevboxTests extends TestSuite{
   def validate(src: os.Path, dest: os.Path, skip: os.Path => Boolean) = {
+    println("Validating...")
     val srcPaths = os.walk(src, skip)
     val destPaths = os.walk(dest, skip)
 
@@ -37,10 +38,11 @@ object DevboxTests extends TestSuite{
     }
   }
 
-  def printBanner(i: Int, total: Int, commit: RevCommit) = {
+  def printBanner(commitIndex: Int, commitCount: Int, trialIndex: Int, trialCount: Int, commit: RevCommit) = {
     println("=" * 80)
-    println(s"[$i/$total] Checking ${commit.getName} ${commit.getFullMessage}")
+    println(s"[$commitIndex/$commitCount $trialIndex/$trialCount] Checking ${commit.getName} ${commit.getShortMessage}")
   }
+
   def check(label: String, uri: String, stride: Int) = {
     val src = os.pwd / "out" / "scratch" / label / "src"
     val dest = os.pwd / "out" / "scratch" / label / "dest"
@@ -56,7 +58,7 @@ object DevboxTests extends TestSuite{
       .setDirectory(src.toIO)
       .call()
 
-    val verbose = true
+    val verbose = false
     val commits = repo.log().call().asScala.toSeq.reverse
     val agent = os.proc(agentExecutable, verbose.toString).spawn(cwd = dest, stderr = os.Inherit)
 
@@ -70,44 +72,45 @@ object DevboxTests extends TestSuite{
       _.segments.contains(".git"),
       100,
       () => workCount.release(),
-      false
+      verbose
     )
 
     var lastWriteCount = 0
-    printBanner(0, commits.length, commits(0))
-    syncer.start()
-    workCount.acquire()
 
-    validate(src, dest, _.segments.contains(".git"))
-
-    println("Write Count: " + (syncer.writeCount - lastWriteCount))
-    lastWriteCount = syncer.writeCount
-
-    // Fixed random for
+    // Fixed random to make the random jumps deterministic
     val random = new scala.util.Random(31337)
 
-    val commitsIndicesToCheck = Seq(306, 8)
+    val commitsIndicesToCheck =
       // Step through the commits in order to test "normal" edits
-//      (1 until commits.length) ++
+      (1 until commits.length) ++
       // Also jump between a bunch of random commits to test robustness against
-      // huge edits
-//      (0 until 50 * stride).map(_ => random.nextInt(commits.length))
+      // huge edits modifying lots of different files
+      (0 until 50 * stride).map(_ => random.nextInt(commits.length))
+
+
+    printBanner(0, commits.length, 0, commitsIndicesToCheck.length, commits(0))
+    syncer.start()
+    workCount.acquire()
+    println("Write Count: " + (syncer.writeCount - lastWriteCount))
+    validate(src, dest, _.segments.contains(".git"))
+
+    lastWriteCount = syncer.writeCount
 
     try {
 
       for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
         val commit = commits(i)
-        printBanner(i, commits.length, commit)
+        printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
         repo.checkout().setName(commit.getName).call()
+        println("Checkout finished")
 
         workCount.acquire()
+        println("Write Count: " + (syncer.writeCount - lastWriteCount))
 
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
         // validation anyway.
         if (count % stride == 0) validate(src, dest, _.segments.contains(".git"))
-
-        println("Write Count: " + (syncer.writeCount - lastWriteCount))
         lastWriteCount = syncer.writeCount
       }
     }finally{

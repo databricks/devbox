@@ -18,7 +18,7 @@ class Syncer(commandRunner: os.SubProcess,
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
     eventQueue.add(p)
-    if (verbose) for(path <- p) println("FSEVENT " + p)
+    if (verbose) for(path <- p) println("FSEVENT " + p.toList)
   })
 
   private[this] var watcherThread: Thread = null
@@ -201,7 +201,6 @@ object Syncer{
 
     if (verbose) for(p <- interestingBases) println("BASE " + p.relativeTo(src))
 
-    // interestingBases.foreach(x => println("BASE " + x))
     val signatureMapping = interestingBases
       // Only bother looking at paths which are canonical; changes to non-
       // canonical paths can be ignored because we'd also get the canonical
@@ -282,8 +281,29 @@ object Syncer{
       totalWrites += 1
     }
 
-    // signatureMapping.map(_._1).foreach(x => println("SIG " + x))
-    for((p, localSig, remoteSig) <- signatureMapping.sortBy(x => (x._1.segmentCount, x._1.toString))){
+    val sortedSignatures = signatureMapping.sortBy { case (p, local, remote) =>
+      (
+        // First, sort by how deep the path is. We want to operate on the
+        // shallower paths first before the deeper paths, so folders can be
+        // created before their contents is written.
+        p.segmentCount,
+        // Next, we want to perform the deletions before any other operations.
+        // If a file is renamed to a different case, we must make sure the old
+        // file is deleted before the new file is written to avoid conflicts
+        // on case-insensitive filesystems
+        local.isDefined,
+        // Lastly, we sort by the stringified path, for neatness
+        p.toString
+      )
+    }
+
+    if (verbose) {
+      for((p, local, remote) <- sortedSignatures) {
+        println(s"SIGNATURE ${p.relativeTo(src)} $local $remote")
+      }
+    }
+
+    for((p, localSig, remoteSig) <- sortedSignatures){
 
       val segments = p.relativeTo(src).toString
       if (localSig != remoteSig) {
