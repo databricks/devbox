@@ -4,19 +4,7 @@ import java.io.{DataInputStream, DataOutputStream}
 import geny.Generator
 
 object Util {
-  def writeMsg[T: upickle.default.Writer](out: DataOutputStream, t: T): Unit = {
-    val blob = upickle.default.writeBinary(t)
-    out.writeInt(blob.length)
-    out.write(blob)
-    out.flush()
-  }
 
-  def readMsg[T: upickle.default.Reader](in: DataInputStream): T = {
-    val length = in.readInt()
-    val blob = new Array[Byte](length)
-    in.readFully(blob)
-    upickle.default.readBinary[T](blob)
-  }
 
   def readChunks(p: os.Path, blockSize: Int): geny.Generator[(Array[Byte], Int)] = {
     val is = os.read.inputStream(p)

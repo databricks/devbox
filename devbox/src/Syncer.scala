@@ -28,24 +28,37 @@ class Syncer(commandRunner: os.SubProcess,
 
   @volatile private[this] var asyncException: Throwable = null
 
+  @volatile var writeCount = 0
+
   def start() = {
     running = true
-    watcherThread = new Thread(() =>
-      try watcher.start()
-      catch {case e: Throwable => asyncException = e}
+    watcherThread = new Thread(
+      () =>
+        try watcher.start()
+        catch {case e: Throwable =>
+          asyncException = e
+          onComplete()
+        },
+      "DevboxWatcherThread"
     )
 
-    syncThread = new Thread(() =>
-      try Syncer.syncAllRepos(
-        commandRunner,
-        mapping,
-        onComplete,
-        eventQueue,
-        skip,
-        debounceTime,
-        () => running,
-        verbose
-      ) catch {case e: Throwable => asyncException = e}
+    syncThread = new Thread(
+      () =>
+        try Syncer.syncAllRepos(
+          commandRunner,
+          mapping,
+          onComplete,
+          eventQueue,
+          skip,
+          debounceTime,
+          () => running,
+          verbose,
+          writeCount += _
+        ) catch {case e: Throwable =>
+          asyncException = e
+          onComplete()
+        },
+      "DevboxSyncThread"
     )
 
     watcherThread.start()
@@ -70,20 +83,23 @@ object Syncer{
                    skip: os.Path => Boolean,
                    debounceTime: Int,
                    continue: () => Boolean,
-                   verbose: Boolean) = {
+                   verbose: Boolean,
+                   countWrite: Int => Unit) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[(Long, Seq[Bytes]), Int](0)
 
     if (verbose) println("Initial Sync")
 
-    val dataOut = new DataOutputStream(commandRunner.stdin)
-    val dataIn = new DataInputStream(commandRunner.stdout)
+    val client = new RpcClient(
+      new DataOutputStream(commandRunner.stdin),
+      new DataInputStream(commandRunner.stdout) 
+    )
 
     // initial sync
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
-      Util.writeMsg(dataOut, Rpc.FullScan(""))
-      val initial = Util.readMsg[Seq[(String, Signature)]](dataIn)
+      client.writeMsg(Rpc.FullScan(""))
+      val initial = client.readMsg[Seq[(String, Signature)]]()
 
       val vfs = vfsArr(i)
       for((p, sig) <- initial) sig match{
@@ -103,8 +119,8 @@ object Syncer{
           folder.value(name) = Vfs.Symlink(dest)
       }
 
-      Syncer.syncRepo(
-        commandRunner,
+      val count = Syncer.syncRepo(
+        client,
         src,
         dest,
         vfsArr(i),
@@ -112,6 +128,8 @@ object Syncer{
         skip,
         verbose
       )
+
+      countWrite(count)
     }
 
     if (eventQueue.isEmpty) onComplete()
@@ -134,7 +152,8 @@ object Syncer{
             .distinct
 
           if (srcEventDirs.nonEmpty) {
-            Syncer.syncRepo(commandRunner, src, dest, vfsArr(i), srcEventDirs, skip, verbose)
+            val count = Syncer.syncRepo(client, src, dest, vfsArr(i), srcEventDirs, skip, verbose)
+            countWrite(count)
           }
         }
       }
@@ -172,18 +191,16 @@ object Syncer{
     interestingBases
   }
 
-  def syncRepo(commandRunner: os.SubProcess,
+  def syncRepo(client: RpcClient,
                src: os.Path,
                dest: Seq[String],
                stateVfs: Vfs[(Long, Seq[Bytes]), Int],
                interestingBases: Seq[os.Path],
                skip: os.Path => Boolean,
-               verbose: Boolean) = {
+               verbose: Boolean): Int = {
 
     if (verbose) for(p <- interestingBases) println("BASE " + p.relativeTo(src))
 
-    val dataOut = new DataOutputStream(commandRunner.stdin)
-    val dataIn = new DataInputStream(commandRunner.stdout)
     // interestingBases.foreach(x => println("BASE " + x))
     val signatureMapping = interestingBases
       // Only bother looking at paths which are canonical; changes to non-
@@ -218,7 +235,7 @@ object Syncer{
     var totalWrites = 0
     var pipelinedWrites = 0
     def performAction[T <: Action: upickle.default.Writer](p: T) = {
-      Util.writeMsg(dataOut, p)
+      client.writeMsg(p)
       p match{
         case Rpc.PutFile(path, perms) =>
           val (name, folder) = stateVfs.resolveParent(path).get
@@ -346,13 +363,13 @@ object Syncer{
         }
       }
       if (pipelinedWrites == 1000){
-        for(i <- 0 until pipelinedWrites) assert(Util.readMsg[Int](dataIn) == 0)
+        for(i <- 0 until pipelinedWrites) assert(client.readMsg[Int]() == 0)
         pipelinedWrites = 0
       }
     }
 
-    for(i <- 0 until pipelinedWrites) assert(Util.readMsg[Int](dataIn) == 0)
+    for(i <- 0 until pipelinedWrites) assert(client.readMsg[Int]() == 0)
 
-    if (verbose) println("Total writes: " + totalWrites)
+    totalWrites
   }
 }

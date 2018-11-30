@@ -73,3 +73,39 @@ case class Bytes(value: Array[Byte]){
 }
 
 object Bytes{ implicit val rw: ReadWriter[Bytes] = macroRW }
+
+case class RpcException(wrapped: RemoteException) extends Throwable(wrapped)
+case class RemoteException(clsName: String,
+                           msg: String,
+                           stack: Seq[StackTraceElement],
+                           parent: Option[RemoteException]) extends Throwable(
+  clsName + ": " + msg
+){
+  this.setStackTrace(stack.toArray[StackTraceElement])
+}
+object RemoteException{
+  def create(e: Throwable): RemoteException = RemoteException(
+    e.getClass.getName,
+    e.getMessage,
+    e.getStackTrace,
+    Option(e.getCause).map(create)
+  )
+
+  implicit val rw: ReadWriter[RemoteException] = macroRW
+  implicit val stackTraceRW = upickle.default.readwriter[ujson.Obj].bimap[StackTraceElement](
+    ste => ujson.Obj(
+      "declaringClass" -> ujson.Str(ste.getClassName),
+      "methodName" -> ujson.Str(ste.getMethodName),
+      "fileName" -> ujson.Str(ste.getFileName),
+      "lineNumber" -> ujson.Num(ste.getLineNumber)
+    ),
+    {case json: ujson.Obj =>
+      new StackTraceElement(
+        json("declaringClass").str.toString,
+        json("methodName").str.toString,
+        json("fileName").str.toString,
+        json("lineNumber").num.toInt
+      )
+    }
+  )
+}

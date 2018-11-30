@@ -3,6 +3,7 @@ import java.util.concurrent.Semaphore
 
 import devbox.common.Signature
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.revwalk.RevCommit
 
 import collection.JavaConverters._
 import utest._
@@ -36,6 +37,10 @@ object DevboxTests extends TestSuite{
     }
   }
 
+  def printBanner(i: Int, total: Int, commit: RevCommit) = {
+    println("=" * 80)
+    println(s"[$i/$total] Checking ${commit.getName} ${commit.getFullMessage}")
+  }
   def check(label: String, uri: String, stride: Int) = {
     val src = os.pwd / "out" / "scratch" / label / "src"
     val dest = os.pwd / "out" / "scratch" / label / "dest"
@@ -51,7 +56,7 @@ object DevboxTests extends TestSuite{
       .setDirectory(src.toIO)
       .call()
 
-    val verbose = false
+    val verbose = true
     val commits = repo.log().call().asScala.toSeq.reverse
     val agent = os.proc(agentExecutable, verbose.toString).spawn(cwd = dest, stderr = os.Inherit)
 
@@ -68,15 +73,31 @@ object DevboxTests extends TestSuite{
       false
     )
 
+    var lastWriteCount = 0
+    printBanner(0, commits.length, commits(0))
     syncer.start()
     workCount.acquire()
+
     validate(src, dest, _.segments.contains(".git"))
 
-    try {
-      for ((commit, i) <- commits.drop(1).zipWithIndex) {
-        println("=" * 80)
-        println(s"[$i/${commits.length - 1}] Checking ${commit.getName} ${commit.getFullMessage}")
+    println("Write Count: " + (syncer.writeCount - lastWriteCount))
+    lastWriteCount = syncer.writeCount
 
+    // Fixed random for
+    val random = new scala.util.Random(31337)
+
+    val commitsIndicesToCheck = Seq(306, 8)
+      // Step through the commits in order to test "normal" edits
+//      (1 until commits.length) ++
+      // Also jump between a bunch of random commits to test robustness against
+      // huge edits
+//      (0 until 50 * stride).map(_ => random.nextInt(commits.length))
+
+    try {
+
+      for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
+        val commit = commits(i)
+        printBanner(i, commits.length, commit)
         repo.checkout().setName(commit.getName).call()
 
         workCount.acquire()
@@ -84,7 +105,10 @@ object DevboxTests extends TestSuite{
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
         // validation anyway.
-        if (i % stride == 0) validate(src, dest, _.segments.contains(".git"))
+        if (count % stride == 0) validate(src, dest, _.segments.contains(".git"))
+
+        println("Write Count: " + (syncer.writeCount - lastWriteCount))
+        lastWriteCount = syncer.writeCount
       }
     }finally{
       println("Closing Syncer")
