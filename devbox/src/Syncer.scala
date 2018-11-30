@@ -1,35 +1,64 @@
 package devbox
-import collection.JavaConverters._
 import java.io.{DataInputStream, DataOutputStream}
 import java.nio.ByteBuffer
 import java.util.concurrent._
-import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.locks.ReentrantLock
 
 import devbox.common._
-import io.methvin.watcher.DirectoryWatcher
 
 import scala.annotation.tailrec
 import scala.collection.mutable
 
-class Syncer(mapping: Seq[(os.Path, Seq[String])]) {
-
-
+class Syncer(commandRunner: os.SubProcess,
+             mapping: Seq[(os.Path, Seq[String])],
+             skip: os.Path => Boolean,
+             debounceTime: Int,
+             onComplete: () => Unit) {
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
     eventQueue.add(p)
 //    println("FSEVENT " + p.toList)
   })
 
-  val workCount = new Semaphore(0)
+  private[this] var watcherThread: Thread = null
+  private[this] var syncThread: Thread = null
 
+  @volatile var running: Boolean = false
+
+
+  def start() = {
+    running = true
+    watcherThread = new Thread(() => watcher.start())
+    syncThread = new Thread(() => Syncer.syncAllRepos(
+      commandRunner,
+      mapping,
+      onComplete,
+      eventQueue,
+      skip,
+      debounceTime,
+      () => running
+    ))
+
+    watcherThread.start()
+    syncThread.start()
+  }
+
+  def close() = {
+    running = false
+    watcher.stop()
+    watcherThread.join()
+    syncThread.interrupt()
+    syncThread.join()
+  }
+}
+
+object Syncer{
   def syncAllRepos(commandRunner: os.SubProcess,
+                   mapping: Seq[(os.Path, Seq[String])],
+                   onComplete: () => Unit,
+                   eventQueue: BlockingQueue[Array[String]],
                    skip: os.Path => Boolean,
-                   debounceTime: Int) = {
-
-
-    println("LOCK")
-    val thread = new Thread(() => watcher.start())
+                   debounceTime: Int,
+                   continue: () => Boolean) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[(Long, Seq[Bytes]), Int](0)
 
@@ -72,17 +101,18 @@ class Syncer(mapping: Seq[(os.Path, Seq[String])]) {
         skip
       )
     }
-    workCount.release()
-    thread.start()
+    onComplete()
 
-    try {
-      while (true) {
+    while (continue()) {
 
-        println("="*80)
-        println("Incremental Sync")
+      println("="*80)
+      println("Incremental Sync")
 
-        val interestingBases = Syncer.debouncedDeque(eventQueue, debounceTime)
+      val interestingBasesOpt =
+        try Some(Syncer.debouncedDeque(eventQueue, debounceTime))
+        catch{case e: InterruptedException => None}
 
+      for(interestingBases <- interestingBasesOpt){
         for (((src, dest), i) <- mapping.zipWithIndex) {
           val srcEventDirs = interestingBases
             .map(os.Path(_))
@@ -94,15 +124,11 @@ class Syncer(mapping: Seq[(os.Path, Seq[String])]) {
             Syncer.syncRepo(commandRunner, src, dest, vfsArr(i), srcEventDirs, skip)
           }
         }
-        workCount.release()
+        onComplete()
       }
-    } finally{
-      watcher.stop()
-      thread.stop()
     }
   }
-}
-object Syncer{
+
   def debouncedDeque[T](eventQueue: BlockingQueue[Array[T]], debounceTime: Int) = {
     val interestingBases = mutable.Buffer.empty[T]
 

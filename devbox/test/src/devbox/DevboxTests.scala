@@ -1,5 +1,6 @@
 package devbox
 import java.io.{DataInputStream, DataOutputStream}
+import java.util.concurrent.Semaphore
 
 import devbox.common.{Bytes, Rpc, Signature, Util}
 import org.eclipse.jgit.api.Git
@@ -53,23 +54,27 @@ object DevboxTests extends TestSuite{
     val agent = os.proc(agentExecutable).spawn(cwd = dest, stderr = os.Inherit)
 
     repo.checkout().setName(commits.head.getName).call()
+    val workCount = new Semaphore(0)
+    val syncer = new Syncer(
+      agent,
+      Seq(src -> Nil),
+      _.segments.contains(".git"),
+      50,
+      () => workCount.release()
+    )
 
-    val syncer = new Syncer(Seq(src -> Nil))
-
-    val thread = new Thread(() => syncer.syncAllRepos(agent, _.segments.contains(".git"), 50))
-
-    thread.start()
-    syncer.workCount.acquire()
+    syncer.start()
+    workCount.acquire()
     validate(src, dest, _.segments.contains(".git"))
 
     try {
       for ((commit, i) <- commits.drop(1).zipWithIndex) {
-        println("="*80)
-        println(s"[$i/${commits.length}] Checking ${commit.getName} ${commit.getFullMessage}")
+        println("=" * 80)
+        println(s"[$i/${commits.length - 1}] Checking ${commit.getName} ${commit.getFullMessage}")
         repo.checkout().setName(commit.getName).call()
         println("syncRepo")
 
-        syncer.workCount.acquire()
+        workCount.acquire()
 
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
@@ -78,7 +83,8 @@ object DevboxTests extends TestSuite{
       }
     }finally{
 //      Thread.sleep(999999)
-//     watcher.close()
+      println("Closing SYncer")
+      syncer.close()
     }
   }
 
