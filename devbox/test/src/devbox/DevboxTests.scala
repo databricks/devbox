@@ -85,7 +85,7 @@ object DevboxTests extends TestSuite{
       (1 until commits.length) ++
       // Also jump between a bunch of random commits to test robustness against
       // huge edits modifying lots of different files
-      (0 until 50 * stride).map(_ => random.nextInt(commits.length))
+      (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
 
     printBanner(0, commits.length, 0, commitsIndicesToCheck.length, commits(0))
