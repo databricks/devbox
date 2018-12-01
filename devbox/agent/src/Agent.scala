@@ -52,7 +52,7 @@ object Agent {
   def mainLoop(logger: Logger, skip: (os.Path, os.Path) => Boolean, client: RpcClient) = {
 
 
-    val buffer = new Array[Byte](Signature.blockSize)
+    val buffer = new Array[Byte](Util.blockSize)
     while (true) {
       val msg = client.readMsg[Rpc]()
       logger("AGENT ", msg)

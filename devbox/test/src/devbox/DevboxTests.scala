@@ -22,7 +22,7 @@ object DevboxTests extends TestSuite{
         "Path list difference, src: " + (srcRelPaths -- destRelPaths) + ", dest: " + (destRelPaths -- srcRelPaths)
       )
     }
-    val buffer = new Array[Byte](Signature.blockSize)
+    val buffer = new Array[Byte](Util.blockSize)
 
     val differentSigs = srcPaths.zip(destPaths).flatMap{ case (s, d) =>
       val srcSig = if (os.exists(s, followLinks = false)) Some(Signature.compute(s, buffer)) else None

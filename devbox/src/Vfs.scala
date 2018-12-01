@@ -1,5 +1,5 @@
 package devbox
-import devbox.common.{Action, Bytes, Rpc, Signature}
+import devbox.common._
 import geny.Generator
 
 import scala.collection.mutable
@@ -101,8 +101,8 @@ object Vfs{
       folder.children(name) = Vfs.File(Signature.Symlink(dest))
 
     case Rpc.WriteChunk(path, offset, bytes, hash) =>
-      assert(offset % Signature.blockSize == 0)
-      val index = offset / Signature.blockSize
+      assert(offset % Util.blockSize == 0)
+      val index = offset / Util.blockSize
       val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         blockHashes =

@@ -114,7 +114,7 @@ object Syncer{
                    countWrite: Int => Unit) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
-    val buffer = new Array[Byte](Signature.blockSize)
+    val buffer = new Array[Byte](Util.blockSize)
 
     val client = new RpcClient(
       new DataOutputStream(agent.stdin),
@@ -317,7 +317,7 @@ object Syncer{
                          otherHashes: Seq[Bytes],
                          size: Long,
                          otherSize: Long) = {
-    val byteArr = new Array[Byte](Signature.blockSize)
+    val byteArr = new Array[Byte](Util.blockSize)
     val buf = ByteBuffer.wrap(byteArr)
     Util.autoclose(p.toSource.getChannel()) { channel =>
       for {
@@ -325,10 +325,10 @@ object Syncer{
         if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
       } {
         buf.rewind()
-        channel.position(i * Signature.blockSize)
+        channel.position(i * Util.blockSize)
         var n = 0
         while ( {
-          if (n == Signature.blockSize) false
+          if (n == Util.blockSize) false
           else channel.read(buf) match {
             case -1 => false
             case d =>
@@ -340,7 +340,7 @@ object Syncer{
         client(
           Rpc.WriteChunk(
             segments,
-            i * Signature.blockSize,
+            i * Util.blockSize,
             new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr),
             blockHashes(i)
           )
