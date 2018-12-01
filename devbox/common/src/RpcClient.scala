@@ -2,7 +2,13 @@ package devbox.common
 import java.io.{DataInputStream, DataOutputStream}
 
 class RpcClient(out: DataOutputStream, in: DataInputStream) {
+  private[this] var outstandingMsgs = 0
+  def getOutstandingMsgs = outstandingMsgs
+  def drainOutstandingMsgs() = {
+    while(getOutstandingMsgs > 0) assert(readMsg[Int]() == 0)
+  }
   def writeMsg[T: upickle.default.Writer](t: T, success: Boolean = true): Unit = {
+    outstandingMsgs += 1
     try {
       val blob = upickle.default.writeBinary(t)
       out.writeBoolean(success)
@@ -15,6 +21,7 @@ class RpcClient(out: DataOutputStream, in: DataInputStream) {
   }
 
   def readMsg[T: upickle.default.Reader](): T = {
+    outstandingMsgs -= 1
     val success = in.readBoolean()
 
     val length = in.readInt()

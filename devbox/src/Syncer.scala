@@ -177,23 +177,25 @@ object Syncer{
               buffer
             )
 
-            signatureMapping.collect{
-              case (p, Some(Signature.File(_, blockHashes, _)), otherSig) =>
-                val otherHashes = otherSig match{
-                  case Some(Signature.File(_, otherBlockHashes, _)) => otherBlockHashes
-                  case None =>  Nil
-                }
-                logger("STREAM CHUNKS", p.relativeTo(src).toString)
-                streamFileContents(
-                  client,
-                  vfsArr(i),
-                  p,
-                  p.relativeTo(src).toString,
-                  blockHashes,
-                  otherHashes
-                )
+            for(((p, Some(Signature.File(_, blockHashes, _)), otherSig), n) <- signatureMapping.zipWithIndex){
+              val otherHashes = otherSig match{
+                case Some(Signature.File(_, otherBlockHashes, _)) => otherBlockHashes
+                case _ =>  Nil
+              }
+              logger("STREAM CHUNKS", p.relativeTo(src).toString)
+              streamFileContents(
+                client,
+                vfsArr(i),
+                p,
+                p.relativeTo(src).toString,
+                blockHashes,
+                otherHashes
+              )
 
+              if (n % 1000 == 0) client.drainOutstandingMsgs()
             }
+
+            client.drainOutstandingMsgs()
 
             countWrite(count)
           }
@@ -251,10 +253,8 @@ object Syncer{
                    buffer: Array[Byte]): Int = {
 
     var totalWrites = 0
-    var pipelinedWrites = 0
 
-    for((p, localSig, remoteSig) <- signatureMapping){
-      pipelinedWrites += 1
+    for(((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex){
       totalWrites += 1
       val segments = p.relativeTo(src).toString
       if (localSig != remoteSig) (localSig, remoteSig) match{
@@ -282,14 +282,10 @@ object Syncer{
         case (Some(Signature.File(perms, blockHashes, size)), remote) =>
           prepareRemoteFile(client, stateVfs, p, segments, perms, blockHashes, size, remote)
       }
+      if (i % 1000 == 0) client.drainOutstandingMsgs()
 
-      if (pipelinedWrites == 1000){
-        for(i <- 0 until pipelinedWrites) assert(client.readMsg[Int]() == 0)
-        pipelinedWrites = 0
-      }
     }
-
-    for(i <- 0 until pipelinedWrites) assert(client.readMsg[Int]() == 0)
+    client.drainOutstandingMsgs()
 
     totalWrites
   }
