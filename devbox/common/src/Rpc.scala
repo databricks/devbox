@@ -23,8 +23,8 @@ object Rpc{
   case class WriteChunk(path: String, offset: Long, data: Bytes, hash: Bytes) extends Rpc with Action
   object WriteChunk{ implicit val rw: ReadWriter[WriteChunk] = macroRW }
 
-  case class Truncate(path: String, offset: Long) extends Rpc with Action
-  object Truncate{ implicit val rw: ReadWriter[Truncate] = macroRW }
+  case class SetSize(path: String, offset: Long) extends Rpc with Action
+  object SetSize{ implicit val rw: ReadWriter[SetSize] = macroRW }
 
   case class SetPerms(path: String, perms: Int) extends Rpc with Action
   object SetPerms{ implicit val rw: ReadWriter[SetPerms] = macroRW }

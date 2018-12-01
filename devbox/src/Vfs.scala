@@ -4,6 +4,12 @@ import geny.Generator
 
 import scala.collection.mutable
 
+/**
+  * Represents a simple in-memory filesystem, storing values of type [[T]] on
+  * every directory and file. Useful for modelling changes to a real filesystem
+  * without the expense of going to disk, or as a compact set of file paths
+  * that can conveniently be traversed in pre/post-order.
+  */
 final class Vfs[T](rootMetadata: T) {
   val root = Vfs.Dir[T](rootMetadata, mutable.LinkedHashMap.empty)
 
@@ -105,7 +111,7 @@ object Vfs{
           else ???
       )
 
-    case Rpc.Truncate(path, offset) =>
+    case Rpc.SetSize(path, offset) =>
       val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(size = offset)
 

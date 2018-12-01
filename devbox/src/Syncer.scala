@@ -142,42 +142,46 @@ object Syncer{
 
       for{
         interestingBases <-
-          try Some(Syncer.debouncedDeque(eventQueue, debounceTime))
+          try Some(Syncer.drainUntilStable(eventQueue, debounceTime))
           catch{case e: InterruptedException => None}
         ((src, dest), i) <- mapping.zipWithIndex
         srcEventDirs = interestingBases
+          .flatten
           .map(os.Path(_))
-          .filter(_.startsWith(src))
-          .filter(!skip(_, src))
+          .filter(p => p.startsWith(src) && !skip(p, src))
           .distinct
+          .sorted
         if srcEventDirs.nonEmpty
         _ = logger("BASE", srcEventDirs.map(_.relativeTo(src).toString()))
-        signatureMapping <-
-          try Some(computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src))
-          catch{case e: Exception =>
-            val x = new StringWriter()
-            val p = new PrintWriter(x)
-            e.printStackTrace(p)
-            logger("SYNC FAILED", x.toString)
-            eventQueue.add(interestingBases.toArray)
-            None
-          }
+        signatureMapping <- restartOnFailure(
+          logger, interestingBases, eventQueue,
+          computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src)
+        )
         _ = logger("SIGNATURE", signatureMapping)
         vfsRpcClient = new VfsRpcClient(client, vfsArr(i))
         count = Syncer.syncMetadata(vfsRpcClient, signatureMapping, src, dest, vfsArr(i), logger, buffer)
-        _ <-
-          try Some(streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, signatureMapping))
-          catch{case e: Exception =>
-            val x = new StringWriter()
-            val p = new PrintWriter(x)
-            e.printStackTrace(p)
-            logger("SYNC FAILED", x.toString)
-            eventQueue.add(interestingBases.toArray)
-            None
-          }
+        _ <- restartOnFailure(
+          logger, interestingBases, eventQueue,
+          streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, signatureMapping)
+        )
       } countWrite(count)
 
       if (eventQueue.isEmpty) onComplete()
+    }
+  }
+
+  def restartOnFailure[T](logger: Logger,
+                          interestingBases: Seq[Array[String]],
+                          eventQueue: BlockingQueue[Array[String]],
+                          t: => T)  = {
+    try Some(t)
+    catch{case e: Exception =>
+      val x = new StringWriter()
+      val p = new PrintWriter(x)
+      e.printStackTrace(p)
+      logger("SYNC FAILED", x.toString)
+      interestingBases.foreach(eventQueue.add)
+      None
     }
   }
 
@@ -209,7 +213,7 @@ object Syncer{
     client.drainOutstandingMsgs()
   }
 
-  def debouncedDeque[T](eventQueue: BlockingQueue[Array[T]], debounceTime: Int) = {
+  def drainUntilStable[T](eventQueue: BlockingQueue[T], debounceTime: Int) = {
     val interestingBases = mutable.Buffer.empty[T]
 
     /**
@@ -218,7 +222,7 @@ object Syncer{
       */
     @tailrec def await(first: Boolean, alreadyRetried: Boolean): Unit = {
       if (first) {
-        interestingBases.appendAll(eventQueue.take())
+        interestingBases.append(eventQueue.take())
         await(false, false)
       } else eventQueue.poll() match {
         case null =>
@@ -228,7 +232,7 @@ object Syncer{
             await(false, true)
           }
         case arr =>
-          interestingBases.appendAll(arr)
+          interestingBases.append(arr)
           await(false, false)
       }
     }
@@ -300,8 +304,7 @@ object Syncer{
       case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
         if (perms != otherPerms) client(Rpc.SetPerms(segments, perms))
 
-      case _ =>
-        client(Rpc.PutFile(segments, perms))
+      case _ => client(Rpc.PutFile(segments, perms))
 
     }
   }
@@ -344,7 +347,8 @@ object Syncer{
         )
       }
     }
-    if (size != otherSize) client(Rpc.Truncate(segments, size))
+
+    if (size != otherSize) client(Rpc.SetSize(segments, size))
   }
 
   def computeSignatures(interestingBases: Seq[Path],
@@ -354,14 +358,10 @@ object Syncer{
                         src: os.Path): Seq[(os.Path, Option[Signature], Option[Signature])] = {
 
     val signatureMapping = interestingBases
-      // Only bother looking at paths which are canonical; changes to non-
-      // canonical paths can be ignored because we'd also get the canonical
-      // path that we can operate on.
-      .filter(p => os.followLink(p).contains(p))
       .flatMap { p =>
         val listed =
-          if (!os.isDir(p, followLinks = false)) Nil
-          else os.list(p).filter(!skip(_, src)).map(_.last)
+          if (!os.isDir(p, followLinks = false)) os.Generator.apply()
+          else os.list.stream(p).filter(!skip(_, src)).map(_.last)
 
         val listedNames = listed.toSet
 
@@ -380,17 +380,12 @@ object Syncer{
         // We de-dup the combined list of names listed from the filesystem and
         // listed from the VFS, because they often have overlaps, and use
         // `listedNames` to check for previously-present-but-now-deleted files
-        for(k <- (listed ++ virtual.keys).distinct)
-        yield {
-          (
-            p / k,
-            if (!listedNames(k)) None else Some(Signature.compute(p / k, buffer)),
-            virtual.get(k) match{
-              case Some(v) => Some(v.value)
-              case None => stateVfs.resolve((p / k).relativeTo(src).toString()).map(_.value)
-            }
-          )
-        }
+        for(k <- (listedNames ++ virtual.keys).toArray.sorted)
+        yield (
+          p / k,
+          if (!listedNames(k)) None else Some(Signature.compute(p / k, buffer)),
+          virtual.get(k).map(_.value)
+        )
       }
 
     val sortedSignatures = signatureMapping.sortBy { case (p, local, remote) =>

@@ -90,8 +90,8 @@ object Agent {
           os.write.write(os.Path(path, os.pwd), data.value, Seq(StandardOpenOption.WRITE), 0, offset)
           client.writeMsg(0)
 
-        case Rpc.Truncate(path, offset) =>
-          Util.autoclose(FileChannel.open(os.Path(path, os.pwd) toNIO, StandardOpenOption.WRITE)){ channel =>
+        case Rpc.SetSize(path, offset) =>
+          Util.autoclose(FileChannel.open(os.Path(path, os.pwd).toNIO, StandardOpenOption.WRITE)){ channel =>
             channel.truncate(offset)
           }
           client.writeMsg(0)
