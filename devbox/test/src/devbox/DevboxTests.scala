@@ -34,7 +34,7 @@ object DevboxTests extends TestSuite{
 
     if (differentSigs.nonEmpty){
       throw new Exception(
-        "Signature list difference" + differentSigs
+        "Signature list difference " + differentSigs
       )
     }
   }

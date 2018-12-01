@@ -108,7 +108,7 @@ object Syncer{
       new DataInputStream(agent.stdout)
     )
 
-    // initial sync
+    logger("INITIAL SCAN")
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
       client.writeMsg(Rpc.FullScan(""))
@@ -298,7 +298,7 @@ object Syncer{
     remote match {
       case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
         if (perms != otherPerms) performAction(client, stateVfs, Rpc.SetPerms(segments, perms))
-        if (otherSize > size) performAction(client, stateVfs, Rpc.Truncate(segments, size))
+        if (otherSize != size) performAction(client, stateVfs, Rpc.Truncate(segments, size))
       case _ =>
         performAction(client, stateVfs, Rpc.PutFile(segments, perms))
     }
