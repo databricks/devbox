@@ -90,6 +90,13 @@ class Syncer(agent: os.SubProcess,
 }
 
 object Syncer{
+  class VfsRpcClient(client: RpcClient, stateVfs: Vfs[(Long, Seq[Bytes]), Int]){
+    def drainOutstandingMsgs() = client.drainOutstandingMsgs()
+    def apply[T <: Action: default.Writer](p: T) = {
+      client.writeMsg(p)
+      Vfs.updateVfs(p, stateVfs)
+    }
+  }
   def syncAllRepos(agent: os.SubProcess,
                    mapping: Seq[(os.Path, Seq[String])],
                    onComplete: () => Unit,
@@ -108,6 +115,7 @@ object Syncer{
       new DataInputStream(agent.stdout)
     )
 
+
     logger("INITIAL SCAN")
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
@@ -120,23 +128,7 @@ object Syncer{
       )
       eventQueue.add(initialLocal.map(_.toString).toArray)
 
-      val vfs = vfsArr(i)
-      for((p, sig) <- initialRemote) sig match{
-        case Signature.File(perms, hashes, size) =>
-          val (name, folder) = vfs.resolveParent(p).get
-          assert(!folder.value.contains(name))
-          folder.value(name) = Vfs.File(perms, (size, hashes))
-
-        case Signature.Dir(perms) =>
-          val (name, folder) = vfs.resolveParent(p).get
-          assert(!folder.value.contains(name))
-          folder.value(name) = Vfs.Folder(perms, mutable.LinkedHashMap.empty[String, Vfs.Node[(Long, Seq[Bytes]), Int]])
-
-        case Signature.Symlink(dest) =>
-          val (name, folder) = vfs.resolveParent(p).get
-          assert(!folder.value.contains(name))
-          folder.value(name) = Vfs.Symlink(dest)
-      }
+      for((p, sig) <- initialRemote) Vfs.updateVfs(p, sig, vfsArr(i))
     }
 
     while (continue()) {
@@ -165,9 +157,10 @@ object Syncer{
             None
           }
         _ = logger("SIGNATURE", signatureMapping)
-        count = Syncer.syncMetadata(client, signatureMapping, src, dest, vfsArr(i), logger, buffer)
+        vfsRpcClient = new VfsRpcClient(client, vfsArr(i))
+        count = Syncer.syncMetadata(vfsRpcClient, signatureMapping, src, dest, vfsArr(i), logger, buffer)
         _ <-
-          try Some(streamAllFileContents(logger, vfsArr(i), client, src, signatureMapping))
+          try Some(streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, signatureMapping))
           catch{case e: Exception =>
             val x = new StringWriter()
             val p = new PrintWriter(x)
@@ -184,13 +177,13 @@ object Syncer{
 
   def streamAllFileContents(logger: Logger,
                             stateVfs: Vfs[(Long, Seq[Bytes]), Int],
-                            client: RpcClient,
+                            client: VfsRpcClient,
                             src: Path,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
-    for (((p, Some(Signature.File(_, blockHashes, _)), otherSig), n) <- signatureMapping.zipWithIndex) {
-      val otherHashes = otherSig match {
-        case Some(Signature.File(_, otherBlockHashes, _)) => otherBlockHashes
-        case _ => Nil
+    for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
+      val (otherHashes, otherSize) = otherSig match {
+        case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
+        case _ => (Nil, 0L)
       }
       logger("STREAM CHUNKS", p.relativeTo(src).toString)
       streamFileContents(
@@ -199,7 +192,9 @@ object Syncer{
         p,
         p.relativeTo(src).toString,
         blockHashes,
-        otherHashes
+        otherHashes,
+        size,
+        otherSize
       )
 
       if (n % 1000 == 0) client.drainOutstandingMsgs()
@@ -237,7 +232,7 @@ object Syncer{
     interestingBases
   }
 
-  def syncMetadata(client: RpcClient,
+  def syncMetadata(client: VfsRpcClient,
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
                    dest: Seq[String],
@@ -252,25 +247,25 @@ object Syncer{
       val segments = p.relativeTo(src).toString
       if (localSig != remoteSig) (localSig, remoteSig) match{
         case (None, _) =>
-          performAction(client, stateVfs, Rpc.Remove(segments))
+          client(Rpc.Remove(segments))
         case (Some(Signature.Dir(perms)), remote) =>
           remote match{
             case None =>
-              performAction(client, stateVfs, Rpc.PutDir(segments, perms))
+              client(Rpc.PutDir(segments, perms))
             case Some(Signature.Dir(remotePerms)) =>
-              performAction(client, stateVfs, Rpc.SetPerms(segments, perms))
+              client(Rpc.SetPerms(segments, perms))
             case Some(_) =>
-              performAction(client, stateVfs, Rpc.Remove(segments))
-              performAction(client, stateVfs, Rpc.PutDir(segments, perms))
+              client(Rpc.Remove(segments))
+              client(Rpc.PutDir(segments, perms))
           }
 
         case (Some(Signature.Symlink(dest)), remote) =>
           remote match {
             case None =>
-              performAction(client, stateVfs, Rpc.PutLink(segments, dest))
+              client(Rpc.PutLink(segments, dest))
             case Some(_) =>
-              performAction(client, stateVfs, Rpc.Remove(segments))
-              performAction(client, stateVfs, Rpc.PutLink(segments, dest))
+              client(Rpc.Remove(segments))
+              client(Rpc.PutLink(segments, dest))
           }
         case (Some(Signature.File(perms, blockHashes, size)), remote) =>
           prepareRemoteFile(client, stateVfs, p, segments, perms, blockHashes, size, remote)
@@ -283,7 +278,7 @@ object Syncer{
     totalWrites
   }
 
-  def prepareRemoteFile(client: RpcClient,
+  def prepareRemoteFile(client: VfsRpcClient,
                         stateVfs: Vfs[(Long, Seq[Bytes]), Int],
                         p: Path,
                         segments: String,
@@ -292,24 +287,27 @@ object Syncer{
                         size: Long,
                         remote: Option[Signature]) = {
     if (remote.exists(!_.isInstanceOf[Signature.File])) {
-      performAction(client, stateVfs, Rpc.Remove(segments))
+      client(Rpc.Remove(segments))
     }
 
     remote match {
       case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
-        if (perms != otherPerms) performAction(client, stateVfs, Rpc.SetPerms(segments, perms))
-        if (otherSize != size) performAction(client, stateVfs, Rpc.Truncate(segments, size))
+        if (perms != otherPerms) client(Rpc.SetPerms(segments, perms))
+
       case _ =>
-        performAction(client, stateVfs, Rpc.PutFile(segments, perms))
+        client(Rpc.PutFile(segments, perms))
+
     }
   }
 
-  def streamFileContents(client: RpcClient,
+  def streamFileContents(client: VfsRpcClient,
                          stateVfs: Vfs[(Long, Seq[Bytes]), Int],
                          p: Path,
                          segments: String,
                          blockHashes: Seq[Bytes],
-                         otherHashes: Seq[Bytes]) = {
+                         otherHashes: Seq[Bytes],
+                         size: Long,
+                         otherSize: Long) = {
     val byteArr = new Array[Byte](Signature.blockSize)
     val buf = ByteBuffer.wrap(byteArr)
     Util.autoclose(p.toSource.getChannel()) { channel =>
@@ -330,7 +328,7 @@ object Syncer{
           }
         }) ()
 
-        performAction(client, stateVfs,
+        client(
           Rpc.WriteChunk(
             segments,
             i * Signature.blockSize,
@@ -340,56 +338,7 @@ object Syncer{
         )
       }
     }
-  }
-
-  def performAction[T <: Action: default.Writer](client: RpcClient,
-                                                 stateVfs: Vfs[(Long, Seq[Bytes]), Int],
-                                                 p: T) = {
-    client.writeMsg(p)
-
-    // Update stateVfs according to the given action
-    p match{
-      case Rpc.PutFile(path, perms) =>
-        val (name, folder) = stateVfs.resolveParent(path).get
-        assert(!folder.value.contains(name))
-        folder.value(name) = Vfs.File(perms, (0, Nil))
-
-      case Rpc.Remove(path) =>
-        stateVfs.resolveParent(path).foreach{
-          case (name, folder) => folder.value.remove(name)
-        }
-
-      case Rpc.PutDir(path, perms) =>
-        val (name, folder) = stateVfs.resolveParent(path).get
-        assert(!folder.value.contains(name))
-        folder.value(name) = Vfs.Folder(perms, mutable.LinkedHashMap.empty[String, Vfs.Node[(Long, Seq[Bytes]), Int]])
-
-      case Rpc.PutLink(path, dest) =>
-        val (name, folder) = stateVfs.resolveParent(path).get
-        assert(!folder.value.contains(name))
-        folder.value(name) = Vfs.Symlink(dest)
-
-      case Rpc.WriteChunk(path, offset, bytes, hash) =>
-        assert(offset % Signature.blockSize == 0)
-        val index = offset / Signature.blockSize
-        val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[(Long, Seq[Bytes]), Int]]
-        currentFile.value = (
-          currentFile.value._1,
-          if (index < currentFile.value._2.length) currentFile.value._2.updated(index.toInt, hash)
-          else if (index == currentFile.value._2.length) currentFile.value._2 :+ hash
-          else ???
-        )
-
-      case Rpc.Truncate(path, offset) =>
-        val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[(Long, Seq[Bytes]), Int]]
-        currentFile.value = (offset, currentFile.value._2)
-
-      case Rpc.SetPerms(path, perms) =>
-        stateVfs.resolve(path) match{
-          case Some(f @ Vfs.File(_, _)) => f.metadata = perms
-          case Some(f @ Vfs.Folder(_, _)) => f.metadata = perms
-        }
-    }
+    if (size != otherSize) client(Rpc.Truncate(segments, size))
   }
 
   def computeSignatures(interestingBases: Seq[Path],
