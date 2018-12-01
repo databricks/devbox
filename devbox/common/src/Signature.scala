@@ -65,12 +65,13 @@ case class Bytes(value: Array[Byte]){
 
 object Bytes{ implicit val rw: ReadWriter[Bytes] = macroRW }
 
-case class RpcException(wrapped: RemoteException) extends Throwable(wrapped)
+case class RpcException(wrapped: RemoteException) extends Exception("", wrapped)
 case class RemoteException(clsName: String,
                            msg: String,
                            stack: Seq[StackTraceElement],
-                           parent: Option[RemoteException]) extends Throwable(
-  clsName + ": " + msg
+                           parent: Option[RemoteException]) extends Exception(
+  clsName + ": " + msg,
+  parent.orNull
 ){
   this.setStackTrace(stack.toArray[StackTraceElement])
 }

@@ -1,8 +1,5 @@
-package devbox
-
+package devbox.common
 import scala.annotation.tailrec
-
-
 
 
 object Cli{

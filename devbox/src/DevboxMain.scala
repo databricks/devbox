@@ -1,29 +1,23 @@
 package devbox
-
-import devbox.common.Cli
+import devbox.common.{Cli, Util}
 import devbox.common.Cli.{Arg, showArg}
 
-object DevboxTestMain {
-  case class Config(label: String = "edge",
+object DevboxMain {
+  case class Config(repo: List[String] = Nil,
                     stride: Int = 1,
                     debounceMillis: Int = 100,
                     help: Boolean = false,
-                    verbose: Boolean = false)
+                    verbose: Boolean = false,
+                    ignoreStrategy: String = "")
 
   def main(args: Array[String]): Unit = {
 
     val signature = Seq(
       Arg[Config, String](
-        "label", None,
-        "Which repository's commits to use for this test",
-        (c, v) => c.copy(label = v)
+        "repo", None,
+        "Which repository to sync",
+        (c, v) => c.copy(repo = v :: c.repo)
       ),
-      Arg[Config, Int](
-        "stride", None,
-        "How often to perform validation, once every [stride] commits",
-        (c, v) => c.copy(stride = v)
-      ),
-
       Arg[Config, Int](
         "debounce", None,
         "How many milliseconds to wait for the filesystem to stabilize before syncing",
@@ -38,8 +32,14 @@ object DevboxTestMain {
         "verbose", None,
         "Enable verbose logging",
         (c, v) => c.copy(verbose = true)
+      ),
+      Arg[Config, String](
+        "ignore-strategy", None,
+        "",
+        (c, v) => c.copy(ignoreStrategy = v)
       )
     )
+
 
     Cli.groupArgs(args.toList, signature, Config()) match{
       case Left(msg) =>
@@ -50,17 +50,23 @@ object DevboxTestMain {
           val leftMargin = signature.map(showArg(_).length).max + 2
           System.out.println(Cli.formatBlock(signature, leftMargin).mkString("\n"))
         }else {
-          val commits = remaining.map(_.toInt)
-
-          DevboxTests.walkValidate(
-            config.label,
-            DevboxTests.cases(config.label),
-            config.stride,
+          val skip = Util.ignoreCallback(config.ignoreStrategy)
+          val agent = os.proc(remaining).spawn()
+          Util.autoclose(new Syncer(
+            agent,
+            for(s <- config.repo)
+            yield s.split(':') match{
+              case Array(src) => (os.Path(src, os.pwd), Seq(os.Path(src, os.pwd).last))
+              case Array(src, dest) => (os.Path(src, os.pwd), dest.split('/').toSeq)
+            },
+            skip,
             config.debounceMillis,
-            commits(0),
-            commits.drop(1),
+            () => (),
             config.verbose
-          )
+
+          )){syncer =>
+            syncer.start()
+          }
         }
         System.exit(0)
     }

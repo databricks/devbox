@@ -10,7 +10,7 @@ import scala.collection.mutable
 
 class Syncer(commandRunner: os.SubProcess,
              mapping: Seq[(os.Path, Seq[String])],
-             skip: os.Path => Boolean,
+             skip: (os.Path, os.Path) => Boolean,
              debounceTime: Int,
              onComplete: () => Unit,
              verbose: Boolean) extends AutoCloseable{
@@ -82,7 +82,7 @@ object Syncer{
                    mapping: Seq[(os.Path, Seq[String])],
                    onComplete: () => Unit,
                    eventQueue: BlockingQueue[Array[String]],
-                   skip: os.Path => Boolean,
+                   skip: (os.Path, os.Path) => Boolean,
                    debounceTime: Int,
                    continue: () => Boolean,
                    verbose: Boolean,
@@ -101,10 +101,15 @@ object Syncer{
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
       client.writeMsg(Rpc.FullScan(""))
-      val initial = client.readMsg[Seq[(String, Signature)]]()
+      val initialRemote = client.readMsg[Seq[(String, Signature)]]()
+      val initialLocal = os.walk(
+        src,
+        p => skip(p, src) || !os.isDir(p, followLinks = false),
+        includeTarget = true
+      )
 
       val vfs = vfsArr(i)
-      for((p, sig) <- initial) sig match{
+      for((p, sig) <- initialRemote) sig match{
         case Signature.File(perms, hashes, size) =>
           val (name, folder) = vfs.resolveParent(p).get
           assert(!folder.value.contains(name))
@@ -126,7 +131,7 @@ object Syncer{
         src,
         dest,
         vfsArr(i),
-        os.walk(src, p => skip(p) || !os.isDir(p, followLinks = false), includeTarget = true),
+        initialLocal,
         skip,
         verbose,
         buffer
@@ -151,7 +156,7 @@ object Syncer{
           val srcEventDirs = interestingBases
             .map(os.Path(_))
             .filter(_.startsWith(src))
-            .filter(!skip(_))
+            .filter(!skip(_, src))
             .distinct
 
           if (srcEventDirs.nonEmpty) {
@@ -208,7 +213,7 @@ object Syncer{
                dest: Seq[String],
                stateVfs: Vfs[(Long, Seq[Bytes]), Int],
                interestingBases: Seq[os.Path],
-               skip: os.Path => Boolean,
+               skip: (os.Path, os.Path) => Boolean,
                verbose: Boolean,
                buffer: Array[Byte]): Int = {
 
@@ -234,7 +239,7 @@ object Syncer{
       .flatMap { p =>
         val listed =
           if (!os.exists(p, followLinks = false)) Nil
-          else os.list(p).filter(!skip(_))
+          else os.list(p).filter(!skip(_, src))
 
         val listedNames = listed.map(_.last).toSet
 

@@ -1,7 +1,7 @@
 package devbox
 import java.util.concurrent.Semaphore
 
-import devbox.common.Signature
+import devbox.common.{Signature, Util}
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.revwalk.RevCommit
 
@@ -9,10 +9,10 @@ import collection.JavaConverters._
 import utest._
 
 object DevboxTests extends TestSuite{
-  def validate(src: os.Path, dest: os.Path, skip: os.Path => Boolean) = {
+  def validate(src: os.Path, dest: os.Path, skip: (os.Path, os.Path) => Boolean) = {
     println("Validating...")
-    val srcPaths = os.walk(src, skip)
-    val destPaths = os.walk(dest, skip)
+    val srcPaths = os.walk(src, skip(_, src))
+    val destPaths = os.walk(dest, skip(_, dest))
 
     val srcRelPaths = srcPaths.map(_.relativeTo(src)).toSet
     val destRelPaths = destPaths.map(_.relativeTo(dest)).toSet
@@ -65,7 +65,9 @@ object DevboxTests extends TestSuite{
       .setDirectory(src.toIO)
       .call()
     val commits = repo.log().call().asScala.toSeq.reverse
-    val agent = os.proc(agentExecutable, verbose.toString).spawn(cwd = dest, stderr = os.Inherit)
+    val verboseFlag = if (verbose) Seq("--verbose") else Nil
+    val agent = os.proc(agentExecutable, verboseFlag, "--ignore-strategy", "dotgit")
+      .spawn(cwd = dest, stderr = os.Inherit)
     try{
       repo.checkout().setName(commits.head.getName).call()
 
@@ -85,10 +87,11 @@ object DevboxTests extends TestSuite{
           // huge edits modifying lots of different files
           (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
+      val sync = Util.ignoreCallback("dotgit")
       devbox.common.Util.autoclose(new Syncer(
         agent,
         Seq(src -> Nil),
-        _.segments.contains(".git"),
+        sync,
         debounceMillis,
         () => workCount.release(),
         verbose
@@ -97,7 +100,7 @@ object DevboxTests extends TestSuite{
         syncer.start()
         workCount.acquire()
         println("Write Count: " + (syncer.writeCount - lastWriteCount))
-        validate(src, dest, _.segments.contains(".git"))
+        validate(src, dest, sync)
 
         lastWriteCount = syncer.writeCount
 
@@ -113,7 +116,7 @@ object DevboxTests extends TestSuite{
           // Allow validation not-every-commit, because validation is really slow
           // and hopefully if something gets messed up it'll get caught in a later
           // validation anyway.
-          if (count % stride == 0) validate(src, dest, _.segments.contains(".git"))
+          if (count % stride == 0) validate(src, dest, sync)
           lastWriteCount = syncer.writeCount
         }
       }
