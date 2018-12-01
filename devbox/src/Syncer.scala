@@ -31,53 +31,43 @@ class Syncer(agent: os.SubProcess,
 
   @volatile var writeCount = 0
 
+  def makeLoggedThread(name: String)(t: => Unit) = new Thread(
+    () =>
+      try t
+      catch {case e: Throwable =>
+        e.printStackTrace()
+        asyncException = e
+        onComplete()
+      },
+    name
+  )
+
   def start() = {
     running = true
-    watcherThread = new Thread(
-      () =>
-        try watcher.start()
-        catch {case e: Throwable =>
-          e.printStackTrace()
-          asyncException = e
-          onComplete()
-        },
-      "DevboxWatcherThread"
-    )
+    watcherThread = makeLoggedThread("DevboxWatcherThread") {
+      watcher.start()
+    }
 
-    agentLoggerThread = new Thread(
-      () =>
-        try {
-          while(running && agent.isAlive()){
-            val str = agent.stderr.readLine()
-            if (str != null && str != "") logger.write(str)
-          }
-        } catch {case e: Throwable =>
-          e.printStackTrace()
-          asyncException = e
-          onComplete()
-        },
-      "DevboxAgentLoggerThread"
-    )
+    agentLoggerThread = makeLoggedThread("DevboxAgentLoggerThread") {
+      while (running && agent.isAlive()) {
+        val str = agent.stderr.readLine()
+        if (str != null && str != "") logger.write(str)
+      }
+    }
 
-    syncThread = new Thread(
-      () =>
-        try Syncer.syncAllRepos(
-          agent,
-          mapping,
-          onComplete,
-          eventQueue,
-          skip,
-          debounceTime,
-          () => running,
-          logger,
-          writeCount += _
-        ) catch {case e: Throwable =>
-          e.printStackTrace()
-          asyncException = e
-          onComplete()
-        },
-      "DevboxSyncThread"
-    )
+    syncThread = makeLoggedThread("DevboxSyncThread") {
+      Syncer.syncAllRepos(
+        agent,
+        mapping,
+        onComplete,
+        eventQueue,
+        skip,
+        debounceTime,
+        () => running,
+        logger,
+        writeCount += _
+      )
+    }
 
     watcherThread.start()
     syncThread.start()

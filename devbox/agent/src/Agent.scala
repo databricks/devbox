@@ -37,69 +37,71 @@ object Agent {
         logger("START AGENT", os.pwd)
 
         val skip = Util.ignoreCallback(config.ignoreStrategy)
-
         val client = new RpcClient(
           new DataOutputStream(System.out),
           new DataInputStream(System.in)
         )
-
-        val buffer = new Array[Byte](Signature.blockSize)
-
-        try {
-          while (true) {
-            val msg = client.readMsg[Rpc]()
-            logger("AGENT ", msg)
-            msg match {
-              case Rpc.FullScan(path) =>
-                val scanRoot = os.Path(path, os.pwd)
-                val scanned = os.walk(
-                  scanRoot,
-                  p => skip(p, scanRoot) && !os.isDir(p, followLinks = false)
-                ).map(
-                  p => (p.relativeTo(scanRoot).toString, Some(Signature.compute(p, buffer)))
-                )
-                client.writeMsg(scanned)
-
-              case Rpc.Remove(path) =>
-                val p = os.Path(path, os.pwd)
-                if (os.isLink(p)) os.remove(p)
-                else os.remove.all(p)
-                client.writeMsg(0)
-
-              case Rpc.PutFile(path, perms) =>
-                os.write(os.Path(path, os.pwd), "", perms, createFolders = false)
-                client.writeMsg(0)
-
-              case Rpc.PutDir(path, perms) =>
-                os.makeDir(os.Path(path, os.pwd), perms)
-                client.writeMsg(0)
-
-              case Rpc.PutLink(path, dest) =>
-                Files.createSymbolicLink(
-                  os.Path(path, os.pwd).toNIO,
-                  Paths.get(dest)
-                )
-                client.writeMsg(0)
-
-              case Rpc.WriteChunk(path, offset, data, hash) =>
-                os.write.write(os.Path(path, os.pwd), data.value, Seq(StandardOpenOption.WRITE), 0, offset)
-                client.writeMsg(0)
-
-              case Rpc.Truncate(path, offset) =>
-                Util.autoclose(FileChannel.open(os.Path(path, os.pwd) toNIO, StandardOpenOption.WRITE)){ channel =>
-                  channel.truncate(offset)
-                }
-                client.writeMsg(0)
-
-              case Rpc.SetPerms(path, perms) =>
-                os.perms.set.apply(os.Path(path, os.pwd), perms)
-                client.writeMsg(0)
-            }
-          }
-        } catch{ case e: Throwable =>
+        try mainLoop(logger, skip, client)
+        catch{ case e: Throwable =>
+          logger("EXIT AGENT", e)
           client.writeMsg(RemoteException.create(e), false)
           System.exit(1)
         }
+    }
+  }
+  def mainLoop(logger: Logger, skip: (os.Path, os.Path) => Boolean, client: RpcClient) = {
+
+
+    val buffer = new Array[Byte](Signature.blockSize)
+    while (true) {
+      val msg = client.readMsg[Rpc]()
+      logger("AGENT ", msg)
+      msg match {
+        case Rpc.FullScan(path) =>
+          val scanRoot = os.Path(path, os.pwd)
+          val scanned = os.walk(
+            scanRoot,
+            p => skip(p, scanRoot) && !os.isDir(p, followLinks = false)
+          ).map(
+            p => (p.relativeTo(scanRoot).toString, Some(Signature.compute(p, buffer)))
+          )
+          client.writeMsg(scanned)
+
+        case Rpc.Remove(path) =>
+          val p = os.Path(path, os.pwd)
+          if (os.isLink(p)) os.remove(p)
+          else os.remove.all(p)
+          client.writeMsg(0)
+
+        case Rpc.PutFile(path, perms) =>
+          os.write(os.Path(path, os.pwd), "", perms, createFolders = false)
+          client.writeMsg(0)
+
+        case Rpc.PutDir(path, perms) =>
+          os.makeDir(os.Path(path, os.pwd), perms)
+          client.writeMsg(0)
+
+        case Rpc.PutLink(path, dest) =>
+          Files.createSymbolicLink(
+            os.Path(path, os.pwd).toNIO,
+            Paths.get(dest)
+          )
+          client.writeMsg(0)
+
+        case Rpc.WriteChunk(path, offset, data, hash) =>
+          os.write.write(os.Path(path, os.pwd), data.value, Seq(StandardOpenOption.WRITE), 0, offset)
+          client.writeMsg(0)
+
+        case Rpc.Truncate(path, offset) =>
+          Util.autoclose(FileChannel.open(os.Path(path, os.pwd) toNIO, StandardOpenOption.WRITE)){ channel =>
+            channel.truncate(offset)
+          }
+          client.writeMsg(0)
+
+        case Rpc.SetPerms(path, perms) =>
+          os.perms.set.apply(os.Path(path, os.pwd), perms)
+          client.writeMsg(0)
+      }
     }
   }
 }
