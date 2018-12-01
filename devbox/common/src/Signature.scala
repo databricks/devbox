@@ -3,7 +3,6 @@ import java.nio.file.Files
 
 import upickle.default.{ReadWriter, macroRW}
 import java.security.MessageDigest
-
 import scala.collection.mutable
 
 sealed trait Signature

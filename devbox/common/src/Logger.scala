@@ -7,7 +7,7 @@ trait Logger extends AutoCloseable{
 
     val msg =
       fansi.Color.Magenta(tag.padTo(Logger.margin, ' ')) ++ " | " ++
-      pprint.apply(x)
+      pprint.apply(x, height = Int.MaxValue)
     write(msg.toString().replace("\n", Logger.marginStr))
   }
 }
