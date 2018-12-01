@@ -8,7 +8,7 @@ import os.Path
 import upickle.default
 
 import scala.annotation.tailrec
-import scala.collection.mutable
+import scala.collection.{immutable, mutable}
 
 class Syncer(agent: os.SubProcess,
              mapping: Seq[(os.Path, Seq[String])],
@@ -142,77 +142,70 @@ object Syncer{
     while (continue()) {
       logger("SYNC")
 
-      val interestingBasesOpt =
-        try Some(Syncer.debouncedDeque(eventQueue, debounceTime))
-        catch{case e: InterruptedException => None}
-
-      for(interestingBases <- interestingBasesOpt){
-//        try {
-        for (((src, dest), i) <- mapping.zipWithIndex) {
-          val srcEventDirs = interestingBases
-            .map(os.Path(_))
-            .filter(_.startsWith(src))
-            .filter(!skip(_, src))
-            .distinct
-
-          if (srcEventDirs.nonEmpty) {
-            logger("BASE", srcEventDirs.map(_.relativeTo(src).toString()))
-            val signatureMapping = computeSignatures(
-              srcEventDirs,
-              buffer,
-              vfsArr(i),
-              skip,
-              src
-            )
-
-            logger("SIGNATURE", signatureMapping)
-
-            val count = Syncer.syncMetadata(
-              client,
-              signatureMapping,
-              src,
-              dest,
-              vfsArr(i),
-              logger,
-              buffer
-            )
-
-            for(((p, Some(Signature.File(_, blockHashes, _)), otherSig), n) <- signatureMapping.zipWithIndex){
-              val otherHashes = otherSig match{
-                case Some(Signature.File(_, otherBlockHashes, _)) => otherBlockHashes
-                case _ =>  Nil
-              }
-              logger("STREAM CHUNKS", p.relativeTo(src).toString)
-              streamFileContents(
-                client,
-                vfsArr(i),
-                p,
-                p.relativeTo(src).toString,
-                blockHashes,
-                otherHashes
-              )
-
-              if (n % 1000 == 0) client.drainOutstandingMsgs()
-            }
-
-            client.drainOutstandingMsgs()
-
-            countWrite(count)
+      for{
+        interestingBases <-
+          try Some(Syncer.debouncedDeque(eventQueue, debounceTime))
+          catch{case e: InterruptedException => None}
+        ((src, dest), i) <- mapping.zipWithIndex
+        srcEventDirs = interestingBases
+          .map(os.Path(_))
+          .filter(_.startsWith(src))
+          .filter(!skip(_, src))
+          .distinct
+        if srcEventDirs.nonEmpty
+        _ = logger("BASE", srcEventDirs.map(_.relativeTo(src).toString()))
+        signatureMapping <-
+          try Some(computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src))
+          catch{case e: Exception =>
+            val x = new StringWriter()
+            val p = new PrintWriter(x)
+            e.printStackTrace(p)
+            logger("SYNC FAILED", x.toString)
+            eventQueue.add(interestingBases.toArray)
+            None
           }
-        }
-//        }catch{case e: Throwable =>
-//          // There are a lot of odd reasons that can cause the syncer to crash,
-//          // often due to the filesstem changing underneath it. In those cases
-//          val x = new StringWriter()
-//          val p = new PrintWriter(x)
-//          e.printStackTrace(p)
-//          logger("SYNC FAILED", x.toString)
-//          eventQueue.add(interestingBases.toArray)
-//        }
-      }
+        _ = logger("SIGNATURE", signatureMapping)
+        count = Syncer.syncMetadata(client, signatureMapping, src, dest, vfsArr(i), logger, buffer)
+        _ <-
+          try Some(streamAllFileContents(logger, vfsArr(i), client, src, signatureMapping))
+          catch{case e: Exception =>
+            val x = new StringWriter()
+            val p = new PrintWriter(x)
+            e.printStackTrace(p)
+            logger("SYNC FAILED", x.toString)
+            eventQueue.add(interestingBases.toArray)
+            None
+          }
+      } countWrite(count)
 
       if (eventQueue.isEmpty) onComplete()
     }
+  }
+
+  def streamAllFileContents(logger: Logger,
+                            stateVfs: Vfs[(Long, Seq[Bytes]), Int],
+                            client: RpcClient,
+                            src: Path,
+                            signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
+    for (((p, Some(Signature.File(_, blockHashes, _)), otherSig), n) <- signatureMapping.zipWithIndex) {
+      val otherHashes = otherSig match {
+        case Some(Signature.File(_, otherBlockHashes, _)) => otherBlockHashes
+        case _ => Nil
+      }
+      logger("STREAM CHUNKS", p.relativeTo(src).toString)
+      streamFileContents(
+        client,
+        stateVfs,
+        p,
+        p.relativeTo(src).toString,
+        blockHashes,
+        otherHashes
+      )
+
+      if (n % 1000 == 0) client.drainOutstandingMsgs()
+    }
+
+    client.drainOutstandingMsgs()
   }
 
   def debouncedDeque[T](eventQueue: BlockingQueue[Array[T]], debounceTime: Int) = {
@@ -397,7 +390,6 @@ object Syncer{
           case Some(f @ Vfs.Folder(_, _)) => f.metadata = perms
         }
     }
-
   }
 
   def computeSignatures(interestingBases: Seq[Path],
@@ -424,7 +416,7 @@ object Syncer{
       .filter(p => os.followLink(p).contains(p))
       .flatMap { p =>
         val listed =
-          if (!os.exists(p, followLinks = false)) Nil
+          if (!os.isDir(p, followLinks = false)) Nil
           else os.list(p).filter(!skip(_, src)).map(_.last)
 
         val listedNames = listed.toSet
