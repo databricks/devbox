@@ -44,7 +44,13 @@ object DevboxTests extends TestSuite{
     println(s"[$commitIndex/$commitCount $trialIndex/$trialCount] Checking ${commit.getName} ${commit.getShortMessage}")
   }
 
-  def check(label: String, uri: String, stride: Int) = {
+  def walkValidate(label: String,
+                   uri: String,
+                   stride: Int,
+                   debounceMillis: Int,
+                   initialCommit: Int,
+                   commitIndicesToCheck0: Seq[Int] = Nil,
+                   verbose: Boolean = false) = {
     val src = os.pwd / "out" / "scratch" / label / "src"
     val dest = os.pwd / "out" / "scratch" / label / "dest"
     os.remove.all(src)
@@ -58,8 +64,6 @@ object DevboxTests extends TestSuite{
       .setURI(uri)
       .setDirectory(src.toIO)
       .call()
-
-    val verbose = false
     val commits = repo.log().call().asScala.toSeq.reverse
     val agent = os.proc(agentExecutable, verbose.toString).spawn(cwd = dest, stderr = os.Inherit)
     try{
@@ -73,21 +77,23 @@ object DevboxTests extends TestSuite{
       val random = new scala.util.Random(31337)
 
       val commitsIndicesToCheck =
-      // Step through the commits in order to test "normal" edits
-        (1 until commits.length) ++
-        // Also jump between a bunch of random commits to test robustness against
-        // huge edits modifying lots of different files
-        (0 until 10 * stride).map(_ => random.nextInt(commits.length))
+        if (commitIndicesToCheck0 != Nil) commitIndicesToCheck0
+        else
+          // Step through the commits in order to test "normal" edits
+          (1 until commits.length) ++
+          // Also jump between a bunch of random commits to test robustness against
+          // huge edits modifying lots of different files
+          (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
       devbox.common.Util.autoclose(new Syncer(
         agent,
         Seq(src -> Nil),
         _.segments.contains(".git"),
-        100,
+        debounceMillis,
         () => workCount.release(),
         verbose
       )){ syncer =>
-        printBanner(0, commits.length, 0, commitsIndicesToCheck.length, commits(0))
+        printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
         syncer.start()
         workCount.acquire()
         println("Write Count: " + (syncer.writeCount - lastWriteCount))
@@ -116,14 +122,25 @@ object DevboxTests extends TestSuite{
     }
   }
 
+  val cases = Map(
+    "edge" -> getClass.getResource("/edge-cases.bundle").toURI.toString,
+    "oslib" -> System.getenv("OSLIB_BUNDLE"),
+    "scalatags" -> System.getenv("SCALATAGS_BUNDLE"),
+    "mill" -> System.getenv("MILL_BUNDLE"),
+    "ammonite" -> System.getenv("AMMONITE_BUNDLE")
+  )
+
   def tests = Tests{
+    def check(stride: Int, debounceMillis: Int)(implicit tp: utest.framework.TestPath) = {
+      walkValidate(tp.value.last, cases(tp.value.last), stride, debounceMillis, 0)
+    }
     // A few example repositories to walk through and make sure the delta syncer
     // can function on every change of commit. Ordered by increasing levels of
     // complexity
-    'edge - check("edge-cases", getClass.getResource("/edge-cases.bundle").toURI.toString, 1)
-    'oslib - check("oslib", System.getenv("OSLIB_BUNDLE"), 2)
-    'scalatags - check("scalatags", System.getenv("SCALATAGS_BUNDLE"), 3)
-    'mill - check("mill", System.getenv("MILL_BUNDLE"), 4)
-    'ammonite - check("ammonite", System.getenv("AMMONITE_BUNDLE"), 5)
+    'edge - check(1, 50)
+    'oslib - check(2, 50)
+    'scalatags - check(3, 100)
+    'mill - check(4, 100)
+    'ammonite - check(5, 200)
   }
 }
