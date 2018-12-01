@@ -10,6 +10,12 @@ import upickle.default
 import scala.annotation.tailrec
 import scala.collection.{immutable, mutable}
 
+/**
+  * The Syncer class instances contain all the stateful, close-able parts of
+  * the syncing logic: event queues, threads, filesystem watchers, etc. All the
+  * stateless call-and-forget logic is pushed into static methods on the Syncer
+  * companion object
+  */
 class Syncer(agent: os.SubProcess,
              mapping: Seq[(os.Path, Seq[String])],
              skip: (os.Path, os.Path) => Boolean,
@@ -90,7 +96,7 @@ class Syncer(agent: os.SubProcess,
 }
 
 object Syncer{
-  class VfsRpcClient(client: RpcClient, stateVfs: Vfs[(Long, Seq[Bytes]), Int]){
+  class VfsRpcClient(client: RpcClient, stateVfs: Vfs[Signature]){
     def drainOutstandingMsgs() = client.drainOutstandingMsgs()
     def apply[T <: Action: default.Writer](p: T) = {
       client.writeMsg(p)
@@ -107,7 +113,7 @@ object Syncer{
                    logger: Logger,
                    countWrite: Int => Unit) = {
 
-    val vfsArr = for (_ <- mapping.indices) yield new Vfs[(Long, Seq[Bytes]), Int](0)
+    val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val buffer = new Array[Byte](Signature.blockSize)
 
     val client = new RpcClient(
@@ -176,7 +182,7 @@ object Syncer{
   }
 
   def streamAllFileContents(logger: Logger,
-                            stateVfs: Vfs[(Long, Seq[Bytes]), Int],
+                            stateVfs: Vfs[Signature],
                             client: VfsRpcClient,
                             src: Path,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
@@ -236,7 +242,7 @@ object Syncer{
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
                    dest: Seq[String],
-                   stateVfs: Vfs[(Long, Seq[Bytes]), Int],
+                   stateVfs: Vfs[Signature],
                    logger: Logger,
                    buffer: Array[Byte]): Int = {
 
@@ -279,7 +285,7 @@ object Syncer{
   }
 
   def prepareRemoteFile(client: VfsRpcClient,
-                        stateVfs: Vfs[(Long, Seq[Bytes]), Int],
+                        stateVfs: Vfs[Signature],
                         p: Path,
                         segments: String,
                         perms: Int,
@@ -301,7 +307,7 @@ object Syncer{
   }
 
   def streamFileContents(client: VfsRpcClient,
-                         stateVfs: Vfs[(Long, Seq[Bytes]), Int],
+                         stateVfs: Vfs[Signature],
                          p: Path,
                          segments: String,
                          blockHashes: Seq[Bytes],
@@ -343,20 +349,9 @@ object Syncer{
 
   def computeSignatures(interestingBases: Seq[Path],
                         buffer: Array[Byte],
-                        stateVfs: Vfs[(Long, Seq[Bytes]), Int],
+                        stateVfs: Vfs[Signature],
                         skip: (os.Path, os.Path) => Boolean,
-                        src: os.Path) = {
-    def compute(p: Path, forceNone: Boolean) = {
-      (
-        p,
-        if (forceNone) None else Some(Signature.compute(p, buffer)),
-        stateVfs.resolve(p.relativeTo(src).toString()).map {
-          case f: Vfs.File[(Long, Seq[Bytes]), Int] => Signature.File(f.metadata, f.value._2, f.value._1)
-          case f: Vfs.Folder[(Long, Seq[Bytes]), Int] => Signature.Dir(f.metadata)
-          case f: Vfs.Symlink => Signature.Symlink(f.value)
-        }
-      )
-    }
+                        src: os.Path): Seq[(os.Path, Option[Signature], Option[Signature])] = {
 
     val signatureMapping = interestingBases
       // Only bother looking at paths which are canonical; changes to non-
@@ -373,19 +368,29 @@ object Syncer{
         val virtual = stateVfs.resolve(p.relativeTo(src).toString) match {
           // We only care about the case where the there interesting path
           // points to a folder within the Vfs.
-          case Some(f: Vfs.Folder[_, _]) => f.value.keys.toSeq
+          case Some(f: Vfs.Dir[Signature]) => f.children
           // If it points to a non-folder, or a non-existent path, we assume
           // that previously there must have been a folder at that path that
           // got replaced by a non-folder or deleted. In which case the
           // enclosing folder should have it's own interestingBase
-          case Some(_) => Nil
-          case None => Nil
+          case Some(_) => Map.empty[String, Vfs.Node[Signature]]
+          case None => Map.empty[String, Vfs.Node[Signature]]
         }
 
         // We de-dup the combined list of names listed from the filesystem and
         // listed from the VFS, because they often have overlaps, and use
         // `listedNames` to check for previously-present-but-now-deleted files
-        (listed ++ virtual).distinct.map(k => compute(p / k, !listedNames(k)))
+        for(k <- (listed ++ virtual.keys).distinct)
+        yield {
+          (
+            p / k,
+            if (!listedNames(k)) None else Some(Signature.compute(p / k, buffer)),
+            virtual.get(k) match{
+              case Some(v) => Some(v.value)
+              case None => stateVfs.resolve((p / k).relativeTo(src).toString()).map(_.value)
+            }
+          )
+        }
       }
 
     val sortedSignatures = signatureMapping.sortBy { case (p, local, remote) =>
