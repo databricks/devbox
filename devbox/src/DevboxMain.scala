@@ -1,13 +1,13 @@
 package devbox
-import devbox.common.{Cli, Util}
+import devbox.common.{Cli, Logger, Util}
 import devbox.common.Cli.{Arg, showArg}
-
+import Cli.pathScoptRead
 object DevboxMain {
   case class Config(repo: List[String] = Nil,
                     stride: Int = 1,
                     debounceMillis: Int = 100,
                     help: Boolean = false,
-                    verbose: Boolean = false,
+                    logFile: Option[os.Path] = None,
                     ignoreStrategy: String = "")
 
   def main(args: Array[String]): Unit = {
@@ -28,10 +28,10 @@ object DevboxMain {
         "Print this message",
         (c, v) => c.copy(help = true)
       ),
-      Arg[Config, Unit](
-        "verbose", None,
-        "Enable verbose logging",
-        (c, v) => c.copy(verbose = true)
+      Arg[Config, os.Path](
+        "log-file", None,
+        "Redirect logging output to a file",
+        (c, v) => c.copy(logFile = Some(v))
       ),
       Arg[Config, String](
         "ignore-strategy", None,
@@ -62,8 +62,10 @@ object DevboxMain {
             skip,
             config.debounceMillis,
             () => (),
-            config.verbose
-
+            config.logFile match{
+              case None => Logger.Stderr
+              case Some(path) => Logger.File(path)
+            }
           )){syncer =>
             syncer.start()
           }

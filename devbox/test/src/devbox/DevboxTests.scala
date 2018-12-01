@@ -1,7 +1,7 @@
 package devbox
 import java.util.concurrent.Semaphore
 
-import devbox.common.{Signature, Util}
+import devbox.common.{Logger, Signature, Util}
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.revwalk.RevCommit
 
@@ -53,10 +53,13 @@ object DevboxTests extends TestSuite{
                    verbose: Boolean = false) = {
     val src = os.pwd / "out" / "scratch" / label / "src"
     val dest = os.pwd / "out" / "scratch" / label / "dest"
+    val log = os.pwd / "out" / "scratch" / label / "events.log"
+
     os.remove.all(src)
     os.makeDir.all(src)
     os.remove.all(dest)
     os.makeDir.all(dest)
+    os.remove.all(log)
 
     val agentExecutable = System.getenv("AGENT_EXECUTABLE")
 
@@ -64,65 +67,62 @@ object DevboxTests extends TestSuite{
       .setURI(uri)
       .setDirectory(src.toIO)
       .call()
+
     val commits = repo.log().call().asScala.toSeq.reverse
-    val verboseFlag = if (verbose) Seq("--verbose") else Nil
-    val agent = os.proc(agentExecutable, verboseFlag, "--ignore-strategy", "dotgit")
-      .spawn(cwd = dest, stderr = os.Inherit)
-    try{
-      repo.checkout().setName(commits.head.getName).call()
 
-      val workCount = new Semaphore(0)
+    repo.checkout().setName(commits.head.getName).call()
 
-      var lastWriteCount = 0
+    val workCount = new Semaphore(0)
 
-      // Fixed random to make the random jumps deterministic
-      val random = new scala.util.Random(31337)
+    var lastWriteCount = 0
 
-      val commitsIndicesToCheck =
-        if (commitIndicesToCheck0 != Nil) commitIndicesToCheck0
-        else
-          // Step through the commits in order to test "normal" edits
-          (1 until commits.length) ++
-          // Also jump between a bunch of random commits to test robustness against
-          // huge edits modifying lots of different files
-          (0 until 10 * stride).map(_ => random.nextInt(commits.length))
+    // Fixed random to make the random jumps deterministic
+    val random = new scala.util.Random(31337)
 
-      val sync = Util.ignoreCallback("dotgit")
-      devbox.common.Util.autoclose(new Syncer(
-        agent,
-        Seq(src -> Nil),
-        sync,
-        debounceMillis,
-        () => workCount.release(),
-        verbose
-      )){ syncer =>
-        printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
-        syncer.start()
+    val commitsIndicesToCheck =
+      if (commitIndicesToCheck0 != Nil) commitIndicesToCheck0
+      else
+        // Step through the commits in order to test "normal" edits
+        (1 until commits.length) ++
+        // Also jump between a bunch of random commits to test robustness against
+        // huge edits modifying lots of different files
+        (0 until 10 * stride).map(_ => random.nextInt(commits.length))
+
+    val sync = Util.ignoreCallback("dotgit")
+
+    devbox.common.Util.autoclose(new Syncer(
+      os.proc(agentExecutable, "--ignore-strategy", "dotgit").spawn(cwd = dest),
+      Seq(src -> Nil),
+      sync,
+      debounceMillis,
+      () => workCount.release(),
+      if (verbose) Logger.Stdout else Logger.File(log)
+    )){ syncer =>
+      printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
+      syncer.start()
+      workCount.acquire()
+      println("Write Count: " + (syncer.writeCount - lastWriteCount))
+      validate(src, dest, sync)
+
+      lastWriteCount = syncer.writeCount
+
+      for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
+        val commit = commits(i)
+        printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
+        repo.checkout().setName(commit.getName).call()
+        println("Checkout finished")
+
         workCount.acquire()
         println("Write Count: " + (syncer.writeCount - lastWriteCount))
-        validate(src, dest, sync)
 
+        // Allow validation not-every-commit, because validation is really slow
+        // and hopefully if something gets messed up it'll get caught in a later
+        // validation anyway.
+        if (count % stride == 0) validate(src, dest, sync)
         lastWriteCount = syncer.writeCount
-
-        for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
-          val commit = commits(i)
-          printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
-          repo.checkout().setName(commit.getName).call()
-          println("Checkout finished")
-
-          workCount.acquire()
-          println("Write Count: " + (syncer.writeCount - lastWriteCount))
-
-          // Allow validation not-every-commit, because validation is really slow
-          // and hopefully if something gets messed up it'll get caught in a later
-          // validation anyway.
-          if (count % stride == 0) validate(src, dest, sync)
-          lastWriteCount = syncer.writeCount
-        }
       }
-    }finally{
-      agent.destroy()
     }
+
   }
 
   val cases = Map(

@@ -7,9 +7,9 @@ import java.nio.file.{Files, Paths, StandardOpenOption}
 import devbox.common.Cli
 import devbox.common.Cli.Arg
 import devbox.common._
-
+import Cli.pathScoptRead
 object Agent {
-  case class Config(verbose: Boolean = false,
+  case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
                     ignoreStrategy: String = "")
   def main(args: Array[String]): Unit = {
@@ -19,24 +19,22 @@ object Agent {
         "Print this message",
         (c, v) => c.copy(help = true)
       ),
-      Arg[Config, Unit](
-        "verbose", None,
-        "Enable verbose logging",
-        (c, v) => c.copy(verbose = true)
-      ),
       Arg[Config, String](
         "ignore-strategy", None,
         "",
         (c, v) => c.copy(ignoreStrategy = v)
       )
     )
+
     Cli.groupArgs(args.toList, signature, Config()) match {
       case Left(msg) =>
         System.err.println(msg)
         System.exit(1)
 
       case Right((config, remaining)) =>
-        if (config.verbose) System.err.println("Starting agent in " + os.pwd)
+        val logger = Logger.Stderr
+
+        logger("START AGENT", os.pwd)
 
         val skip = Util.ignoreCallback(config.ignoreStrategy)
 
@@ -50,15 +48,15 @@ object Agent {
         try {
           while (true) {
             val msg = client.readMsg[Rpc]()
-            if (config.verbose) System.err.println("AGENT " + msg)
+            logger("AGENT ", msg)
             msg match {
               case Rpc.FullScan(path) =>
-                val osPath = os.Path(path, os.pwd)
+                val scanRoot = os.Path(path, os.pwd)
                 val scanned = os.walk(
-                  osPath,
-                  p => skip(p, osPath) && !os.isDir(p, followLinks = false)
+                  scanRoot,
+                  p => skip(p, scanRoot) && !os.isDir(p, followLinks = false)
                 ).map(
-                  p => (p.relativeTo(os.pwd).toString, Some(Signature.compute(p, buffer)))
+                  p => (p.relativeTo(scanRoot).toString, Some(Signature.compute(p, buffer)))
                 )
                 client.writeMsg(scanned)
 

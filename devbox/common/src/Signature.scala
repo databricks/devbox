@@ -30,7 +30,7 @@ object Signature{
           digest.reset()
           digest.update(buffer, 0, n)
 
-          chunks.append(Bytes(digest.digest()))
+          chunks.append(new Bytes(digest.digest()))
         }
         File(os.perms(p).toInt, chunks, size)
     }
@@ -48,7 +48,7 @@ object Signature{
   implicit val rw: ReadWriter[Signature] = macroRW
 }
 
-case class Bytes(value: Array[Byte]){
+class Bytes(val value: Array[Byte]){
   override def hashCode() = java.util.Arrays.hashCode(value)
   override def equals(other: Any) = other match{
     case o: Bytes => java.util.Arrays.equals(value, o.value)
@@ -63,7 +63,10 @@ case class Bytes(value: Array[Byte]){
   }
 }
 
-object Bytes{ implicit val rw: ReadWriter[Bytes] = macroRW }
+object Bytes{
+  implicit val rw: ReadWriter[Bytes] =
+    upickle.default.readwriter[Array[Byte]].bimap(_.value, new Bytes(_))
+}
 
 case class RpcException(wrapped: RemoteException) extends Exception("", wrapped)
 case class RemoteException(clsName: String,

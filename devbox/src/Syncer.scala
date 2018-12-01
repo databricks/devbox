@@ -1,5 +1,5 @@
 package devbox
-import java.io.{DataInputStream, DataOutputStream}
+import java.io.{BufferedReader, DataInputStream, DataOutputStream}
 import java.nio.ByteBuffer
 import java.util.concurrent._
 
@@ -8,21 +8,22 @@ import devbox.common._
 import scala.annotation.tailrec
 import scala.collection.mutable
 
-class Syncer(commandRunner: os.SubProcess,
+class Syncer(agent: os.SubProcess,
              mapping: Seq[(os.Path, Seq[String])],
              skip: (os.Path, os.Path) => Boolean,
              debounceTime: Int,
              onComplete: () => Unit,
-             verbose: Boolean) extends AutoCloseable{
+             logger: Logger) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
     eventQueue.add(p)
-    if (verbose) for(path <- p) println("FSEVENT " + p.toList)
+    logger("FSEVENT", p)
   })
 
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
+  private[this] var agentLoggerThread: Thread = null
 
   @volatile private[this] var running: Boolean = false
 
@@ -43,17 +44,32 @@ class Syncer(commandRunner: os.SubProcess,
       "DevboxWatcherThread"
     )
 
+    agentLoggerThread = new Thread(
+      () =>
+        try {
+          while(running && agent.isAlive()){
+            val str = agent.stderr.readLine()
+            if (str != null && str != "") logger.write(str)
+          }
+        } catch {case e: Throwable =>
+          e.printStackTrace()
+          asyncException = e
+          onComplete()
+        },
+      "DevboxAgentLoggerThread"
+    )
+
     syncThread = new Thread(
       () =>
         try Syncer.syncAllRepos(
-          commandRunner,
+          agent,
           mapping,
           onComplete,
           eventQueue,
           skip,
           debounceTime,
           () => running,
-          verbose,
+          logger,
           writeCount += _
         ) catch {case e: Throwable =>
           e.printStackTrace()
@@ -65,6 +81,7 @@ class Syncer(commandRunner: os.SubProcess,
 
     watcherThread.start()
     syncThread.start()
+    agentLoggerThread.start()
   }
 
   def close() = {
@@ -73,28 +90,30 @@ class Syncer(commandRunner: os.SubProcess,
     watcherThread.join()
     syncThread.interrupt()
     syncThread.join()
+    agent.destroy()
+    agentLoggerThread.interrupt()
+    agentLoggerThread.join()
     if (asyncException != null) throw asyncException
   }
 }
 
 object Syncer{
-  def syncAllRepos(commandRunner: os.SubProcess,
+  def syncAllRepos(agent: os.SubProcess,
                    mapping: Seq[(os.Path, Seq[String])],
                    onComplete: () => Unit,
                    eventQueue: BlockingQueue[Array[String]],
                    skip: (os.Path, os.Path) => Boolean,
                    debounceTime: Int,
                    continue: () => Boolean,
-                   verbose: Boolean,
+                   logger: Logger,
                    countWrite: Int => Unit) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[(Long, Seq[Bytes]), Int](0)
     val buffer = new Array[Byte](Signature.blockSize)
-    if (verbose) println("Initial Sync")
 
     val client = new RpcClient(
-      new DataOutputStream(commandRunner.stdin),
-      new DataInputStream(commandRunner.stdout) 
+      new DataOutputStream(agent.stdin),
+      new DataInputStream(agent.stdout)
     )
 
     // initial sync
@@ -107,6 +126,7 @@ object Syncer{
         p => skip(p, src) || !os.isDir(p, followLinks = false),
         includeTarget = true
       )
+      eventQueue.add(initialLocal.map(_.toString).toArray)
 
       val vfs = vfsArr(i)
       for((p, sig) <- initialRemote) sig match{
@@ -125,53 +145,40 @@ object Syncer{
           assert(!folder.value.contains(name))
           folder.value(name) = Vfs.Symlink(dest)
       }
-
-      val count = Syncer.syncRepo(
-        client,
-        src,
-        dest,
-        vfsArr(i),
-        initialLocal,
-        skip,
-        verbose,
-        buffer
-      )
-
-      countWrite(count)
     }
 
-    if (eventQueue.isEmpty) onComplete()
-
     while (continue()) {
-
-
-      if (verbose) println("Incremental Sync")
+      logger("SYNC")
 
       val interestingBasesOpt =
         try Some(Syncer.debouncedDeque(eventQueue, debounceTime))
         catch{case e: InterruptedException => None}
 
       for(interestingBases <- interestingBasesOpt){
-        for (((src, dest), i) <- mapping.zipWithIndex) {
-          val srcEventDirs = interestingBases
-            .map(os.Path(_))
-            .filter(_.startsWith(src))
-            .filter(!skip(_, src))
-            .distinct
+        try {
+          for (((src, dest), i) <- mapping.zipWithIndex) {
+            val srcEventDirs = interestingBases
+              .map(os.Path(_))
+              .filter(_.startsWith(src))
+              .filter(!skip(_, src))
+              .distinct
 
-          if (srcEventDirs.nonEmpty) {
-            val count = Syncer.syncRepo(
-              client,
-              src,
-              dest,
-              vfsArr(i),
-              srcEventDirs,
-              skip,
-              verbose,
-              buffer
-            )
-            countWrite(count)
+            if (srcEventDirs.nonEmpty) {
+              val count = Syncer.syncRepo(
+                client,
+                src,
+                dest,
+                vfsArr(i),
+                srcEventDirs,
+                skip,
+                logger,
+                buffer
+              )
+              countWrite(count)
+            }
           }
+        }catch{case e: Throwable =>
+          eventQueue.add(interestingBases.toArray)
         }
       }
 
@@ -214,10 +221,11 @@ object Syncer{
                stateVfs: Vfs[(Long, Seq[Bytes]), Int],
                interestingBases: Seq[os.Path],
                skip: (os.Path, os.Path) => Boolean,
-               verbose: Boolean,
+               logger: Logger,
                buffer: Array[Byte]): Int = {
 
-    if (verbose) for(p <- interestingBases) println("BASE " + p.relativeTo(src))
+
+    logger("BASE", interestingBases.map(_.relativeTo(src)))
 
     def compute(p: os.Path, forceNone: Boolean) = {
       (
@@ -324,11 +332,10 @@ object Syncer{
       )
     }
 
-    if (verbose) {
-      for((p, local, remote) <- sortedSignatures) {
-        println(s"SIGNATURE ${p.relativeTo(src)} $local $remote")
-      }
-    }
+    logger(
+      "SIGNATURE",
+      sortedSignatures.map{case (p, local, remote)  => (p.relativeTo(src), local, remote)}
+    )
 
     for((p, localSig, remoteSig) <- sortedSignatures){
 
@@ -396,7 +403,7 @@ object Syncer{
                   Rpc.WriteChunk(
                     segments,
                     i * Signature.blockSize,
-                    Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr),
+                    new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr),
                     blockHashes(i)
                   )
                 )
