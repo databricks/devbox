@@ -10,7 +10,8 @@ object DevboxTestMain {
                     debounceMillis: Int = 100,
                     help: Boolean = false,
                     verbose: Boolean = false,
-                    ignoreStrategy: String = "dotgit")
+                    ignoreStrategy: String = "dotgit",
+                    preserve: Boolean = false)
 
   def main(args: Array[String]): Unit = {
 
@@ -45,6 +46,11 @@ object DevboxTestMain {
         "verbose", None,
         "Enable verbose logging",
         (c, v) => c.copy(verbose = true)
+      ),
+      Arg[Config, Unit](
+        "preserve", None,
+        "Preserve starting folder contents",
+        (c, v) => c.copy(preserve = true)
       )
     )
 
@@ -60,7 +66,7 @@ object DevboxTestMain {
           val commits = remaining.map(_.toInt)
 
           if (config.label == "manual"){
-            val (src, dest, log) = prepareFolders(config.label)
+            val (src, dest, log) = prepareFolders(config.label, config.preserve)
             val skip = Util.ignoreCallback(config.ignoreStrategy)
             val syncer = instantiateSyncer(
               src, dest, log,

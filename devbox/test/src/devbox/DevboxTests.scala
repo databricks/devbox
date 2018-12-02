@@ -44,15 +44,17 @@ object DevboxTests extends TestSuite{
     println(s"[$commitIndex/$commitCount $trialIndex/$trialCount] Checking ${commit.getName} ${commit.getShortMessage}")
   }
 
-  def prepareFolders(label: String) = {
+  def prepareFolders(label: String, preserve: Boolean = false) = {
     val src = os.pwd / "out" / "scratch" / label / "src"
     val dest = os.pwd / "out" / "scratch" / label / "dest"
     val log = os.pwd / "out" / "scratch" / label / "events.log"
 
-    os.remove.all(src)
-    os.makeDir.all(src)
-    os.remove.all(dest)
-    os.makeDir.all(dest)
+    if (!preserve){
+      os.remove.all(src)
+      os.makeDir.all(src)
+      os.remove.all(dest)
+      os.makeDir.all(dest)
+    }
     os.remove.all(log)
 
     (src, dest, log)

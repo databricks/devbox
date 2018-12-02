@@ -17,7 +17,7 @@ object Util {
       path.relativeTo(base).segments.startsWith(Seq(".git"))
     case "gitignore" => (path, base) =>
       assert(path.startsWith(base))
-      path.relativeTo(base).segments.startsWith(Seq(".git")) || GitIgnore.checkGitIgnore(path, base)
+      GitIgnore.checkGitIgnore(path, base)
     case "" => (path, base) =>
       assert(path.startsWith(base))
       false

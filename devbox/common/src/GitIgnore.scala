@@ -24,7 +24,7 @@ object GitIgnore{
       def generate(handleItem: Path => Generator.Action) = {
         var currentAction: Generator.Action = Generator.Continue
         var currentPath = toCheckFor
-        while(currentAction == Generator.Continue && toCheckFor.startsWith(repoDir)){
+        while(currentAction == Generator.Continue && currentPath.startsWith(repoDir)){
           currentAction = handleItem(currentPath)
           currentPath = currentPath / os.up
         }
@@ -35,6 +35,6 @@ object GitIgnore{
 
   def parseLine(line: String, currentDir: os.Path, toCheckFor: os.Path, repoDir: os.Path): Boolean = {
     val rule = new FastIgnoreRule(line)
-    rule.isMatch(toCheckFor.relativeTo(repoDir).toString, os.isDir(toCheckFor)) ^ rule.getResult
+    rule.isMatch(toCheckFor.relativeTo(repoDir).toString, os.isDir(toCheckFor)) ^ rule.getNegation
   }
 }
