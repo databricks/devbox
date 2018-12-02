@@ -73,7 +73,8 @@ object DevboxTestMain {
               skip,
               config.debounceMillis,
               () => println("ON_COMPLETE"),
-              config.verbose
+              config.verbose,
+              config.ignoreStrategy
             )
             try {
               syncer.start()

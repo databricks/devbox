@@ -208,13 +208,15 @@ object Syncer{
                           eventQueue: BlockingQueue[Array[String]],
                           t: => T)  = {
     try Some(t)
-    catch{case e: Exception =>
-      val x = new StringWriter()
-      val p = new PrintWriter(x)
-      e.printStackTrace(p)
-      logger("SYNC FAILED", x.toString)
-      interestingBases.foreach(eventQueue.add)
-      None
+    catch{
+      case e: RpcException => throw e
+      case e: Exception =>
+        val x = new StringWriter()
+        val p = new PrintWriter(x)
+        e.printStackTrace(p)
+        logger("SYNC FAILED", x.toString)
+        interestingBases.foreach(eventQueue.add)
+        None
     }
   }
 

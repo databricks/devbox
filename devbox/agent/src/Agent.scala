@@ -2,6 +2,7 @@ package devbox.agent
 
 import java.io.{DataInputStream, DataOutputStream}
 import java.nio.channels.FileChannel
+import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.{Files, Paths, StandardOpenOption}
 
 import devbox.common.Cli
@@ -89,12 +90,18 @@ object Agent {
           client.writeMsg(0)
 
         case Rpc.WriteChunk(path, offset, data, hash) =>
-          os.write.write(os.Path(path, os.pwd), data.value, Seq(StandardOpenOption.WRITE), 0, offset)
+          val p = os.Path(path, os.pwd)
+          withWritable(p){
+            os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
+          }
           client.writeMsg(0)
 
         case Rpc.SetSize(path, offset) =>
-          Util.autoclose(FileChannel.open(os.Path(path, os.pwd).toNIO, StandardOpenOption.WRITE)){ channel =>
-            channel.truncate(offset)
+          val p = os.Path(path, os.pwd)
+          withWritable(p) {
+            Util.autoclose(FileChannel.open(os.Path(path, os.pwd).toNIO, StandardOpenOption.WRITE)) { channel =>
+              channel.truncate(offset)
+            }
           }
           client.writeMsg(0)
 
@@ -102,6 +109,17 @@ object Agent {
           os.perms.set.apply(os.Path(path, os.pwd), perms)
           client.writeMsg(0)
       }
+    }
+  }
+  def withWritable[T](p: os.Path)(t: => T) = {
+    val perms = os.perms(p)
+    if (perms.contains(PosixFilePermission.OWNER_WRITE)) {
+      t
+    }else{
+      os.perms.set(p, perms + PosixFilePermission.OWNER_WRITE)
+      val res = t
+      os.perms.set(p, perms)
+      res
     }
   }
 }

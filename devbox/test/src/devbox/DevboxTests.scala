@@ -66,9 +66,10 @@ object DevboxTests extends TestSuite{
                         skip: (os.Path, os.Path) => Boolean,
                         debounceMillis: Int,
                         onComplete: () => Unit,
-                        verbose: Boolean) = {
+                        verbose: Boolean,
+                        ignoreStrategy: String) = {
     new Syncer(
-      os.proc(System.getenv("AGENT_EXECUTABLE"), "--ignore-strategy", "dotgit").spawn(cwd = dest),
+      os.proc(System.getenv("AGENT_EXECUTABLE"), "--ignore-strategy", ignoreStrategy).spawn(cwd = dest),
       Seq(src -> Nil),
       skip,
       debounceMillis,
@@ -115,7 +116,10 @@ object DevboxTests extends TestSuite{
     val skip = Util.ignoreCallback(ignoreStrategy)
 
     devbox.common.Util.autoclose(
-      instantiateSyncer(src, dest, log, skip, debounceMillis, () => workCount.release(), verbose)
+      instantiateSyncer(
+        src, dest, log,
+        skip, debounceMillis, () => workCount.release(), verbose, ignoreStrategy
+      )
     ){ syncer =>
       printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
       syncer.start()
@@ -153,14 +157,17 @@ object DevboxTests extends TestSuite{
   )
 
   def tests = Tests{
-    def check(stride: Int, debounceMillis: Int)(implicit tp: utest.framework.TestPath) = {
+    def check(stride: Int, debounceMillis: Int, ignoreStrategy: String = "dotgit")
+             (implicit tp: utest.framework.TestPath) = {
       walkValidate(tp.value.last, cases(tp.value.last), stride, debounceMillis, 0)
     }
     // A few example repositories to walk through and make sure the delta syncer
     // can function on every change of commit. Ordered by increasing levels of
     // complexity
     'edge - check(1, 50)
+    'edgegit - walkValidate("edgegit", cases("edge"), 1, 50, 0, ignoreStrategy = "")
     'oslib - check(2, 50)
+    'oslib - walkValidate("oslibgit", cases("oslib"), 2, 50, 0, ignoreStrategy = "")
     'scalatags - check(3, 100)
     'mill - check(4, 100)
     'ammonite - check(5, 200)
