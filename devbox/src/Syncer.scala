@@ -414,7 +414,7 @@ object Syncer{
         for(k <- (listedNames ++ virtual.keys).toArray.sorted)
         yield (
           p / k,
-          if (!listedNames(k)) None else Some(Signature.compute(p / k, buffer)),
+          if (!listedNames(k)) None else Signature.compute(p / k, buffer),
           virtual.get(k).map(_.value)
         )
       }

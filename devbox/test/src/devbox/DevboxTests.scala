@@ -25,8 +25,8 @@ object DevboxTests extends TestSuite{
     val buffer = new Array[Byte](Util.blockSize)
 
     val differentSigs = srcPaths.zip(destPaths).flatMap{ case (s, d) =>
-      val srcSig = if (os.exists(s, followLinks = false)) Some(Signature.compute(s, buffer)) else None
-      val destSig = if (os.exists(d, followLinks = false)) Some(Signature.compute(d, buffer)) else None
+      val srcSig = if (os.exists(s, followLinks = false)) Signature.compute(s, buffer) else None
+      val destSig = if (os.exists(d, followLinks = false)) Signature.compute(d, buffer) else None
 
       if(srcSig == destSig) None
       else Some((s.relativeTo(src), srcSig, destSig))
@@ -44,13 +44,7 @@ object DevboxTests extends TestSuite{
     println(s"[$commitIndex/$commitCount $trialIndex/$trialCount] Checking ${commit.getName} ${commit.getShortMessage}")
   }
 
-  def walkValidate(label: String,
-                   uri: String,
-                   stride: Int,
-                   debounceMillis: Int,
-                   initialCommit: Int,
-                   commitIndicesToCheck0: Seq[Int] = Nil,
-                   verbose: Boolean = false) = {
+  def prepareFolders(label: String) = {
     val src = os.pwd / "out" / "scratch" / label / "src"
     val dest = os.pwd / "out" / "scratch" / label / "dest"
     val log = os.pwd / "out" / "scratch" / label / "events.log"
@@ -61,8 +55,36 @@ object DevboxTests extends TestSuite{
     os.makeDir.all(dest)
     os.remove.all(log)
 
-    val agentExecutable = System.getenv("AGENT_EXECUTABLE")
+    (src, dest, log)
+  }
 
+  def instantiateSyncer(src: os.Path,
+                        dest: os.Path,
+                        log: os.Path,
+                        skip: (os.Path, os.Path) => Boolean,
+                        debounceMillis: Int,
+                        onComplete: () => Unit,
+                        verbose: Boolean) = {
+    new Syncer(
+      os.proc(System.getenv("AGENT_EXECUTABLE"), "--ignore-strategy", "dotgit").spawn(cwd = dest),
+      Seq(src -> Nil),
+      skip,
+      debounceMillis,
+      onComplete,
+      if (verbose) Logger.Stdout else Logger.File(log)
+    )
+  }
+
+  def walkValidate(label: String,
+                   uri: String,
+                   stride: Int,
+                   debounceMillis: Int,
+                   initialCommit: Int,
+                   commitIndicesToCheck0: Seq[Int] = Nil,
+                   verbose: Boolean = false,
+                   ignoreStrategy: String = "dotgit") = {
+
+    val (src, dest, log) = prepareFolders(label)
     val repo = Git.cloneRepository()
       .setURI(uri)
       .setDirectory(src.toIO)
@@ -88,21 +110,16 @@ object DevboxTests extends TestSuite{
         // huge edits modifying lots of different files
         (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
-    val sync = Util.ignoreCallback("dotgit")
+    val skip = Util.ignoreCallback(ignoreStrategy)
 
-    devbox.common.Util.autoclose(new Syncer(
-      os.proc(agentExecutable, "--ignore-strategy", "dotgit").spawn(cwd = dest),
-      Seq(src -> Nil),
-      sync,
-      debounceMillis,
-      () => workCount.release(),
-      if (verbose) Logger.Stdout else Logger.File(log)
-    )){ syncer =>
+    devbox.common.Util.autoclose(
+      instantiateSyncer(src, dest, log, skip, debounceMillis, () => workCount.release(), verbose)
+    ){ syncer =>
       printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
       syncer.start()
       workCount.acquire()
       println("Write Count: " + (syncer.writeCount - lastWriteCount))
-      validate(src, dest, sync)
+      validate(src, dest, skip)
 
       lastWriteCount = syncer.writeCount
 
@@ -118,7 +135,7 @@ object DevboxTests extends TestSuite{
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
         // validation anyway.
-        if (count % stride == 0) validate(src, dest, sync)
+        if (count % stride == 0) validate(src, dest, skip)
         lastWriteCount = syncer.writeCount
       }
     }
