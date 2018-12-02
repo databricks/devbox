@@ -11,7 +11,8 @@ import Cli.pathScoptRead
 object Agent {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
-                    ignoreStrategy: String = "")
+                    ignoreStrategy: String = "",
+                    workingDir: String = "")
 
   def main(args: Array[String]): Unit = {
     val signature = Seq(
@@ -24,6 +25,11 @@ object Agent {
         "ignore-strategy", None,
         "",
         (c, v) => c.copy(ignoreStrategy = v)
+      ),
+      Arg[Config, String](
+        "working-dir", None,
+        "",
+        (c, v) => c.copy(workingDir = v)
       )
     )
 
@@ -35,14 +41,14 @@ object Agent {
       case Right((config, remaining)) =>
         val logger = Logger.JsonStderr
 
-        logger("START AGENT", os.pwd)
+        logger("START AGENT", config.workingDir)
 
         val skip = Util.ignoreCallback(config.ignoreStrategy)
         val client = new RpcClient(
           new DataOutputStream(System.out),
           new DataInputStream(System.in)
         )
-        try mainLoop(logger, skip, client)
+        try mainLoop(logger, skip, client, os.Path(config.workingDir, os.pwd))
         catch{ case e: Throwable =>
           logger("EXIT AGENT", e)
           client.writeMsg(RemoteException.create(e), false)
@@ -50,7 +56,10 @@ object Agent {
         }
     }
   }
-  def mainLoop(logger: Logger, skip: (os.Path, os.Path) => Boolean, client: RpcClient) = {
+  def mainLoop(logger: Logger,
+               skip: (os.Path, os.Path) => Boolean,
+               client: RpcClient,
+               wd: os.Path) = {
 
 
     val buffer = new Array[Byte](Util.blockSize)
@@ -59,7 +68,7 @@ object Agent {
       logger("AGENT ", msg)
       msg match {
         case Rpc.FullScan(path) =>
-          val scanRoot = os.Path(path, os.pwd)
+          val scanRoot = os.Path(path, wd)
           val scanned = for {
             p <- os.walk(scanRoot, p => skip(p, scanRoot) && ! os.isDir(p, followLinks = false))
             sig <- Signature.compute(p, buffer)
@@ -68,37 +77,37 @@ object Agent {
           client.writeMsg(scanned)
 
         case Rpc.Remove(path) =>
-          os.remove.all(os.Path(path, os.pwd))
+          os.remove.all(os.Path(path, wd))
           client.writeMsg(0)
 
         case Rpc.PutFile(path, perms) =>
-          os.write(os.Path(path, os.pwd), "", perms)
+          os.write(os.Path(path, wd), "", perms)
           client.writeMsg(0)
 
         case Rpc.PutDir(path, perms) =>
-          os.makeDir(os.Path(path, os.pwd), perms)
+          os.makeDir(os.Path(path, wd), perms)
           client.writeMsg(0)
 
         case Rpc.PutLink(path, dest) =>
-          os.symlink(os.Path(path, os.pwd), os.FilePath(dest))
+          os.symlink(os.Path(path, wd), os.FilePath(dest))
           client.writeMsg(0)
 
         case Rpc.WriteChunk(path, offset, data, hash) =>
-          val p = os.Path(path, os.pwd)
+          val p = os.Path(path, wd)
           withWritable(p){
             os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
           }
           client.writeMsg(0)
 
         case Rpc.SetSize(path, offset) =>
-          val p = os.Path(path, os.pwd)
+          val p = os.Path(path, wd)
           withWritable(p) {
-            os.truncate(os.Path(path, os.pwd), offset)
+            os.truncate(os.Path(path, wd), offset)
           }
           client.writeMsg(0)
 
         case Rpc.SetPerms(path, perms) =>
-          os.perms.set.apply(os.Path(path, os.pwd), perms)
+          os.perms.set.apply(os.Path(path, wd), perms)
           client.writeMsg(0)
       }
     }

@@ -23,6 +23,7 @@ object devbox extends ScalaModule{
   }
 
   object test extends Tests{
+    def moduleDeps = super.moduleDeps ++ Seq(agent)
     def bundleRepo(url: String, name: String, hash: String)
                   (implicit ctx: util.Ctx.Dest) = {
       os.proc("git", "clone", url)

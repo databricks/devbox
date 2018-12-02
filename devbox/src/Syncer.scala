@@ -16,7 +16,7 @@ import scala.collection.{immutable, mutable}
   * stateless call-and-forget logic is pushed into static methods on the Syncer
   * companion object
   */
-class Syncer(agent: os.SubProcess,
+class Syncer(agent: AgentApi,
              mapping: Seq[(os.Path, Seq[String])],
              skip: (os.Path, os.Path) => Boolean,
              debounceTime: Int,
@@ -58,8 +58,11 @@ class Syncer(agent: os.SubProcess,
 
     agentLoggerThread = makeLoggedThread("DevboxAgentLoggerThread") {
       while (running && agent.isAlive()) {
-        val str = agent.stderr.readLine()
-        if (str != null) logger.write(ujson.read(str).str)
+        try {
+          val str = agent.stderr.readLine()
+          if (str != null) logger.write(ujson.read(str).str)
+        }catch{case e: InterruptedIOException => //do nothing
+        }
       }
     }
 
@@ -91,7 +94,7 @@ class Syncer(agent: os.SubProcess,
     agent.destroy()
     agentLoggerThread.interrupt()
     agentLoggerThread.join()
-    if (asyncException != null) throw asyncException
+    if (asyncException != null) throw new Exception("Syncer thread failed", asyncException)
   }
 }
 
@@ -103,7 +106,7 @@ object Syncer{
       Vfs.updateVfs(p, stateVfs)
     }
   }
-  def syncAllRepos(agent: os.SubProcess,
+  def syncAllRepos(agent: AgentApi,
                    mapping: Seq[(os.Path, Seq[String])],
                    onComplete: () => Unit,
                    eventQueue: BlockingQueue[Array[String]],
