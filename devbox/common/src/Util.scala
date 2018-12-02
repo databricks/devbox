@@ -6,6 +6,12 @@ import geny.Generator
 object Util {
   val blockSize = 4 * 1024 * 1024
 
+  implicit val permsetRw: upickle.default.ReadWriter[os.PermSet] =
+    upickle.default.readwriter[String].bimap[os.PermSet](
+      _.toString(),
+      os.PermSet.fromString
+    )
+
   def autoclose[T <: AutoCloseable, V](x: T)(f: T => V) = {
     try f(x)
     finally x.close()

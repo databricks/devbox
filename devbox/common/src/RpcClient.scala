@@ -1,7 +1,7 @@
 package devbox.common
-import java.io.{DataInputStream, DataOutputStream}
+import java.io._
 
-class RpcClient(out: DataOutputStream, in: DataInputStream) {
+class RpcClient(out: OutputStream with DataOutput, in: InputStream with DataInput) {
   private[this] var outstandingMsgs = 0
   def getOutstandingMsgs = outstandingMsgs
   def drainOutstandingMsgs() = {

@@ -1,9 +1,8 @@
 package devbox.agent
 
 import java.io.{DataInputStream, DataOutputStream}
-import java.nio.channels.FileChannel
 import java.nio.file.attribute.PosixFilePermission
-import java.nio.file.{Files, Paths, StandardOpenOption}
+import java.nio.file.StandardOpenOption
 
 import devbox.common.Cli
 import devbox.common.Cli.Arg
@@ -69,13 +68,11 @@ object Agent {
           client.writeMsg(scanned)
 
         case Rpc.Remove(path) =>
-          val p = os.Path(path, os.pwd)
-          if (os.isLink(p)) os.remove(p)
-          else os.remove.all(p)
+          os.remove.all(os.Path(path, os.pwd))
           client.writeMsg(0)
 
         case Rpc.PutFile(path, perms) =>
-          os.write(os.Path(path, os.pwd), "", perms, createFolders = false)
+          os.write(os.Path(path, os.pwd), "", perms)
           client.writeMsg(0)
 
         case Rpc.PutDir(path, perms) =>
@@ -83,10 +80,7 @@ object Agent {
           client.writeMsg(0)
 
         case Rpc.PutLink(path, dest) =>
-          Files.createSymbolicLink(
-            os.Path(path, os.pwd).toNIO,
-            Paths.get(dest)
-          )
+          os.symlink(os.Path(path, os.pwd), os.FilePath(dest))
           client.writeMsg(0)
 
         case Rpc.WriteChunk(path, offset, data, hash) =>
@@ -99,9 +93,7 @@ object Agent {
         case Rpc.SetSize(path, offset) =>
           val p = os.Path(path, os.pwd)
           withWritable(p) {
-            Util.autoclose(FileChannel.open(os.Path(path, os.pwd).toNIO, StandardOpenOption.WRITE)) { channel =>
-              channel.truncate(offset)
-            }
+            os.truncate(os.Path(path, os.pwd), offset)
           }
           client.writeMsg(0)
 

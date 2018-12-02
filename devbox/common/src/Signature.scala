@@ -1,6 +1,5 @@
 package devbox.common
-import java.nio.file.Files
-
+import Util.permsetRw
 import upickle.default.{ReadWriter, macroRW}
 import java.security.MessageDigest
 import scala.collection.mutable
@@ -19,7 +18,7 @@ object Signature{
     val stat = os.stat(p, followLinks = false)
     stat.fileType match{
       case os.FileType.Other => None
-      case os.FileType.SymLink => Some(Symlink(Files.readSymbolicLink(p.toNIO).toString))
+      case os.FileType.SymLink => Some(Symlink(os.readLink(p).toString))
       case os.FileType.Dir => Some(Dir(os.perms(p).toInt()))
       case os.FileType.File =>
         val digest = MessageDigest.getInstance("MD5")
@@ -37,10 +36,10 @@ object Signature{
     }
   }
 
-  case class File(perms: Int, blockHashes: Seq[Bytes], size: Long) extends Signature
+  case class File(perms: os.PermSet, blockHashes: Seq[Bytes], size: Long) extends Signature
   object File{ implicit val rw: ReadWriter[File] = macroRW }
 
-  case class Dir(perms: Int) extends Signature
+  case class Dir(perms: os.PermSet) extends Signature
   object Dir{ implicit val rw: ReadWriter[Dir] = macroRW }
 
   case class Symlink(dest: String) extends Signature

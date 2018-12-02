@@ -59,7 +59,7 @@ class Syncer(agent: os.SubProcess,
     agentLoggerThread = makeLoggedThread("DevboxAgentLoggerThread") {
       while (running && agent.isAlive()) {
         val str = agent.stderr.readLine()
-        if (str != null && str != "") logger.write(ujson.read(str).str)
+        if (str != null) logger.write(ujson.read(str).str)
       }
     }
 
@@ -116,10 +116,7 @@ object Syncer{
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val buffer = new Array[Byte](Util.blockSize)
 
-    val client = new RpcClient(
-      new DataOutputStream(agent.stdin),
-      new DataInputStream(agent.stdout)
-    )
+    val client = new RpcClient(agent.stdin, agent.stdout)
 
     logger("INITIAL SCAN")
     for (((src, dest), i) <- mapping.zipWithIndex) {
@@ -327,7 +324,7 @@ object Syncer{
                         stateVfs: Vfs[Signature],
                         p: Path,
                         segments: String,
-                        perms: Int,
+                        perms: os.PermSet,
                         blockHashes: Seq[Bytes],
                         size: Long,
                         remote: Option[Signature]) = {
