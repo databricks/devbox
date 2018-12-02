@@ -26,27 +26,27 @@ object DevboxTests extends TestSuite{
     // complexity
     'edge - {
       * - walkValidate("edge", cases("edge"), 1, 50, 0)
-      'git - walkValidate("edgegit", cases("edge"), 1, 50, 0, ignoreStrategy = "")
-      'restart - walkValidate("edgerestart", cases("edge"), 1, 50, 0, restartSyncer = true)
+      'git - walkValidate("edge-git", cases("edge"), 1, 50, 0, ignoreStrategy = "")
+      'restart - walkValidate("edge-restart", cases("edge"), 1, 50, 0, restartSyncer = true)
     }
 
     'oslib - {
       * - walkValidate("oslib", cases("oslib"), 1, 50, 0)
-      'git - walkValidate("oslibgit", cases("oslib"), 2, 50, 0, ignoreStrategy = "")
-      'restart - walkValidate("oslibrestart", cases("oslib"), 2, 50, 0, restartSyncer = true)
+      'git - walkValidate("oslib-git", cases("oslib"), 2, 50, 0, ignoreStrategy = "")
+      'restart - walkValidate("oslib-restart", cases("oslib"), 2, 50, 0, restartSyncer = true)
     }
 
     'scalatags - {
       * - walkValidate("scalatags", cases("scalatags"), 3, 100, 0)
-      'restart - walkValidate("scalatags", cases("scalatags"), 3, 100, 0, restartSyncer = true)
+      'restart - walkValidate("scalatags-restart", cases("scalatags"), 3, 100, 0, restartSyncer = true)
     }
     'mill - {
       * - walkValidate("mill", cases("mill"), 4, 100, 0)
-      'restart - walkValidate("mill", cases("mill"), 4, 100, 0, restartSyncer = true)
+      'restart - walkValidate("mill-restart", cases("mill"), 4, 100, 0, restartSyncer = true)
     }
     'ammonite - {
       * - walkValidate("ammonite", cases("ammonite"), 5, 200, 0)
-      'restart - walkValidate("ammonite", cases("ammonite"), 5, 200, 0, restartSyncer = true)
+      'restart - walkValidate("ammonite-restart", cases("ammonite"), 5, 200, 0, restartSyncer = true)
     }
   }
 

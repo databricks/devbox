@@ -60,7 +60,9 @@ class Syncer(agent: AgentApi,
         try {
           val str = agent.stderr.readLine()
           if (str != null) logger.write(ujson.read(str).str)
-        }catch{case e: InterruptedIOException => //do nothing
+        }catch{
+          case e: InterruptedIOException => //do nothing
+          case e: InterruptedException => //do nothing
         }
       }
     }
@@ -98,7 +100,7 @@ class Syncer(agent: AgentApi,
 }
 
 object Syncer{
-  class VfsRpcClient(client: RpcClient, stateVfs: Vfs[Signature]){
+  class VfsRpcClient(val client: RpcClient, stateVfs: Vfs[Signature]){
     def clearOutstandingMsgs() = client.clearOutstandingMsgs()
     def drainOutstandingMsgs() = client.drainOutstandingMsgs()
     def apply[T <: Action: default.Writer](p: T) = {
@@ -240,29 +242,25 @@ object Syncer{
                             client: VfsRpcClient,
                             src: Path,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
-    client.clearOutstandingMsgs()
-
-    for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
-      val (otherHashes, otherSize) = otherSig match {
-        case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
-        case _ => (Nil, 0L)
+    draining(client) {
+      for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
+        val (otherHashes, otherSize) = otherSig match {
+          case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
+          case _ => (Nil, 0L)
+        }
+        logger("STREAM CHUNKS", p.relativeTo(src).toString)
+        streamFileContents(
+          client,
+          stateVfs,
+          p,
+          p.relativeTo(src).toString,
+          blockHashes,
+          otherHashes,
+          size,
+          otherSize
+        )
       }
-      logger("STREAM CHUNKS", p.relativeTo(src).toString)
-      streamFileContents(
-        client,
-        stateVfs,
-        p,
-        p.relativeTo(src).toString,
-        blockHashes,
-        otherHashes,
-        size,
-        otherSize
-      )
-
-      if (n % 1000 == 0) client.drainOutstandingMsgs()
     }
-
-    client.drainOutstandingMsgs()
   }
 
   def drainUntilStable[T](eventQueue: BlockingQueue[T], debounceTime: Int) = {
@@ -294,6 +292,26 @@ object Syncer{
     interestingBases
   }
 
+  def draining[T](client: VfsRpcClient)(t: => T): T = {
+    client.clearOutstandingMsgs()
+    @volatile var running = true
+    val drainer = new Thread(
+      () => {
+        while(running || client.client.getOutstandingMsgs > 0){
+          if (client.client.getOutstandingMsgs > 0) client.drainOutstandingMsgs()
+          else Thread.sleep(5)
+        }
+      },
+      "DevboxDrainerThread"
+    )
+    drainer.start()
+    val res = t
+    running = false
+    drainer.join()
+
+    res
+  }
+
   def syncMetadata(client: VfsRpcClient,
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
@@ -303,41 +321,40 @@ object Syncer{
                    buffer: Array[Byte]): Int = {
 
     var totalWrites = 0
-    client.clearOutstandingMsgs()
 
-    for(((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex){
+    draining(client) {
+      for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
+        totalWrites += 1
+        val segments = p.relativeTo(src).toString
+        if (localSig != remoteSig) (localSig, remoteSig) match {
+          case (None, _) =>
+            client(Rpc.Remove(segments))
+          case (Some(Signature.Dir(perms)), remote) =>
+            remote match {
+              case None =>
+                client(Rpc.PutDir(segments, perms))
+              case Some(Signature.Dir(remotePerms)) =>
+                client(Rpc.SetPerms(segments, perms))
+              case Some(_) =>
+                client(Rpc.Remove(segments))
+                client(Rpc.PutDir(segments, perms))
+            }
 
-      totalWrites += 1
-      val segments = p.relativeTo(src).toString
-      if (localSig != remoteSig) (localSig, remoteSig) match{
-        case (None, _) =>
-          client(Rpc.Remove(segments))
-        case (Some(Signature.Dir(perms)), remote) =>
-          remote match{
-            case None =>
-              client(Rpc.PutDir(segments, perms))
-            case Some(Signature.Dir(remotePerms)) =>
-              client(Rpc.SetPerms(segments, perms))
-            case Some(_) =>
-              client(Rpc.Remove(segments))
-              client(Rpc.PutDir(segments, perms))
-          }
+          case (Some(Signature.Symlink(dest)), remote) =>
+            remote match {
+              case None =>
+                client(Rpc.PutLink(segments, dest))
+              case Some(_) =>
+                client(Rpc.Remove(segments))
+                client(Rpc.PutLink(segments, dest))
+            }
+          case (Some(Signature.File(perms, blockHashes, size)), remote) =>
+            prepareRemoteFile(client, stateVfs, p, segments, perms, blockHashes, size, remote)
+        }
 
-        case (Some(Signature.Symlink(dest)), remote) =>
-          remote match {
-            case None =>
-              client(Rpc.PutLink(segments, dest))
-            case Some(_) =>
-              client(Rpc.Remove(segments))
-              client(Rpc.PutLink(segments, dest))
-          }
-        case (Some(Signature.File(perms, blockHashes, size)), remote) =>
-          prepareRemoteFile(client, stateVfs, p, segments, perms, blockHashes, size, remote)
       }
-      if (i % 1000 == 0) client.drainOutstandingMsgs()
     }
 
-    client.drainOutstandingMsgs()
 
     totalWrites
   }
