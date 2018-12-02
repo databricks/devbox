@@ -41,7 +41,7 @@ object DevboxTests extends TestSuite{
 
   def printBanner(commitIndex: Int, commitCount: Int, trialIndex: Int, trialCount: Int, commit: RevCommit) = {
     println("=" * 80)
-    println(s"[$commitIndex/$commitCount $trialIndex/$trialCount] Checking ${commit.getName} ${commit.getShortMessage}")
+    println(s"[$commitIndex/$commitCount $trialIndex/$trialCount] Checking ${commit.getName.take(8)} ${commit.getShortMessage}")
   }
 
   def prepareFolders(label: String, preserve: Boolean = false) = {
@@ -167,7 +167,7 @@ object DevboxTests extends TestSuite{
     'edge - check(1, 50)
     'edgegit - walkValidate("edgegit", cases("edge"), 1, 50, 0, ignoreStrategy = "")
     'oslib - check(2, 50)
-    'oslib - walkValidate("oslibgit", cases("oslib"), 2, 50, 0, ignoreStrategy = "")
+    'oslibgit - walkValidate("oslibgit", cases("oslib"), 2, 50, 0, ignoreStrategy = "")
     'scalatags - check(3, 100)
     'mill - check(4, 100)
     'ammonite - check(5, 200)
