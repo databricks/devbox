@@ -79,6 +79,39 @@ object DevboxTests extends TestSuite{
     )
   }
 
+  def initializeWalk(label: String,
+                     uri: String,
+                     stride: Int,
+                     commitIndicesToCheck0: Seq[Int],
+                     ignoreStrategy: String,
+                     restartSyncer: Boolean) = {
+    val (src, dest, log) = prepareFolders(label)
+    val repo = Git.cloneRepository()
+      .setURI(uri)
+      .setDirectory(src.toIO)
+      .call()
+
+    val commits = repo.log().call().asScala.toSeq.reverse
+
+    repo.checkout().setName(commits.head.getName).call()
+
+    val workCount = new Semaphore(0)
+
+    // Fixed random to make the random jumps deterministic
+    val random = new scala.util.Random(31337)
+
+    val commitsIndicesToCheck =
+      if (commitIndicesToCheck0 != Nil) commitIndicesToCheck0
+      else
+        // Step through the commits in order to test "normal" edits
+        (if (restartSyncer) Nil else (1 until commits.length)) ++
+        // Also jump between a bunch of random commits to test robustness against
+        // huge edits modifying lots of different files
+        (0 until 10 * stride).map(_ => random.nextInt(commits.length))
+
+    val skip = Util.ignoreCallback(ignoreStrategy)
+    (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo)
+  }
 
   def walkValidate(label: String,
                    uri: String,
@@ -91,7 +124,7 @@ object DevboxTests extends TestSuite{
                    restartSyncer: Boolean = false) = {
 
     val (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo) =
-      initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
+      initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy, restartSyncer)
 
 
     var lastWriteCount = 0
@@ -113,61 +146,38 @@ object DevboxTests extends TestSuite{
       for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
         val commit = commits(i)
         printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
-        if (restartSyncer){
-          syncer.close()
-        }
+
         repo.checkout().setName(commit.getName).call()
-        if (restartSyncer){
+
+        println("Checkout finished")
+
+        if (restartSyncer && syncer == null){
           lastWriteCount = 0
+          println("Restarting Syncer")
           syncer = createSyncer()
           syncer.start()
           workCount.acquire()
         }
-        println("Checkout finished")
 
         workCount.acquire()
         println("Write Count: " + (syncer.writeCount - lastWriteCount))
+        lastWriteCount = syncer.writeCount
 
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
         // validation anyway.
-        if (count % stride == 0) validate(src, dest, skip)
-
-        lastWriteCount = syncer.writeCount
+        if (count % stride == 0) {
+          if (restartSyncer){
+            println("Stopping Syncer")
+            syncer.close()
+            syncer = null
+          }
+          validate(src, dest, skip)
+        }
       }
     }finally{
-      syncer.close()
+      if (syncer != null) syncer.close()
     }
-
-  }
-
-  def initializeWalk(label: String, uri: String, stride: Int, commitIndicesToCheck0: Seq[Int], ignoreStrategy: String) = {
-    val (src, dest, log) = prepareFolders(label)
-    val repo = Git.cloneRepository()
-      .setURI(uri)
-      .setDirectory(src.toIO)
-      .call()
-
-    val commits = repo.log().call().asScala.toSeq.reverse
-
-    repo.checkout().setName(commits.head.getName).call()
-
-    val workCount = new Semaphore(0)
-
-    // Fixed random to make the random jumps deterministic
-    val random = new scala.util.Random(31337)
-
-    val commitsIndicesToCheck =
-      if (commitIndicesToCheck0 != Nil) commitIndicesToCheck0
-      else
-      // Step through the commits in order to test "normal" edits
-        (1 until commits.length) ++
-          // Also jump between a bunch of random commits to test robustness against
-          // huge edits modifying lots of different files
-          (0 until 10 * stride).map(_ => random.nextInt(commits.length))
-
-    val skip = Util.ignoreCallback(ignoreStrategy)
-    (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo)
   }
 
   val cases = Map(
@@ -191,6 +201,7 @@ object DevboxTests extends TestSuite{
     'edgerestart - walkValidate("edgerestart", cases("edge"), 1, 50, 0, ignoreStrategy = "dotgit", restartSyncer = true)
     'oslib - check(2, 50)
     'oslibgit - walkValidate("oslibgit", cases("oslib"), 2, 50, 0, ignoreStrategy = "")
+    'oslibrestart - walkValidate("oslibrestart", cases("oslib"), 2, 50, 0, ignoreStrategy = "dotgit", restartSyncer = true)
     'scalatags - check(3, 100)
     'mill - check(4, 100)
     'ammonite - check(5, 200)
