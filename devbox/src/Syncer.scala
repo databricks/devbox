@@ -59,7 +59,7 @@ class Syncer(agent: os.SubProcess,
     agentLoggerThread = makeLoggedThread("DevboxAgentLoggerThread") {
       while (running && agent.isAlive()) {
         val str = agent.stderr.readLine()
-        if (str != null && str != "") logger.write(str)
+        if (str != null && str != "") logger.write(ujson.read(str).str)
       }
     }
 
@@ -137,14 +137,17 @@ object Syncer{
     }
 
     while (continue()) {
-      logger("SYNC")
+      logger("SYNC LOOP")
 
       for{
         interestingBases <-
           try Some(Syncer.drainUntilStable(eventQueue, debounceTime))
           catch{case e: InterruptedException => None}
 
-        allSrcEventDirs = interestingBases.flatten.distinct.sorted.map(os.Path(_))
+        // We need to .distinct after we convert the strings to paths, in order
+        // to ensure the inputs are canonicalized and don't have meaningless
+        // differences such as trailing slashes
+        allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
 
         ((src, dest), i) <- mapping.zipWithIndex
 
@@ -152,14 +155,14 @@ object Syncer{
 
         if srcEventDirs.nonEmpty
 
-        _ = logger("BASE", srcEventDirs.map(_.relativeTo(src).toString()))
+        _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
 
         signatureMapping <- restartOnFailure(
           logger, interestingBases, eventQueue,
           computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src)
         )
 
-        _ = logger("SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
+        _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
 
         sortedSignatures = sortSignatureChanges(signatureMapping)
 
@@ -173,7 +176,12 @@ object Syncer{
         )
       } countWrite(count)
 
-      if (eventQueue.isEmpty) onComplete()
+      if (eventQueue.isEmpty) {
+        logger("SYNC COMPLETE")
+        onComplete()
+      }else{
+        logger("SYNC PARTIAL")
+      }
     }
   }
 

@@ -12,6 +12,7 @@ object Agent {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
                     ignoreStrategy: String = "")
+
   def main(args: Array[String]): Unit = {
     val signature = Seq(
       Arg[Config, Unit](
@@ -32,7 +33,7 @@ object Agent {
         System.exit(1)
 
       case Right((config, remaining)) =>
-        val logger = Logger.Stderr
+        val logger = Logger.JsonStderr
 
         logger("START AGENT", os.pwd)
 

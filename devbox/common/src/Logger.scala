@@ -2,7 +2,7 @@ package devbox.common
 
 trait Logger extends AutoCloseable{
   def write(s: String): Unit
-  def apply(tag: String, x: => Any = ""): Unit = {
+  def apply(tag: String, x: => Any = Logger.NoOp): Unit = {
     assert(tag.length < Logger.margin)
 
     val msg =
@@ -14,6 +14,9 @@ trait Logger extends AutoCloseable{
 
 
 object Logger{
+  object NoOp {
+    override def toString = ""
+  }
   val margin = 15
   val marginStr = "\n" + (" " * margin) + " | "
   case class File(dest: os.Path) extends Logger{
@@ -28,8 +31,8 @@ object Logger{
     def write(s: String): Unit = synchronized{ System.out.println(s) }
     def close() = () // do nothing
   }
-  object Stderr extends Logger{
-    def write(s: String) = synchronized{ System.err.println(s) }
+  object JsonStderr extends Logger{
+    def write(s: String) = synchronized{ System.err.println(ujson.write(s)) }
     def close() = () // do nothing
   }
 }

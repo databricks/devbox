@@ -63,7 +63,7 @@ object DevboxMain {
             config.debounceMillis,
             () => (),
             config.logFile match{
-              case None => Logger.Stderr
+              case None => Logger.Stdout
               case Some(path) => Logger.File(path)
             }
           )){syncer =>
