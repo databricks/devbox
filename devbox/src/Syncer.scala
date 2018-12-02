@@ -121,7 +121,6 @@ object Syncer{
       new DataInputStream(agent.stdout)
     )
 
-
     logger("INITIAL SCAN")
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
@@ -144,22 +143,30 @@ object Syncer{
         interestingBases <-
           try Some(Syncer.drainUntilStable(eventQueue, debounceTime))
           catch{case e: InterruptedException => None}
+
+        allSrcEventDirs = interestingBases.flatten.distinct.sorted.map(os.Path(_))
+
         ((src, dest), i) <- mapping.zipWithIndex
-        srcEventDirs = interestingBases
-          .flatten
-          .map(os.Path(_))
-          .filter(p => p.startsWith(src) && !skip(p, src))
-          .distinct
-          .sorted
+
+        srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skip(p, src))
+
         if srcEventDirs.nonEmpty
+
         _ = logger("BASE", srcEventDirs.map(_.relativeTo(src).toString()))
+
         signatureMapping <- restartOnFailure(
           logger, interestingBases, eventQueue,
           computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src)
         )
-        _ = logger("SIGNATURE", signatureMapping)
+
+        _ = logger("SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
+
+        sortedSignatures = sortSignatureChanges(signatureMapping)
+
         vfsRpcClient = new VfsRpcClient(client, vfsArr(i))
-        count = Syncer.syncMetadata(vfsRpcClient, signatureMapping, src, dest, vfsArr(i), logger, buffer)
+
+        count = Syncer.syncMetadata(vfsRpcClient, sortedSignatures, src, dest, vfsArr(i), logger, buffer)
+
         _ <- restartOnFailure(
           logger, interestingBases, eventQueue,
           streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, signatureMapping)
@@ -167,6 +174,24 @@ object Syncer{
       } countWrite(count)
 
       if (eventQueue.isEmpty) onComplete()
+    }
+  }
+
+  def sortSignatureChanges(signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])]) = {
+    signatureMapping.sortBy { case (p, local, remote) =>
+      (
+        // First, sort by how deep the path is. We want to operate on the
+        // shallower paths first before the deeper paths, so folders can be
+        // created before their contents is written.
+        p.segmentCount,
+        // Next, we want to perform the deletions before any other operations.
+        // If a file is renamed to a different case, we must make sure the old
+        // file is deleted before the new file is written to avoid conflicts
+        // on case-insensitive filesystems
+        local.isDefined,
+        // Lastly, we sort by the stringified path, for neatness
+        p.toString
+      )
     }
   }
 
@@ -319,7 +344,7 @@ object Syncer{
                          otherSize: Long) = {
     val byteArr = new Array[Byte](Util.blockSize)
     val buf = ByteBuffer.wrap(byteArr)
-    Util.autoclose(p.toSource.getChannel()) { channel =>
+    Util.autoclose(os.read.channel(p)) { channel =>
       for {
         i <- blockHashes.indices
         if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
@@ -356,9 +381,7 @@ object Syncer{
                         stateVfs: Vfs[Signature],
                         skip: (os.Path, os.Path) => Boolean,
                         src: os.Path): Seq[(os.Path, Option[Signature], Option[Signature])] = {
-
-    val signatureMapping = interestingBases
-      .flatMap { p =>
+    interestingBases.flatMap { p =>
         val listed =
           if (!os.isDir(p, followLinks = false)) os.Generator.apply()
           else os.list.stream(p).filter(!skip(_, src)).map(_.last)
@@ -387,23 +410,5 @@ object Syncer{
           virtual.get(k).map(_.value)
         )
       }
-
-    val sortedSignatures = signatureMapping.sortBy { case (p, local, remote) =>
-      (
-        // First, sort by how deep the path is. We want to operate on the
-        // shallower paths first before the deeper paths, so folders can be
-        // created before their contents is written.
-        p.segmentCount,
-        // Next, we want to perform the deletions before any other operations.
-        // If a file is renamed to a different case, we must make sure the old
-        // file is deleted before the new file is written to avoid conflicts
-        // on case-insensitive filesystems
-        local.isDefined,
-        // Lastly, we sort by the stringified path, for neatness
-        p.toString
-      )
-    }
-
-    sortedSignatures
   }
 }
