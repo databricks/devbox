@@ -3,6 +3,7 @@ import java.io._
 
 class RpcClient(out: OutputStream with DataOutput, in: InputStream with DataInput) {
   private[this] var outstandingMsgs = 0
+  def clearOutstandingMsgs() = outstandingMsgs = 0
   def getOutstandingMsgs = outstandingMsgs
   def drainOutstandingMsgs() = {
     while(getOutstandingMsgs > 0) assert(readMsg[Int]() == 0)

@@ -76,9 +76,7 @@ object DevboxTests extends TestSuite{
     try{
       printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
       syncer.start()
-      workCount.acquire()
       println("Write Count: " + (syncer.writeCount - lastWriteCount))
-      validate(src, dest, skip)
 
       lastWriteCount = syncer.writeCount
 
@@ -95,7 +93,6 @@ object DevboxTests extends TestSuite{
           println("Restarting Syncer")
           syncer = createSyncer()
           syncer.start()
-          workCount.acquire()
         }
 
         workCount.acquire()
@@ -109,6 +106,9 @@ object DevboxTests extends TestSuite{
           if (restartSyncer){
             println("Stopping Syncer")
             syncer.close()
+            // Closing the syncer results in workCount being given a permit
+            // that we need to clear before further use
+            workCount.acquire()
             syncer = null
           }
           validate(src, dest, skip)
@@ -142,11 +142,11 @@ object DevboxTests extends TestSuite{
     val commitsIndicesToCheck =
       if (commitIndicesToCheck0 != Nil) commitIndicesToCheck0
       else
-      // Step through the commits in order to test "normal" edits
+        // Step through the commits in order to test "normal" edits
         (1 until commits.length) ++
-          // Also jump between a bunch of random commits to test robustness against
-          // huge edits modifying lots of different files
-          (0 until 10 * stride).map(_ => random.nextInt(commits.length))
+        // Also jump between a bunch of random commits to test robustness against
+        // huge edits modifying lots of different files
+        (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
     val skip = Util.ignoreCallback(ignoreStrategy)
     (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo)

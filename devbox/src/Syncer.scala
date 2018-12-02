@@ -45,7 +45,6 @@ class Syncer(agent: AgentApi,
       catch {case e: Throwable =>
         e.printStackTrace()
         asyncException = e
-        onComplete()
       },
     name
   )
@@ -100,12 +99,14 @@ class Syncer(agent: AgentApi,
 
 object Syncer{
   class VfsRpcClient(client: RpcClient, stateVfs: Vfs[Signature]){
+    def clearOutstandingMsgs() = client.clearOutstandingMsgs()
     def drainOutstandingMsgs() = client.drainOutstandingMsgs()
     def apply[T <: Action: default.Writer](p: T) = {
       client.writeMsg(p)
       Vfs.updateVfs(p, stateVfs)
     }
   }
+
   def syncAllRepos(agent: AgentApi,
                    mapping: Seq[(os.Path, Seq[String])],
                    onComplete: () => Unit,
@@ -124,16 +125,25 @@ object Syncer{
     logger("INITIAL SCAN")
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
-      client.writeMsg(Rpc.FullScan(""))
-      val initialRemote = client.readMsg[Seq[(String, Signature)]]()
-      val initialLocal = os.walk(
+      client.writeMsg(Rpc.FullScan(dest.mkString("/")))
+      while({
+        client.readMsg[Option[(String, Signature)]]() match{
+          case None =>
+            logger("INITIAL FINISH")
+            false
+          case Some((p, sig)) =>
+            logger("INITIAL REMOTE", (p, sig))
+            Vfs.updateVfs(p, sig, vfsArr(i))
+            true
+        }
+      })()
+
+      val initialLocal = os.walk.stream(
         src,
         p => skip(p, src) || !os.isDir(p, followLinks = false),
         includeTarget = true
       )
       eventQueue.add(initialLocal.map(_.toString).toArray)
-
-      for((p, sig) <- initialRemote) Vfs.updateVfs(p, sig, vfsArr(i))
     }
 
     while (continue()) {
@@ -142,13 +152,16 @@ object Syncer{
       for{
         interestingBases <-
           try Some(Syncer.drainUntilStable(eventQueue, debounceTime))
-          catch{case e: InterruptedException => None}
+          catch{case e: InterruptedException =>
+            logger("SYNC INTERRUPT")
+            None
+          }
 
         // We need to .distinct after we convert the strings to paths, in order
         // to ensure the inputs are canonicalized and don't have meaningless
         // differences such as trailing slashes
         allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
-
+        _ = logger("SYNC EVENTS", allSrcEventDirs)
         ((src, dest), i) <- mapping.zipWithIndex
 
         srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skip(p, src))
@@ -174,7 +187,9 @@ object Syncer{
           logger, interestingBases, eventQueue,
           streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, signatureMapping)
         )
-      } countWrite(count)
+      } {
+        countWrite(count)
+      }
 
       if (eventQueue.isEmpty) {
         logger("SYNC COMPLETE")
@@ -225,6 +240,8 @@ object Syncer{
                             client: VfsRpcClient,
                             src: Path,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
+    client.clearOutstandingMsgs()
+
     for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
       val (otherHashes, otherSize) = otherSig match {
         case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
@@ -286,8 +303,10 @@ object Syncer{
                    buffer: Array[Byte]): Int = {
 
     var totalWrites = 0
+    client.clearOutstandingMsgs()
 
     for(((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex){
+
       totalWrites += 1
       val segments = p.relativeTo(src).toString
       if (localSig != remoteSig) (localSig, remoteSig) match{
@@ -316,8 +335,8 @@ object Syncer{
           prepareRemoteFile(client, stateVfs, p, segments, perms, blockHashes, size, remote)
       }
       if (i % 1000 == 0) client.drainOutstandingMsgs()
-
     }
+
     client.drainOutstandingMsgs()
 
     totalWrites

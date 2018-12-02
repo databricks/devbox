@@ -69,12 +69,14 @@ object Agent {
       msg match {
         case Rpc.FullScan(path) =>
           val scanRoot = os.Path(path, wd)
-          val scanned = for {
-            p <- os.walk(scanRoot, p => skip(p, scanRoot) && ! os.isDir(p, followLinks = false))
+          for {
+            p <- os.walk.stream(scanRoot, p => skip(p, scanRoot) && ! os.isDir(p, followLinks = false))
             sig <- Signature.compute(p, buffer)
-          } yield (p.relativeTo(scanRoot).toString, sig)
+          } {
+            client.writeMsg(Some((p.relativeTo(scanRoot).toString, sig)))
+          }
 
-          client.writeMsg(scanned)
+          client.writeMsg(None)
 
         case Rpc.Remove(path) =>
           os.remove.all(os.Path(path, wd))

@@ -16,7 +16,6 @@ class InMemoryAgent(dest: os.Path, skip: (os.Path, os.Path) => Boolean) extends 
     stderr0.close()
     stdout0.close()
     stdin0.close()
-    thread.interrupt()
     thread.join()
     alive = false
   }
@@ -35,7 +34,10 @@ class InMemoryAgent(dest: os.Path, skip: (os.Path, os.Path) => Boolean) extends 
   val thread = new Thread(() =>
     try devbox.agent.Agent.mainLoop(
       new Logger{
-        def write(s: String): Unit = synchronized{ stderrWrite.write((ujson.write(s) + "\n").getBytes()) }
+        def write(s: String): Unit = synchronized{
+          stderrWrite.write((ujson.write(s) + "\n").getBytes())
+          stderrWrite.flush()
+        }
         def close() = () // do nothing
       },
       skip,
