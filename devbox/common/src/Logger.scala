@@ -1,5 +1,7 @@
 package devbox.common
 
+import java.nio.file.StandardOpenOption.{CREATE, WRITE, APPEND}
+
 trait Logger extends AutoCloseable{
   def write(s: String): Unit
   def apply(tag: String, x: => Any = Logger.NoOp): Unit = {
@@ -12,7 +14,6 @@ trait Logger extends AutoCloseable{
   }
 }
 
-
 object Logger{
   object NoOp {
     override def toString = ""
@@ -20,7 +21,7 @@ object Logger{
   val margin = 15
   val marginStr = "\n" + (" " * margin) + " | "
   case class File(dest: os.Path) extends Logger{
-    val output = os.write.outputStream(dest)
+    val output = os.write.outputStream(dest, openOptions = Seq(CREATE, WRITE, APPEND))
     def write(s: String): Unit = synchronized{
       output.write(fansi.Str(s).plainText.getBytes("UTF-8"))
       output.write('\n')

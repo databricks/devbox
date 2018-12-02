@@ -4,6 +4,7 @@ import java.util.concurrent.Semaphore
 import devbox.common.{Logger, Signature, Util}
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.revwalk.RevCommit
+import os.Path
 
 import collection.JavaConverters._
 import utest._
@@ -78,6 +79,7 @@ object DevboxTests extends TestSuite{
     )
   }
 
+
   def walkValidate(label: String,
                    uri: String,
                    stride: Int,
@@ -85,8 +87,61 @@ object DevboxTests extends TestSuite{
                    initialCommit: Int,
                    commitIndicesToCheck0: Seq[Int] = Nil,
                    verbose: Boolean = false,
-                   ignoreStrategy: String = "dotgit") = {
+                   ignoreStrategy: String = "dotgit",
+                   restartSyncer: Boolean = false) = {
 
+    val (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo) =
+      initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
+
+
+    var lastWriteCount = 0
+
+    def createSyncer() = instantiateSyncer(
+      src, dest, log,
+      skip, debounceMillis, () => workCount.release(), verbose, ignoreStrategy
+    )
+    var syncer = createSyncer()
+    try{
+      printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
+      syncer.start()
+      workCount.acquire()
+      println("Write Count: " + (syncer.writeCount - lastWriteCount))
+      validate(src, dest, skip)
+
+      lastWriteCount = syncer.writeCount
+
+      for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
+        val commit = commits(i)
+        printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
+        if (restartSyncer){
+          syncer.close()
+        }
+        repo.checkout().setName(commit.getName).call()
+        if (restartSyncer){
+          lastWriteCount = 0
+          syncer = createSyncer()
+          syncer.start()
+          workCount.acquire()
+        }
+        println("Checkout finished")
+
+        workCount.acquire()
+        println("Write Count: " + (syncer.writeCount - lastWriteCount))
+
+        // Allow validation not-every-commit, because validation is really slow
+        // and hopefully if something gets messed up it'll get caught in a later
+        // validation anyway.
+        if (count % stride == 0) validate(src, dest, skip)
+
+        lastWriteCount = syncer.writeCount
+      }
+    }finally{
+      syncer.close()
+    }
+
+  }
+
+  def initializeWalk(label: String, uri: String, stride: Int, commitIndicesToCheck0: Seq[Int], ignoreStrategy: String) = {
     val (src, dest, log) = prepareFolders(label)
     val repo = Git.cloneRepository()
       .setURI(uri)
@@ -99,53 +154,20 @@ object DevboxTests extends TestSuite{
 
     val workCount = new Semaphore(0)
 
-    var lastWriteCount = 0
-
     // Fixed random to make the random jumps deterministic
     val random = new scala.util.Random(31337)
 
     val commitsIndicesToCheck =
       if (commitIndicesToCheck0 != Nil) commitIndicesToCheck0
       else
-        // Step through the commits in order to test "normal" edits
+      // Step through the commits in order to test "normal" edits
         (1 until commits.length) ++
-        // Also jump between a bunch of random commits to test robustness against
-        // huge edits modifying lots of different files
-        (0 until 10 * stride).map(_ => random.nextInt(commits.length))
+          // Also jump between a bunch of random commits to test robustness against
+          // huge edits modifying lots of different files
+          (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
     val skip = Util.ignoreCallback(ignoreStrategy)
-
-    devbox.common.Util.autoclose(
-      instantiateSyncer(
-        src, dest, log,
-        skip, debounceMillis, () => workCount.release(), verbose, ignoreStrategy
-      )
-    ){ syncer =>
-      printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
-      syncer.start()
-      workCount.acquire()
-      println("Write Count: " + (syncer.writeCount - lastWriteCount))
-      validate(src, dest, skip)
-
-      lastWriteCount = syncer.writeCount
-
-      for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
-        val commit = commits(i)
-        printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
-        repo.checkout().setName(commit.getName).call()
-        println("Checkout finished")
-
-        workCount.acquire()
-        println("Write Count: " + (syncer.writeCount - lastWriteCount))
-
-        // Allow validation not-every-commit, because validation is really slow
-        // and hopefully if something gets messed up it'll get caught in a later
-        // validation anyway.
-        if (count % stride == 0) validate(src, dest, skip)
-        lastWriteCount = syncer.writeCount
-      }
-    }
-
+    (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo)
   }
 
   val cases = Map(
@@ -166,6 +188,7 @@ object DevboxTests extends TestSuite{
     // complexity
     'edge - check(1, 50)
     'edgegit - walkValidate("edgegit", cases("edge"), 1, 50, 0, ignoreStrategy = "")
+    'edgerestart - walkValidate("edgerestart", cases("edge"), 1, 50, 0, ignoreStrategy = "dotgit", restartSyncer = true)
     'oslib - check(2, 50)
     'oslibgit - walkValidate("oslibgit", cases("oslib"), 2, 50, 0, ignoreStrategy = "")
     'scalatags - check(3, 100)
