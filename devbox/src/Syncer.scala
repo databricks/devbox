@@ -24,10 +24,7 @@ class Syncer(agent: AgentApi,
              logger: Logger) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
-  private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
-    eventQueue.add(p)
-    logger("SYNC FSEVENT", p)
-  })
+  private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), eventQueue.add, logger)
 
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null

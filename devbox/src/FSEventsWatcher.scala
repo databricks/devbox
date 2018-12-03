@@ -1,9 +1,10 @@
 package devbox
 import com.sun.jna.{NativeLong, Pointer}
-import io.methvin.watchservice.jna.CarbonAPI.FSEventStreamCallback
-import io.methvin.watchservice.jna._
+import devbox.common.Logger
 
-class FSEventsWatcher(srcs: Seq[os.Path], onEvent: Array[String] => Unit) {
+class FSEventsWatcher(srcs: Seq[os.Path],
+                      onEvent: Array[String] => Unit,
+                      logger: Logger) {
   val callback = new FSEventStreamCallback{
     def invoke(streamRef: FSEventStreamRef,
                clientCallBackInfo: Pointer,
@@ -12,15 +13,17 @@ class FSEventsWatcher(srcs: Seq[os.Path], onEvent: Array[String] => Unit) {
                eventFlags: Pointer,
                eventIds: Pointer) = {
       val length = numEvents.intValue
-      onEvent(eventPaths.getStringArray(0, length))
+      val p = eventPaths.getStringArray(0, length)
+      logger("SYNC FSEVENT", p)
+      onEvent(p)
     }
   }
 
-  val streamRef = CarbonAPI.INSTANCE.FSEventStreamCreate(
+  val streamRef = CarbonApi.INSTANCE.FSEventStreamCreate(
     Pointer.NULL,
     callback,
     Pointer.NULL,
-    CarbonAPI.INSTANCE.CFArrayCreate(
+    CarbonApi.INSTANCE.CFArrayCreate(
       null,
       srcs.map(p => CFStringRef.toCFString(p.toString).getPointer).toArray,
       CFIndex.valueOf(1),
@@ -34,17 +37,21 @@ class FSEventsWatcher(srcs: Seq[os.Path], onEvent: Array[String] => Unit) {
   var current: CFRunLoopRef = null
 
   def start() = {
-    CarbonAPI.INSTANCE.FSEventStreamScheduleWithRunLoop(
+    CarbonApi.INSTANCE.FSEventStreamScheduleWithRunLoop(
       streamRef,
-      CarbonAPI.INSTANCE.CFRunLoopGetCurrent(),
+      CarbonApi.INSTANCE.CFRunLoopGetCurrent(),
       CFStringRef.toCFString("kCFRunLoopDefaultMode")
     )
-    CarbonAPI.INSTANCE.FSEventStreamStart(streamRef)
-    current = CarbonAPI.INSTANCE.CFRunLoopGetCurrent()
-    CarbonAPI.INSTANCE.CFRunLoopRun()
+    CarbonApi.INSTANCE.FSEventStreamStart(streamRef)
+    current = CarbonApi.INSTANCE.CFRunLoopGetCurrent()
+    logger("SYNC FSLOOP RUN")
+    CarbonApi.INSTANCE.CFRunLoopRun()
+    logger("SYNC FSLOOP END")
   }
 
   def stop() = {
-    CarbonAPI.INSTANCE.CFRunLoopStop(current)
+    logger("SYNC FSLOOP STOP")
+    CarbonApi.INSTANCE.CFRunLoopStop(current)
+    logger("SYNC FSLOOP STOP2")
   }
 }
