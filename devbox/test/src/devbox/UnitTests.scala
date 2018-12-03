@@ -7,13 +7,13 @@ object UnitTests extends TestSuite {
               bufferSize: Int,
               read: (Array[Byte], java.io.InputStream) => Unit,
               write: (Array[Byte], java.io.OutputStream) => Unit): Unit = {
-      val (in, out) = InMemoryAgent.createPipedStreams(bufferSize)
+      val pipe = new Pipe(bufferSize)
       val source = new Array[Byte](totalSize)
       val dest = new Array[Byte](totalSize)
       val random = new scala.util.Random(313373)
       random.nextBytes(source)
-      val reader = new Thread(() => read(dest, in))
-      val writer = new Thread(() => write(source, out))
+      val reader = new Thread(() => read(dest, pipe.in))
+      val writer = new Thread(() => write(source, pipe.out))
       reader.start()
       writer.start()
       reader.join()
