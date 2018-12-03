@@ -109,9 +109,27 @@ object InMemoryAgent{
 
       override def read(b: Array[Byte]) = synchronized{ read(b, 0, b.length) }
 
-//      override def read(b: Array[Byte], off: Int, len: Int) = synchronized{
-//
-//      }
+      override def read(b: Array[Byte], off: Int, len: Int) = synchronized{
+        var n = 0
+        while(n < len){
+          availableRead.acquire()
+          val allPermits = availableRead.drainPermits() + 1
+          val readStart = (readIndex.get() % bufferSize).toInt
+          val numToRead = math.min(allPermits, len - n)
+          if (readStart + numToRead <= bufferSize){
+            System.arraycopy(buffer, readStart, b, off + n, numToRead)
+          }else{
+            val firstHalfLength = bufferSize - readStart
+            System.arraycopy(buffer, readStart, b, off + n, firstHalfLength)
+            System.arraycopy(buffer, 0, b, off + n + firstHalfLength, numToRead - firstHalfLength)
+          }
+          n += numToRead
+          readIndex.addAndGet(numToRead)
+          availableRead.release(allPermits - numToRead)
+          availableWrite.release(numToRead)
+        }
+        len
+      }
     }
     (in, out)
   }
