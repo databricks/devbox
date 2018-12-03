@@ -24,8 +24,7 @@ object Signature{
         val digest = MessageDigest.getInstance("MD5")
         val chunks = mutable.ArrayBuffer.empty[Bytes]
         var size = 0L
-        for(d <- Util.readChunks(p, buffer)){
-          val (buffer, n) = d
+        for((buffer, n) <- os.read.chunks(p, buffer)){
           size += n
           digest.reset()
           digest.update(buffer, 0, n)
