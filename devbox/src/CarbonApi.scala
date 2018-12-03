@@ -38,6 +38,12 @@ trait CarbonApi extends Library {
 
   def FSEventStreamStop(streamRef: FSEventStreamRef): Unit
 
+  def FSEventStreamInvalidate(streamRef: FSEventStreamRef): Unit
+  def FSEventStreamUnscheduleFromRunLoop(streamRef: FSEventStreamRef,
+                                         runLoop: CFRunLoopRef,
+                                         runLoopMode: CFStringRef): Unit
+  def FSEventStreamRelease(streamRef: FSEventStreamRef): Unit
+
   def FSEventStreamScheduleWithRunLoop(streamRef: FSEventStreamRef,
                                        runLoop: CFRunLoopRef,
                                        runLoopMode: CFStringRef): Unit

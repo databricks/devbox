@@ -52,6 +52,14 @@ class FSEventsWatcher(srcs: Seq[os.Path],
   def stop() = {
     logger("SYNC FSLOOP STOP")
     CarbonApi.INSTANCE.CFRunLoopStop(current)
+    CarbonApi.INSTANCE.FSEventStreamStop(streamRef)
+    CarbonApi.INSTANCE.FSEventStreamUnscheduleFromRunLoop(
+      streamRef,
+      current,
+      CFStringRef.toCFString("kCFRunLoopDefaultMode")
+    )
+    CarbonApi.INSTANCE.FSEventStreamInvalidate(streamRef)
+    CarbonApi.INSTANCE.FSEventStreamRelease(streamRef)
     logger("SYNC FSLOOP STOP2")
   }
 }
