@@ -72,6 +72,29 @@ object InMemoryAgent{
 
         availableRead.release(1)
       }
+
+      override def write(b: Array[Byte]): Unit = synchronized{ write(b, 0, b.length) }
+
+      override def write(b: Array[Byte], off: Int, len: Int): Unit = synchronized{
+        var n = 0
+        while(n < len){
+          availableWrite.acquire()
+          val allPermits = availableWrite.drainPermits() + 1
+          val writeStart = (writeIndex.get() % bufferSize).toInt
+          val numToWrite = math.min(allPermits, len - n)
+          if (writeStart + numToWrite <= bufferSize){
+            System.arraycopy(b, off + n, buffer, writeStart, numToWrite)
+          }else{
+            val firstHalfLength = bufferSize - writeStart
+            System.arraycopy(b, off + n, buffer, writeStart, firstHalfLength)
+            System.arraycopy(b, off + n + firstHalfLength, buffer, 0, numToWrite - firstHalfLength)
+          }
+          n += numToWrite
+          writeIndex.addAndGet(numToWrite)
+          availableWrite.release(allPermits - numToWrite)
+          availableRead.release(numToWrite)
+        }
+      }
     }
 
     val in = new InputStream {
@@ -83,6 +106,12 @@ object InMemoryAgent{
         availableWrite.release(1)
         res
       }
+
+      override def read(b: Array[Byte]) = synchronized{ read(b, 0, b.length) }
+
+//      override def read(b: Array[Byte], off: Int, len: Int) = synchronized{
+//
+//      }
     }
     (in, out)
   }

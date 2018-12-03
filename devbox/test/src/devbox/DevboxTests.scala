@@ -67,10 +67,14 @@ object DevboxTests extends TestSuite{
 
     var lastWriteCount = 0
 
+    val logger = if (verbose) Logger.Stdout else Logger.File(log)
+
     def createSyncer() = instantiateSyncer(
-      src, dest, log,
-      skip, debounceMillis, () => workCount.release(), verbose, ignoreStrategy,
-      restartSyncer
+      src, dest, skip, debounceMillis, () => {
+        logger("WC RELEASE", workCount.availablePermits())
+        workCount.release()
+      },
+      logger, ignoreStrategy, restartSyncer
     )
     var syncer = createSyncer()
     try{
@@ -83,20 +87,21 @@ object DevboxTests extends TestSuite{
       for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
         val commit = commits(i)
         printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
-
+        logger("CHECKOUT", commit.getShortMessage)
         repo.checkout().setName(commit.getName).call()
 
-        println("Checkout finished")
+        logger("CHECKOUT DONE", commit.getShortMessage)
 
         if (restartSyncer && syncer == null){
           lastWriteCount = 0
-          println("Restarting Syncer")
+          logger("RESTART SYNCER")
           syncer = createSyncer()
           syncer.start()
         }
-
+        logger("WC ACQUIRE 1", workCount.availablePermits())
         workCount.acquire()
         println("Write Count: " + (syncer.writeCount - lastWriteCount))
+        logger("WRITE COUNT", syncer.writeCount - lastWriteCount)
         lastWriteCount = syncer.writeCount
 
         // Allow validation not-every-commit, because validation is really slow
@@ -104,10 +109,11 @@ object DevboxTests extends TestSuite{
         // validation anyway.
         if (count % stride == 0) {
           if (restartSyncer){
-            println("Stopping Syncer")
+            logger("STOP SYNCER")
             syncer.close()
             // Closing the syncer results in workCount being given a permit
             // that we need to clear before further use
+            logger("WC ACQUIRE 2", workCount.availablePermits())
             workCount.acquire()
             syncer = null
           }
@@ -175,11 +181,10 @@ object DevboxTests extends TestSuite{
 
   def instantiateSyncer(src: os.Path,
                         dest: os.Path,
-                        log: os.Path,
                         skip: (os.Path, os.Path) => Boolean,
                         debounceMillis: Int,
                         onComplete: () => Unit,
-                        verbose: Boolean,
+                        logger: Logger,
                         ignoreStrategy: String,
                         inMemoryAgent: Boolean) = {
     new Syncer(
@@ -193,7 +198,7 @@ object DevboxTests extends TestSuite{
       skip,
       debounceMillis,
       onComplete,
-      if (verbose) Logger.Stdout else Logger.File(log)
+      logger
     )
   }
 

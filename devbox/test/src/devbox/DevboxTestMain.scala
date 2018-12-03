@@ -67,13 +67,14 @@ object DevboxTestMain {
 
           if (config.label == "manual"){
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
+            val logger = if (config.verbose) Logger.Stdout else Logger.File(log)
             val skip = Util.ignoreCallback(config.ignoreStrategy)
             val syncer = instantiateSyncer(
-              src, dest, log,
+              src, dest,
               skip,
               config.debounceMillis,
               () => println("ON_COMPLETE"),
-              config.verbose,
+              logger,
               config.ignoreStrategy,
               false
             )
