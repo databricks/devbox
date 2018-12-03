@@ -1,8 +1,5 @@
 package devbox.common
 
-import java.io.{DataInputStream, DataOutputStream}
-import geny.Generator
-
 object Util {
   val blockSize = 4 * 1024 * 1024
 

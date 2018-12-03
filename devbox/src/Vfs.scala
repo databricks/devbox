@@ -113,7 +113,14 @@ object Vfs{
 
     case Rpc.SetSize(path, offset) =>
       val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[Signature.File]]
-      currentFile.value = currentFile.value.copy(size = offset)
+      currentFile.value = currentFile.value.copy(
+        size = offset,
+        blockHashes = currentFile.value.blockHashes.take(
+          // offset / blockSize, rounded up, to give the number of chunks
+          // required to hold that many bytes
+          ((offset + Util.blockSize - 1) / Util.blockSize).toInt
+        )
+      )
 
     case Rpc.SetPerms(path, perms) =>
       stateVfs.resolve(path) match{
