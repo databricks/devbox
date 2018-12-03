@@ -8,7 +8,7 @@ import os.Path
 import upickle.default
 
 import scala.annotation.tailrec
-import scala.collection.{immutable, mutable}
+import scala.collection.mutable
 
 /**
   * The Syncer class instances contain all the stateful, close-able parts of
@@ -26,7 +26,7 @@ class Syncer(agent: AgentApi,
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), p => {
     eventQueue.add(p)
-    logger("FSEVENT", p)
+    logger("SYNC FSEVENT", p)
   })
 
   private[this] var watcherThread: Thread = null
@@ -122,19 +122,19 @@ object Syncer{
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val buffer = new Array[Byte](Util.blockSize)
 
-    val client = new RpcClient(agent.stdin, agent.stdout)
+    val client = new RpcClient(agent.stdin, agent.stdout, (tag, t) => logger("SYNC " + tag, t))
 
-    logger("INITIAL SCAN")
+    logger("SYNC SCAN")
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
       client.writeMsg(Rpc.FullScan(dest.mkString("/")))
       while({
         client.readMsg[Option[(String, Signature)]]() match{
           case None =>
-            logger("INITIAL FINISH")
+            logger("SYNC SCAN DONE")
             false
           case Some((p, sig)) =>
-            logger("INITIAL REMOTE", (p, sig))
+            logger("SYNC SCAN ITEM", (p, sig))
             Vfs.updateVfs(p, sig, vfsArr(i))
             true
         }
@@ -248,7 +248,7 @@ object Syncer{
           case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
           case _ => (Nil, 0L)
         }
-        logger("STREAM CHUNKS", p.relativeTo(src).toString)
+        logger("SYNC CHUNKS", p.relativeTo(src).toString)
         streamFileContents(
           client,
           stateVfs,

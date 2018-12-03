@@ -26,16 +26,17 @@ class InMemoryAgent(dest: os.Path, skip: (os.Path, os.Path) => Boolean) extends 
   val stdin0 = new Pipe()
   val stdin = stdin0.out
 
+  val logger = new Logger{
+    def write(s: String): Unit = synchronized{
+      stderr0.out.write((ujson.write(s) + "\n").getBytes())
+    }
+    def close() = () // do nothing
+  }
   val thread = new Thread(() =>
     try devbox.agent.Agent.mainLoop(
-      new Logger{
-        def write(s: String): Unit = synchronized{
-          stderr0.out.write((ujson.write(s) + "\n").getBytes())
-        }
-        def close() = () // do nothing
-      },
+      logger,
       skip,
-      new RpcClient(stdout0.out, stdin0.in),
+      new RpcClient(stdout0.out, stdin0.in, (tag, t) => logger("AGNT " + tag, t)),
       dest
     ) catch{
       case e: java.lang.InterruptedException => () // do nothing

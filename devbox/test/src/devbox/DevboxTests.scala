@@ -71,8 +71,9 @@ object DevboxTests extends TestSuite{
 
     def createSyncer() = instantiateSyncer(
       src, dest, skip, debounceMillis, () => {
-        logger("WC RELEASE", workCount.availablePermits())
+        logger("TEST WC RELEASE1", workCount.availablePermits())
         workCount.release()
+        logger("TEST WC RELEASE2", workCount.availablePermits())
       },
       logger, ignoreStrategy, restartSyncer
     )
@@ -87,21 +88,22 @@ object DevboxTests extends TestSuite{
       for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
         val commit = commits(i)
         printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
-        logger("CHECKOUT", commit.getShortMessage)
+        logger("TEST CHECKOUT", commit.getShortMessage)
         repo.checkout().setName(commit.getName).call()
 
-        logger("CHECKOUT DONE", commit.getShortMessage)
+        logger("TEST CHECKOUT DONE", commit.getShortMessage)
 
         if (restartSyncer && syncer == null){
           lastWriteCount = 0
-          logger("RESTART SYNCER")
+          logger("TEST RESTART SYNCER")
           syncer = createSyncer()
           syncer.start()
         }
-        logger("WC ACQUIRE 1", workCount.availablePermits())
+        logger("TEST WC ACQUIRE 1a", workCount.availablePermits())
         workCount.acquire()
+        logger("TEST WC ACQUIRE 1b", workCount.availablePermits())
         println("Write Count: " + (syncer.writeCount - lastWriteCount))
-        logger("WRITE COUNT", syncer.writeCount - lastWriteCount)
+        logger("TEST WRITE COUNT", syncer.writeCount - lastWriteCount)
         lastWriteCount = syncer.writeCount
 
         // Allow validation not-every-commit, because validation is really slow
@@ -109,12 +111,13 @@ object DevboxTests extends TestSuite{
         // validation anyway.
         if (count % stride == 0) {
           if (restartSyncer){
-            logger("STOP SYNCER")
+            logger("TEST STOP SYNCER")
             syncer.close()
             // Closing the syncer results in workCount being given a permit
             // that we need to clear before further use
-            logger("WC ACQUIRE 2", workCount.availablePermits())
+            logger("TEST WC ACQUIRE 2b", workCount.availablePermits())
             workCount.acquire()
+            logger("TEST WC ACQUIRE 2a", workCount.availablePermits())
             syncer = null
           }
           validate(src, dest, skip)

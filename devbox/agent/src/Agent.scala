@@ -41,16 +41,17 @@ object Agent {
       case Right((config, remaining)) =>
         val logger = Logger.JsonStderr
 
-        logger("START AGENT", config.workingDir)
+        logger("AGNT START", config.workingDir)
 
         val skip = Util.ignoreCallback(config.ignoreStrategy)
         val client = new RpcClient(
           new DataOutputStream(System.out),
-          new DataInputStream(System.in)
+          new DataInputStream(System.in),
+          (tag, t) => logger("AGNT " + tag, t)
         )
         try mainLoop(logger, skip, client, os.Path(config.workingDir, os.pwd))
         catch{ case e: Throwable =>
-          logger("EXIT AGENT", e)
+          logger("AGNT EXIT", e)
           client.writeMsg(RemoteException.create(e), false)
           System.exit(1)
         }
@@ -63,55 +64,51 @@ object Agent {
 
 
     val buffer = new Array[Byte](Util.blockSize)
-    while (true) {
-      val msg = client.readMsg[Rpc]()
-      logger("AGENT ", msg)
-      msg match {
-        case Rpc.FullScan(path) =>
-          val scanRoot = os.Path(path, wd)
-          for {
-            p <- os.walk.stream(scanRoot, p => skip(p, scanRoot) && ! os.isDir(p, followLinks = false))
-            sig <- Signature.compute(p, buffer)
-          } {
-            client.writeMsg(Some((p.relativeTo(scanRoot).toString, sig)))
-          }
+    while (true) client.readMsg[Rpc]() match {
+      case Rpc.FullScan(path) =>
+        val scanRoot = os.Path(path, wd)
+        for {
+          p <- os.walk.stream(scanRoot, p => skip(p, scanRoot) && ! os.isDir(p, followLinks = false))
+          sig <- Signature.compute(p, buffer)
+        } {
+          client.writeMsg(Some((p.relativeTo(scanRoot).toString, sig)))
+        }
 
-          client.writeMsg(None)
+        client.writeMsg(None)
 
-        case Rpc.Remove(path) =>
-          os.remove.all(os.Path(path, wd))
-          client.writeMsg(0)
+      case Rpc.Remove(path) =>
+        os.remove.all(os.Path(path, wd))
+        client.writeMsg(0)
 
-        case Rpc.PutFile(path, perms) =>
-          os.write(os.Path(path, wd), "", perms)
-          client.writeMsg(0)
+      case Rpc.PutFile(path, perms) =>
+        os.write(os.Path(path, wd), "", perms)
+        client.writeMsg(0)
 
-        case Rpc.PutDir(path, perms) =>
-          os.makeDir(os.Path(path, wd), perms)
-          client.writeMsg(0)
+      case Rpc.PutDir(path, perms) =>
+        os.makeDir(os.Path(path, wd), perms)
+        client.writeMsg(0)
 
-        case Rpc.PutLink(path, dest) =>
-          os.symlink(os.Path(path, wd), os.FilePath(dest))
-          client.writeMsg(0)
+      case Rpc.PutLink(path, dest) =>
+        os.symlink(os.Path(path, wd), os.FilePath(dest))
+        client.writeMsg(0)
 
-        case Rpc.WriteChunk(path, offset, data, hash) =>
-          val p = os.Path(path, wd)
-          withWritable(p){
-            os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
-          }
-          client.writeMsg(0)
+      case Rpc.WriteChunk(path, offset, data, hash) =>
+        val p = os.Path(path, wd)
+        withWritable(p){
+          os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
+        }
+        client.writeMsg(0)
 
-        case Rpc.SetSize(path, offset) =>
-          val p = os.Path(path, wd)
-          withWritable(p) {
-            os.truncate(os.Path(path, wd), offset)
-          }
-          client.writeMsg(0)
+      case Rpc.SetSize(path, offset) =>
+        val p = os.Path(path, wd)
+        withWritable(p) {
+          os.truncate(os.Path(path, wd), offset)
+        }
+        client.writeMsg(0)
 
-        case Rpc.SetPerms(path, perms) =>
-          os.perms.set.apply(os.Path(path, wd), perms)
-          client.writeMsg(0)
-      }
+      case Rpc.SetPerms(path, perms) =>
+        os.perms.set.apply(os.Path(path, wd), perms)
+        client.writeMsg(0)
     }
   }
   def withWritable[T](p: os.Path)(t: => T) = {

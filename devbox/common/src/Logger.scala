@@ -5,7 +5,7 @@ import java.nio.file.StandardOpenOption.{CREATE, WRITE, APPEND}
 trait Logger extends AutoCloseable{
   def write(s: String): Unit
   def apply(tag: String, x: => Any = Logger.NoOp): Unit = {
-    assert(tag.length < Logger.margin)
+    assert(tag.length <= Logger.margin)
 
     val msg =
       fansi.Color.Magenta(tag.padTo(Logger.margin, ' ')) ++ " | " ++
@@ -18,7 +18,7 @@ object Logger{
   object NoOp {
     override def toString = ""
   }
-  val margin = 15
+  val margin = 20
   val marginStr = "\n" + (" " * margin) + " | "
   case class File(dest: os.Path) extends Logger{
     val output = os.write.outputStream(dest, openOptions = Seq(CREATE, WRITE, APPEND))
