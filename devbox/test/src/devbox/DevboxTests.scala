@@ -113,11 +113,6 @@ object DevboxTests extends TestSuite{
           if (restartSyncer){
             logger("TEST STOP SYNCER")
             syncer.close()
-            // Closing the syncer results in workCount being given a permit
-            // that we need to clear before further use
-            logger("TEST WC ACQUIRE 2b", workCount.availablePermits())
-            workCount.acquire()
-            logger("TEST WC ACQUIRE 2a", workCount.availablePermits())
             syncer = null
           }
           validate(src, dest, skip)

@@ -145,56 +145,50 @@ object Syncer{
       eventQueue.add(initialLocal.map(_.toString).toArray)
     }
 
-    while (continue()) {
+    while (continue() && agent.isAlive()) {
       logger("SYNC LOOP")
 
-      for{
-        interestingBases <-
-          try Some(Syncer.drainUntilStable(eventQueue, debounceTime))
-          catch{case e: InterruptedException =>
-            logger("SYNC INTERRUPT")
-            None
-          }
-
+      for (interestingBases <- Syncer.drainUntilStable(eventQueue, debounceTime) ){
         // We need to .distinct after we convert the strings to paths, in order
         // to ensure the inputs are canonicalized and don't have meaningless
         // differences such as trailing slashes
-        allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
-        _ = logger("SYNC EVENTS", allSrcEventDirs)
-        ((src, dest), i) <- mapping.zipWithIndex
+        val allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
+        logger("SYNC EVENTS", allSrcEventDirs)
+        for{
+          ((src, dest), i) <- mapping.zipWithIndex
 
-        srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skip(p, src))
+          srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skip(p, src))
 
-        if srcEventDirs.nonEmpty
+          if srcEventDirs.nonEmpty
 
-        _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
+          _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
 
-        signatureMapping <- restartOnFailure(
-          logger, interestingBases, eventQueue,
-          computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src)
-        )
+          signatureMapping <- restartOnFailure(
+            logger, interestingBases, eventQueue,
+            computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src)
+          )
 
-        _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
+          _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
 
-        sortedSignatures = sortSignatureChanges(signatureMapping)
+          sortedSignatures = sortSignatureChanges(signatureMapping)
 
-        vfsRpcClient = new VfsRpcClient(client, vfsArr(i))
+          vfsRpcClient = new VfsRpcClient(client, vfsArr(i))
 
-        count = Syncer.syncMetadata(vfsRpcClient, sortedSignatures, src, dest, vfsArr(i), logger, buffer)
+          count = Syncer.syncMetadata(vfsRpcClient, sortedSignatures, src, dest, vfsArr(i), logger, buffer)
 
-        _ <- restartOnFailure(
-          logger, interestingBases, eventQueue,
-          streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, signatureMapping)
-        )
-      } {
-        countWrite(count)
-      }
+          _ <- restartOnFailure(
+            logger, interestingBases, eventQueue,
+            streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, signatureMapping)
+          )
+        } countWrite(count)
 
-      if (eventQueue.isEmpty) {
-        logger("SYNC COMPLETE")
-        onComplete()
-      }else{
-        logger("SYNC PARTIAL")
+        if (eventQueue.isEmpty) {
+          logger("SYNC COMPLETE")
+          onComplete()
+        }else{
+          logger("SYNC PARTIAL")
+        }
+
       }
     }
   }
@@ -284,9 +278,13 @@ object Syncer{
       }
     }
 
-    await(true, false)
+    try {
+      await(true, false)
 
-    interestingBases
+      Some(interestingBases)
+    }catch {
+      case e: InterruptedException => None
+    }
   }
 
   def draining[T](client: VfsRpcClient)(t: => T): T = {
