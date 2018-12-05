@@ -75,7 +75,8 @@ object DevboxTests extends TestSuite{
         workCount.release()
         logger("TEST WC RELEASE2", workCount.availablePermits())
       },
-      logger, ignoreStrategy, restartSyncer
+      logger, ignoreStrategy, restartSyncer,
+      exitOnError = true
     )
     var syncer = createSyncer()
     try{
@@ -117,7 +118,7 @@ object DevboxTests extends TestSuite{
           }
 
           logger("TEST VALIDATE")
-          validate(src, dest, skip, logger)
+          validate(src, dest, skip)
         }
       }
     }finally{
@@ -186,13 +187,15 @@ object DevboxTests extends TestSuite{
                         onComplete: () => Unit,
                         logger: Logger,
                         ignoreStrategy: String,
-                        inMemoryAgent: Boolean) = {
+                        inMemoryAgent: Boolean,
+                        exitOnError: Boolean) = {
     new Syncer(
-      if (inMemoryAgent) new InMemoryAgent(dest, skip)
+      if (inMemoryAgent) new InMemoryAgent(dest, skip, exitOnError = exitOnError)
       else os.proc(
         System.getenv("AGENT_EXECUTABLE"),
         "--ignore-strategy", ignoreStrategy,
-        "--working-dir", dest
+        "--working-dir", dest,
+        if (exitOnError) Seq("--exit-on-error") else Nil
       ).spawn(cwd = dest),
       Seq(src -> Nil),
       skip,

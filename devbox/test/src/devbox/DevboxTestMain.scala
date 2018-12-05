@@ -76,7 +76,8 @@ object DevboxTestMain {
               () => println("ON_COMPLETE"),
               logger,
               config.ignoreStrategy,
-              false
+              inMemoryAgent = false,
+              exitOnError = false
             )
             try {
               syncer.start()

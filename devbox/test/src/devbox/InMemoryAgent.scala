@@ -8,7 +8,9 @@ import devbox.common.{Logger, RpcClient}
   * In-memory implementation of [[AgentApi]], so we can run unit tests on the
   * without paying the expensive JVM startup cost.
   */
-class InMemoryAgent(dest: os.Path, skip: (os.Path, os.Path) => Boolean) extends AgentApi {
+class InMemoryAgent(dest: os.Path,
+                    skip: (os.Path, os.Path) => Boolean,
+                    exitOnError: Boolean) extends AgentApi {
   var alive = true
   def isAlive() = alive
 
@@ -37,7 +39,8 @@ class InMemoryAgent(dest: os.Path, skip: (os.Path, os.Path) => Boolean) extends 
       logger,
       skip,
       new RpcClient(stdout0.out, stdin0.in, (tag, t) => logger("AGNT " + tag, t)),
-      dest
+      dest,
+      exitOnError
     ) catch{
       case e: java.lang.InterruptedException => () // do nothing
     },

@@ -12,7 +12,8 @@ object Agent {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
                     ignoreStrategy: String = "",
-                    workingDir: String = "")
+                    workingDir: String = "",
+                    exitOnError: Boolean = false)
 
   def main(args: Array[String]): Unit = {
     val signature = Seq(
@@ -30,6 +31,11 @@ object Agent {
         "working-dir", None,
         "",
         (c, v) => c.copy(workingDir = v)
+      ),
+      Arg[Config, Unit](
+        "exit-on-error", None,
+        "",
+        (c, v) => c.copy(exitOnError = true)
       )
     )
 
@@ -49,22 +55,18 @@ object Agent {
           new DataInputStream(System.in),
           (tag, t) => logger("AGNT " + tag, t)
         )
-        try mainLoop(logger, skip, client, os.Path(config.workingDir, os.pwd))
-        catch{ case e: Throwable =>
-          logger("AGNT EXIT", e)
-          client.writeMsg(RemoteException.create(e), false)
-          System.exit(1)
-        }
+        mainLoop(logger, skip, client, os.Path(config.workingDir, os.pwd), config.exitOnError)
     }
   }
   def mainLoop(logger: Logger,
                skip: (os.Path, os.Path) => Boolean,
                client: RpcClient,
-               wd: os.Path) = {
+               wd: os.Path,
+               exitOnError: Boolean) = {
 
 
     val buffer = new Array[Byte](Util.blockSize)
-    while (true) client.readMsg[Rpc]() match {
+    while (true) try client.readMsg[Rpc]() match {
       case Rpc.FullScan(path) =>
         val scanRoot = os.Path(path, wd)
         for {
@@ -109,6 +111,15 @@ object Agent {
       case Rpc.SetPerms(path, perms) =>
         os.perms.set.apply(os.Path(path, wd), perms)
         client.writeMsg(0)
+    }catch{case e: Throwable =>
+      if (exitOnError) {
+        logger("AGNT EXIT", e)
+        client.writeMsg(RemoteException.create(e), false)
+        throw e
+      } else {
+        logger("AGNT ERROR", e)
+        client.writeMsg(RemoteException.create(e), false)
+      }
     }
   }
   def withWritable[T](p: os.Path)(t: => T) = {
