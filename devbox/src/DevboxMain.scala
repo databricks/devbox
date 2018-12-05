@@ -92,6 +92,7 @@ object DevboxMain {
             }
           )){syncer =>
             syncer.start()
+            Thread.sleep(Long.MaxValue)
           }
         }
         System.exit(0)
