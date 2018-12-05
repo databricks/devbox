@@ -78,38 +78,38 @@ object DevboxAgentMain {
 
         client.writeMsg(None)
 
-      case Rpc.Remove(path) =>
-        os.remove.all(os.Path(path, wd))
+      case Rpc.Remove(root, path) =>
+        os.remove.all(os.Path(path, wd / root))
         client.writeMsg(0)
 
-      case Rpc.PutFile(path, perms) =>
-        os.write(os.Path(path, wd), "", perms)
+      case Rpc.PutFile(root, path, perms) =>
+        os.write(os.Path(path, wd / root), "", perms)
         client.writeMsg(0)
 
-      case Rpc.PutDir(path, perms) =>
-        os.makeDir(os.Path(path, wd), perms)
+      case Rpc.PutDir(root, path, perms) =>
+        os.makeDir(os.Path(path, wd / root), perms)
         client.writeMsg(0)
 
-      case Rpc.PutLink(path, dest) =>
-        os.symlink(os.Path(path, wd), os.FilePath(dest))
+      case Rpc.PutLink(root, path, dest) =>
+        os.symlink(os.Path(path, wd / root), os.FilePath(dest))
         client.writeMsg(0)
 
-      case Rpc.WriteChunk(path, offset, data, hash) =>
-        val p = os.Path(path, wd)
+      case Rpc.WriteChunk(root, path, offset, data, hash) =>
+        val p = os.Path(path, wd / root)
         withWritable(p){
           os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
         }
         client.writeMsg(0)
 
-      case Rpc.SetSize(path, offset) =>
-        val p = os.Path(path, wd)
+      case Rpc.SetSize(root, path, offset) =>
+        val p = os.Path(path, wd / root)
         withWritable(p) {
-          os.truncate(os.Path(path, wd), offset)
+          os.truncate(p, offset)
         }
         client.writeMsg(0)
 
-      case Rpc.SetPerms(path, perms) =>
-        os.perms.set.apply(os.Path(path, wd), perms)
+      case Rpc.SetPerms(root, path, perms) =>
+        os.perms.set.apply(os.Path(path, wd / root), perms)
         client.writeMsg(0)
     }catch{case e: Throwable if !exitOnError =>
       logger("AGNT ERROR", e)
