@@ -255,7 +255,7 @@ object Syncer{
 
       streamedByteCount <- restartOnFailure(
         logger, interestingBases, eventQueue,
-        streamAllFileContents(logger, vfs, vfsRpcClient, src, filteredSignatures)
+        streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
       )
     } yield (streamedByteCount, filteredSignatures.length)
   }
@@ -299,12 +299,13 @@ object Syncer{
                             stateVfs: Vfs[Signature],
                             client: VfsRpcClient,
                             src: Path,
+                            dest: Seq[String],
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
     val total = signatureMapping.length
     var byteCount = 0
     draining(client) {
       for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
-        val segments = p.relativeTo(src).toString
+        val segments = (os.rel / dest / p.relativeTo(src)).toString
         val (otherHashes, otherSize) = otherSig match {
           case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
           case _ => (Nil, 0L)
@@ -392,7 +393,7 @@ object Syncer{
     val total = signatureMapping.length
     draining(client) {
       for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
-        val segments = p.relativeTo(src).toString
+        val segments = (os.rel / dest / p.relativeTo(src)).toString
         logger.progress(s"Syncing path [$i/$total]", segments)
         (localSig, remoteSig) match {
           case (None, _) =>
