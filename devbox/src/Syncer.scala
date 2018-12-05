@@ -305,16 +305,17 @@ object Syncer{
     var byteCount = 0
     draining(client) {
       for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
-        val segments = (os.rel / dest / p.relativeTo(src)).toString
+        val segments = p.relativeTo(src).toString
         val (otherHashes, otherSize) = otherSig match {
           case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
           case _ => (Nil, 0L)
         }
         logger("SYNC CHUNKS", segments)
-         byteCount += streamFileContents(
+        byteCount += streamFileContents(
           logger,
           client,
           stateVfs,
+          dest,
           p,
           segments,
           blockHashes,
@@ -393,38 +394,38 @@ object Syncer{
     val total = signatureMapping.length
     draining(client) {
       for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
-        val segments = (os.rel / dest / p.relativeTo(src)).toString
+        val segments = p.relativeTo(src).toString
         logger.progress(s"Syncing path [$i/$total]", segments)
         (localSig, remoteSig) match {
           case (None, _) =>
-            client(Rpc.Remove(segments))
+            client(Rpc.Remove(dest, segments))
           case (Some(Signature.Dir(perms)), remote) =>
             remote match {
               case None =>
-                client(Rpc.PutDir(segments, perms))
+                client(Rpc.PutDir(dest, segments, perms))
               case Some(Signature.Dir(remotePerms)) =>
-                client(Rpc.SetPerms(segments, perms))
+                client(Rpc.SetPerms(dest, segments, perms))
               case Some(_) =>
-                client(Rpc.Remove(segments))
-                client(Rpc.PutDir(segments, perms))
+                client(Rpc.Remove(dest, segments))
+                client(Rpc.PutDir(dest, segments, perms))
             }
 
-          case (Some(Signature.Symlink(dest)), remote) =>
+          case (Some(Signature.Symlink(target)), remote) =>
             remote match {
               case None =>
-                client(Rpc.PutLink(segments, dest))
+                client(Rpc.PutLink(dest, segments, target))
               case Some(_) =>
-                client(Rpc.Remove(segments))
-                client(Rpc.PutLink(segments, dest))
+                client(Rpc.Remove(dest, segments))
+                client(Rpc.PutLink(dest, segments, target))
             }
           case (Some(Signature.File(perms, blockHashes, size)), remote) =>
-            if (remote.exists(!_.isInstanceOf[Signature.File])) client(Rpc.Remove(segments))
+            if (remote.exists(!_.isInstanceOf[Signature.File])) client(Rpc.Remove(dest, segments))
 
             remote match {
               case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
-                if (perms != otherPerms) client(Rpc.SetPerms(segments, perms))
+                if (perms != otherPerms) client(Rpc.SetPerms(dest, segments, perms))
 
-              case _ => client(Rpc.PutFile(segments, perms))
+              case _ => client(Rpc.PutFile(dest, segments, perms))
             }
         }
       }
@@ -434,6 +435,7 @@ object Syncer{
   def streamFileContents(logger: Logger,
                          client: VfsRpcClient,
                          stateVfs: Vfs[Signature],
+                         dest: Seq[String],
                          p: Path,
                          segments: String,
                          blockHashes: Seq[Bytes],
@@ -469,6 +471,7 @@ object Syncer{
         byteCount += n
         client(
           Rpc.WriteChunk(
+            dest,
             segments,
             i * Util.blockSize,
             new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr),
@@ -478,7 +481,7 @@ object Syncer{
       }
     }
 
-    if (size != otherSize) client(Rpc.SetSize(segments, size))
+    if (size != otherSize) client(Rpc.SetSize(dest, segments, size))
     byteCount
   }
 
