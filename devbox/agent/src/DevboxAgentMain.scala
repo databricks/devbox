@@ -49,17 +49,17 @@ object DevboxAgentMain {
 
         logger("AGNT START", config.workingDir)
 
-        val skip = Util.ignoreCallback(config.ignoreStrategy)
+        val skipper = Util.ignoreCallback(config.ignoreStrategy)
         val client = new RpcClient(
           new DataOutputStream(System.out),
           new DataInputStream(System.in),
           (tag, t) => logger("AGNT " + tag, t)
         )
-        mainLoop(logger, skip, client, os.Path(config.workingDir, os.pwd), config.exitOnError)
+        mainLoop(logger, skipper, client, os.Path(config.workingDir, os.pwd), config.exitOnError)
     }
   }
   def mainLoop(logger: Logger,
-               skip: (os.Path, os.Path) => Boolean,
+               skipper: Skipper,
                client: RpcClient,
                wd: os.Path,
                exitOnError: Boolean) = {
@@ -69,8 +69,9 @@ object DevboxAgentMain {
     while (true) try client.readMsg[Rpc]() match {
       case Rpc.FullScan(path) =>
         val scanRoot = os.Path(path, wd)
+        val skip = skipper.initialize(scanRoot)
         for {
-          p <- os.walk.stream(scanRoot, p => skip(p, scanRoot) && ! os.isDir(p, followLinks = false))
+          p <- os.walk.stream(scanRoot, p => skip(p) && ! os.isDir(p, followLinks = false))
           sig <- Signature.compute(p, buffer)
         } {
           client.writeMsg(Some((p.relativeTo(scanRoot).toString, sig)))

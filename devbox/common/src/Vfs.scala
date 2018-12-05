@@ -1,4 +1,4 @@
-package devbox
+package devbox.common
 import devbox.common._
 import geny.Generator
 
@@ -72,8 +72,8 @@ object Vfs{
     val (name, folder) = vfs.resolveParent(p).get
     assert(!folder.children.contains(name))
     folder.children(name) =
-    if (!sig.isInstanceOf[Signature.Dir]) Vfs.File(sig)
-    else Vfs.Dir(sig, mutable.LinkedHashMap.empty[String, Vfs.Node[Signature]])
+      if (!sig.isInstanceOf[Signature.Dir]) Vfs.File(sig)
+      else Vfs.Dir(sig, mutable.LinkedHashMap.empty[String, Vfs.Node[Signature]])
   }
 
   def updateVfs(a: Action, stateVfs: Vfs[Signature]) = a match{

@@ -16,7 +16,8 @@ object DevboxTestMain {
                     ignoreStrategy: String = "dotgit",
                     preserve: Boolean = false,
                     toast: Boolean = false,
-                    readOnlyRemote: Boolean = false)
+                    readOnlyRemote: Boolean = false,
+                    inMemoryAgent: Boolean = false)
 
   def main(args: Array[String]): Unit = {
 
@@ -65,6 +66,11 @@ object DevboxTestMain {
         "readonly-remote", None,
         "",
         (c, v) => c.copy(readOnlyRemote = true)
+      ),
+      Arg[Config, Unit](
+        "in-memory-agent", None,
+        "",
+        (c, v) => c.copy(inMemoryAgent = true)
       )
     )
 
@@ -90,7 +96,7 @@ object DevboxTestMain {
               () => (),
               logger,
               config.ignoreStrategy,
-              inMemoryAgent = false,
+              inMemoryAgent = config.inMemoryAgent,
               exitOnError = false,
               if (!config.readOnlyRemote) identity[Signature]
               else {

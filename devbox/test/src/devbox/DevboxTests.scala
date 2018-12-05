@@ -2,7 +2,7 @@ package devbox
 import java.io.{DataInputStream, DataOutputStream, PipedInputStream, PipedOutputStream}
 import java.util.concurrent.Semaphore
 
-import devbox.common.{Logger, RpcClient, Signature, Util}
+import devbox.common._
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.revwalk.RevCommit
 import os.Path
@@ -60,13 +60,13 @@ object DevboxTests extends TestSuite{
                    ignoreStrategy: String = "dotgit",
                    restartSyncer: Boolean = false) = {
 
-    val (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo) =
+    val (src, dest, log, commits, workCount, skipper, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
 
     val logger = Logger.File(log, toast = false)
 
     def createSyncer() = instantiateSyncer(
-      src, dest, skip, debounceMillis, () => workCount.release(),
+      src, dest, skipper, debounceMillis, () => workCount.release(),
       logger, ignoreStrategy, restartSyncer,
       exitOnError = true,
       signatureMapping = identity
@@ -104,7 +104,7 @@ object DevboxTests extends TestSuite{
           }
 
           logger("TEST VALIDATE")
-          validate(src, dest, skip)
+          validate(src, dest, skipper)
         }
       }
     }finally{
@@ -141,8 +141,8 @@ object DevboxTests extends TestSuite{
         // huge edits modifying lots of different files
         (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
-    val skip = Util.ignoreCallback(ignoreStrategy)
-    (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo)
+    val skipper = Util.ignoreCallback(ignoreStrategy)
+    (src, dest, log, commits, workCount, skipper, commitsIndicesToCheck, repo)
   }
 
   def prepareFolders(label: String, preserve: Boolean = false) = {
@@ -168,7 +168,7 @@ object DevboxTests extends TestSuite{
 
   def instantiateSyncer(src: os.Path,
                         dest: os.Path,
-                        skip: (os.Path, os.Path) => Boolean,
+                        skipper: Skipper,
                         debounceMillis: Int,
                         onComplete: () => Unit,
                         logger: Logger,
@@ -177,7 +177,7 @@ object DevboxTests extends TestSuite{
                         exitOnError: Boolean,
                         signatureMapping: Signature => Signature) = {
     new Syncer(
-      if (inMemoryAgent) new InMemoryAgent(dest, skip, exitOnError = exitOnError)
+      if (inMemoryAgent) new InMemoryAgent(dest, skipper, exitOnError = exitOnError)
       else os.proc(
         System.getenv("AGENT_EXECUTABLE"),
         "--ignore-strategy", ignoreStrategy,
@@ -185,7 +185,7 @@ object DevboxTests extends TestSuite{
         if (exitOnError) Seq("--exit-on-error") else Nil
       ).spawn(cwd = dest),
       Seq(src -> Nil),
-      skip,
+      skipper,
       debounceMillis,
       onComplete,
       logger,
@@ -193,10 +193,10 @@ object DevboxTests extends TestSuite{
     )
   }
 
-  def validate(src: os.Path, dest: os.Path, skip: (os.Path, os.Path) => Boolean) = {
+  def validate(src: os.Path, dest: os.Path, skipper: Skipper) = {
     println("Validating...")
-    val srcPaths = os.walk(src, skip(_, src))
-    val destPaths = os.walk(dest, skip(_, dest))
+    val srcPaths = os.walk(src, skipper.initialize(src))
+    val destPaths = os.walk(dest, skipper.initialize(dest))
 
     val srcRelPaths = srcPaths.map(_.relativeTo(src)).toSet
     val destRelPaths = destPaths.map(_.relativeTo(dest)).toSet

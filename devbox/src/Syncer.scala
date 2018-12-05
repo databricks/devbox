@@ -18,7 +18,7 @@ import scala.collection.{immutable, mutable}
   */
 class Syncer(agent: AgentApi,
              mapping: Seq[(os.Path, Seq[String])],
-             skip: (os.Path, os.Path) => Boolean,
+             skipper: Skipper,
              debounceTime: Int,
              onComplete: () => Unit,
              logger: Logger,
@@ -70,7 +70,7 @@ class Syncer(agent: AgentApi,
         mapping,
         onComplete,
         eventQueue,
-        skip,
+        skipper,
         debounceTime,
         () => running,
         logger,
@@ -110,13 +110,14 @@ object Syncer{
                    mapping: Seq[(os.Path, Seq[String])],
                    onComplete: () => Unit,
                    eventQueue: BlockingQueue[Array[String]],
-                   skip: (os.Path, os.Path) => Boolean,
+                   skipper: Skipper,
                    debounceTime: Int,
                    continue: () => Boolean,
                    logger: Logger,
                    signatureTransformer: Signature => Signature) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
+    val skipArr = for (i <- mapping.indices.toArray) yield skipper.initialize(mapping(i)._1)
     val buffer = new Array[Byte](Util.blockSize)
 
     val client = new RpcClient(agent.stdin, agent.stdout, (tag, t) => logger("SYNC " + tag, t))
@@ -124,7 +125,7 @@ object Syncer{
     logger("SYNC SCAN")
     logger.info(s"Performing initial scan on ${mapping.length} repos", mapping.map(_._1).mkString("\n"))
 
-    performInitialScans(mapping, eventQueue, skip, logger, vfsArr, client)
+    performInitialScans(mapping, eventQueue, skipArr, logger, vfsArr, client)
     var initialSync = true
     var pathCount: Int = 0
     var byteCount: Int = 0
@@ -142,15 +143,19 @@ object Syncer{
         for {
           ((src, dest), i) <- mapping.zipWithIndex
 
-          srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skip(p, src))
+          srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skipArr(i)(p))
 
           if srcEventDirs.nonEmpty
 
           _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
 
           (streamedByteCount, signatureCount) <- synchronizeRepo(
-            logger, eventQueue, vfsArr(i), skip, src, dest,
-            client, buffer, interestingBases, srcEventDirs, signatureTransformer
+            logger, eventQueue, vfsArr(i), skipArr(i), skipper, src, dest,
+            client, buffer, interestingBases, srcEventDirs, signatureTransformer,
+            () => {
+              skipArr(i) = skipper.initialize(mapping(i)._1)
+              initialLocalScan(src, eventQueue, logger, skipArr(i))
+            }
           )
 
         }{
@@ -181,7 +186,7 @@ object Syncer{
 
   def performInitialScans(mapping: Seq[(Path, Seq[String])],
                           eventQueue: BlockingQueue[Array[String]],
-                          skip: (Path, Path) => Boolean,
+                          skipArr: Seq[os.Path => Boolean],
                           logger: Logger,
                           vfsArr: immutable.IndexedSeq[Vfs[Signature]],
                           client: RpcClient) = {
@@ -203,36 +208,45 @@ object Syncer{
         }
       }) ()
 
-      val initialLocal = os.walk.stream(
-        src,
-        p => skip(p, src) || !os.isDir(p, followLinks = false),
-        includeTarget = true
-      )
-      eventQueue.add(
-        initialLocal
-          .zipWithIndex
-          .map { case (p, i) =>
-            lazy val rel = p.relativeTo(src).toString
-            logger.progress(s"Scanning local file $i", rel)
-            logger("SYNC SCAN LOCAL", rel)
-            p.toString
-          }
-          .toArray
-      )
+      initialLocalScan(src, eventQueue, logger, skipArr(i))
     }
+  }
+
+  def initialLocalScan(src: os.Path,
+                       eventQueue: BlockingQueue[Array[String]],
+                       logger: Logger,
+                       skip: os.Path => Boolean) = {
+    val initialLocal = os.walk.stream(
+      src,
+      p => skip(p) || !os.isDir(p, followLinks = false),
+      includeTarget = true
+    )
+    eventQueue.add(
+      initialLocal
+        .zipWithIndex
+        .map { case (p, i) =>
+          lazy val rel = p.relativeTo(src).toString
+          logger.progress(s"Scanning local file $i", rel)
+          logger("SYNC SCAN LOCAL", rel)
+          p.toString
+        }
+        .toArray
+    )
   }
 
   def synchronizeRepo(logger: Logger,
                       eventQueue: BlockingQueue[Array[String]],
                       vfs: Vfs[Signature],
-                      skip: (os.Path, os.Path) => Boolean,
+                      skip: os.Path => Boolean,
+                      skipper: Skipper,
                       src: os.Path,
                       dest: Seq[String],
                       client: RpcClient,
                       buffer: Array[Byte],
                       interestingBases: mutable.Buffer[Array[String]],
                       srcEventDirs: mutable.Buffer[Path],
-                      signatureTransformer: Signature => Signature) = {
+                      signatureTransformer: Signature => Signature,
+                      resetSkip: () => Unit) = {
     for{
       signatureMapping <- restartOnFailure(
         logger, interestingBases, eventQueue,
@@ -257,6 +271,20 @@ object Syncer{
         logger, interestingBases, eventQueue,
         streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
       )
+
+      _ <- {
+        println("FILTERED SIGNATURES")
+        filteredSignatures.map(_._1).foreach(println)
+        println("FILTERED SIGNATURES")
+        filteredSignatures.map(_._1).find(skipper.checkReset) match{
+          case None => Some(())
+          case Some(p) =>
+            interestingBases.foreach(eventQueue.add)
+            resetSkip()
+            logger("SYNC SKIP RESET", p)
+            None
+        }
+      }
     } yield (streamedByteCount, filteredSignatures.length)
   }
 
@@ -488,7 +516,7 @@ object Syncer{
   def computeSignatures(interestingBases: Seq[Path],
                         buffer: Array[Byte],
                         stateVfs: Vfs[Signature],
-                        skip: (os.Path, os.Path) => Boolean,
+                        skip: os.Path => Boolean,
                         src: os.Path,
                         logger: Logger,
                         signatureTransformer: Signature => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
@@ -499,7 +527,7 @@ object Syncer{
         )
         val listed =
           if (!os.isDir(p, followLinks = false)) os.Generator.apply()
-          else os.list.stream(p).filter(!skip(_, src)).map(_.last)
+          else os.list.stream(p).filter(!skip(_)).map(_.last)
 
         val listedNames = listed.toSet
 
