@@ -1,5 +1,6 @@
 package devbox
 
+import devbox.DevboxMain.Config
 import devbox.DevboxTests.{instantiateSyncer, prepareFolders}
 import devbox.common.{Cli, Logger, Util}
 import devbox.common.Cli.{Arg, showArg}
@@ -11,7 +12,8 @@ object DevboxTestMain {
                     help: Boolean = false,
                     verbose: Boolean = false,
                     ignoreStrategy: String = "dotgit",
-                    preserve: Boolean = false)
+                    preserve: Boolean = false,
+                    toast: Boolean = false)
 
   def main(args: Array[String]): Unit = {
 
@@ -31,7 +33,11 @@ object DevboxTestMain {
         "How often to perform validation, once every [stride] commits",
         (c, v) => c.copy(stride = v)
       ),
-
+      Arg[Config, Unit](
+        "toast", None,
+        "Enable Mac-OS toast notifications",
+        (c, v) => c.copy(toast = true)
+      ),
       Arg[Config, Int](
         "debounce", None,
         "How many milliseconds to wait for the filesystem to stabilize before syncing",
@@ -67,13 +73,13 @@ object DevboxTestMain {
 
           if (config.label == "manual"){
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
-            val logger = if (config.verbose) Logger.Stdout else Logger.File(log)
+            val logger = new Logger.File(log, config.toast)
             val skip = Util.ignoreCallback(config.ignoreStrategy)
             val syncer = instantiateSyncer(
               src, dest,
               skip,
               config.debounceMillis,
-              () => println("ON_COMPLETE"),
+              () => (),
               logger,
               config.ignoreStrategy,
               inMemoryAgent = false,
@@ -93,7 +99,6 @@ object DevboxTestMain {
               config.debounceMillis,
               commits(0),
               commits.drop(1),
-              config.verbose,
               config.ignoreStrategy
             )
           }

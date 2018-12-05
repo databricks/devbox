@@ -33,6 +33,9 @@ class InMemoryAgent(dest: os.Path,
       stderr0.out.write((ujson.write(s) + "\n").getBytes())
     }
     def close() = () // do nothing
+    def info(title: => String, body: => String): Unit = ???
+
+    def progress(title: => String, body: => String): Unit = ???
   }
   val thread = new Thread(() =>
     try devbox.agent.DevboxAgentMain.mainLoop(

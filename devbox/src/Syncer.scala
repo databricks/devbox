@@ -122,16 +122,20 @@ object Syncer{
     val client = new RpcClient(agent.stdin, agent.stdout, (tag, t) => logger("SYNC " + tag, t))
 
     logger("SYNC SCAN")
+    logger.info(s"Performing initial scan on ${mapping.length} repos", mapping.map(_._1).mkString("\n"))
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
       client.writeMsg(Rpc.FullScan(dest.mkString("/")))
+      var i = 0
       while({
         client.readMsg[Option[(String, Signature)]]() match{
           case None =>
             logger("SYNC SCAN DONE")
             false
           case Some((p, sig)) =>
-            logger("SYNC SCAN ITEM", (p, sig))
+            i += 1
+            logger("SYNC SCAN REMOTE", (p, sig))
+            logger.progress(s"Scanning remote file $i", p)
             Vfs.updateVfs(p, sig, vfsArr(i))
             true
         }
@@ -142,8 +146,20 @@ object Syncer{
         p => skip(p, src) || !os.isDir(p, followLinks = false),
         includeTarget = true
       )
-      eventQueue.add(initialLocal.map(_.toString).toArray)
+      eventQueue.add(
+        initialLocal
+          .zipWithIndex
+          .map{case (p, i) =>
+            lazy val rel = p.relativeTo(src).toString
+            logger.progress(s"Scanning local file $i", rel)
+            logger("SYNC SCAN LOCAL", rel)
+            p.toString
+          }
+          .toArray
+      )
     }
+    var pathCount: Int = 0
+    var byteCount: Int = 0
 
     while (continue() && agent.isAlive()) {
       logger("SYNC LOOP")
@@ -154,37 +170,51 @@ object Syncer{
         // differences such as trailing slashes
         val allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
         logger("SYNC EVENTS", allSrcEventDirs)
-        for{
+
+        for {
           ((src, dest), i) <- mapping.zipWithIndex
 
           srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skip(p, src))
 
           if srcEventDirs.nonEmpty
-
           _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
-
           signatureMapping <- restartOnFailure(
             logger, interestingBases, eventQueue,
-            computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src)
+            computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src, logger)
           )
 
           _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
 
           sortedSignatures = sortSignatureChanges(signatureMapping)
 
+          filteredSignatures = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
+
+          if filteredSignatures.nonEmpty
+
+          _ = logger.info(s"${filteredSignatures.length} paths changed", s"$src")
+
           vfsRpcClient = new VfsRpcClient(client, vfsArr(i))
 
-          count = Syncer.syncMetadata(vfsRpcClient, sortedSignatures, src, dest, vfsArr(i), logger, buffer)
+          _ = Syncer.syncMetadata(vfsRpcClient, filteredSignatures, src, dest, vfsArr(i), logger, buffer)
 
-          _ <- restartOnFailure(
+          streamedByteCount <- restartOnFailure(
             logger, interestingBases, eventQueue,
-            streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, signatureMapping)
+            streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, filteredSignatures)
           )
-        } countWrite(count)
+        } {
+          pathCount += filteredSignatures.length
+          byteCount += streamedByteCount
+          countWrite(signatureMapping.length)
+        }
 
         if (eventQueue.isEmpty) {
           logger("SYNC COMPLETE")
           onComplete()
+          if (pathCount != 0 || byteCount != 0){
+            logger.info("Syncing Complete", s"$pathCount paths, $byteCount bytes")
+            byteCount = 0
+            pathCount = 0
+          }
         }else{
           logger("SYNC PARTIAL")
         }
@@ -233,25 +263,32 @@ object Syncer{
                             client: VfsRpcClient,
                             src: Path,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
+    val total = signatureMapping.length
+    var byteCount = 0
     draining(client) {
       for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
+        val segments = p.relativeTo(src).toString
         val (otherHashes, otherSize) = otherSig match {
           case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
           case _ => (Nil, 0L)
         }
-        logger("SYNC CHUNKS", p.relativeTo(src).toString)
-        streamFileContents(
+        logger("SYNC CHUNKS", segments)
+         byteCount += streamFileContents(
+          logger,
           client,
           stateVfs,
           p,
-          p.relativeTo(src).toString,
+          segments,
           blockHashes,
           otherHashes,
           size,
-          otherSize
+          otherSize,
+          n,
+          total
         )
       }
     }
+    byteCount
   }
 
   def drainUntilStable[T](eventQueue: BlockingQueue[T], debounceTime: Int) = {
@@ -313,15 +350,14 @@ object Syncer{
                    dest: Seq[String],
                    stateVfs: Vfs[Signature],
                    logger: Logger,
-                   buffer: Array[Byte]): Int = {
+                   buffer: Array[Byte]): Unit = {
 
-    var totalWrites = 0
-
+    val total = signatureMapping.length
     draining(client) {
       for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
-        totalWrites += 1
         val segments = p.relativeTo(src).toString
-        if (localSig != remoteSig) (localSig, remoteSig) match {
+        logger.progress(s"Syncing path [$i/$total]", segments)
+        (localSig, remoteSig) match {
           case (None, _) =>
             client(Rpc.Remove(segments))
           case (Some(Signature.Dir(perms)), remote) =>
@@ -349,9 +385,6 @@ object Syncer{
 
       }
     }
-
-
-    totalWrites
   }
 
   def prepareRemoteFile(client: VfsRpcClient,
@@ -375,21 +408,29 @@ object Syncer{
     }
   }
 
-  def streamFileContents(client: VfsRpcClient,
+  def streamFileContents(logger: Logger,
+                         client: VfsRpcClient,
                          stateVfs: Vfs[Signature],
                          p: Path,
                          segments: String,
                          blockHashes: Seq[Bytes],
                          otherHashes: Seq[Bytes],
                          size: Long,
-                         otherSize: Long) = {
+                         otherSize: Long,
+                         fileIndex: Int,
+                         fileTotalCount: Int): Int = {
     val byteArr = new Array[Byte](Util.blockSize)
     val buf = ByteBuffer.wrap(byteArr)
+    var byteCount = 0
     Util.autoclose(os.read.channel(p)) { channel =>
       for {
         i <- blockHashes.indices
         if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
       } {
+        logger.progress(
+          s"Syncing file chunk [$fileIndex/$fileTotalCount $i/${blockHashes.length}]",
+          segments
+        )
         buf.rewind()
         channel.position(i * Util.blockSize)
         var n = 0
@@ -402,7 +443,7 @@ object Syncer{
               true
           }
         }) ()
-
+        byteCount += n
         client(
           Rpc.WriteChunk(
             segments,
@@ -415,14 +456,20 @@ object Syncer{
     }
 
     if (size != otherSize) client(Rpc.SetSize(segments, size))
+    byteCount
   }
 
   def computeSignatures(interestingBases: Seq[Path],
                         buffer: Array[Byte],
                         stateVfs: Vfs[Signature],
                         skip: (os.Path, os.Path) => Boolean,
-                        src: os.Path): Seq[(os.Path, Option[Signature], Option[Signature])] = {
-    interestingBases.flatMap { p =>
+                        src: os.Path,
+                        logger: Logger): Seq[(os.Path, Option[Signature], Option[Signature])] = {
+    interestingBases.zipWithIndex.flatMap { case (p, i) =>
+        logger.progress(
+          s"Scanning local folder [$i/${interestingBases.length}]",
+          p.relativeTo(src).toString()
+        )
         val listed =
           if (!os.isDir(p, followLinks = false)) os.Generator.apply()
           else os.list.stream(p).filter(!skip(_, src)).map(_.last)

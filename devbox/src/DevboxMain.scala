@@ -7,6 +7,7 @@ object DevboxMain {
                     stride: Int = 1,
                     debounceMillis: Int = 100,
                     help: Boolean = false,
+                    toast: Boolean = false,
                     logFile: Option[os.Path] = None,
                     ignoreStrategy: String = "")
 
@@ -27,6 +28,11 @@ object DevboxMain {
         "help", None,
         "Print this message",
         (c, v) => c.copy(help = true)
+      ),
+      Arg[Config, Unit](
+        "toast", None,
+        "Enable Mac-OS toast notifications",
+        (c, v) => c.copy(toast = true)
       ),
       Arg[Config, os.Path](
         "log-file", None,
@@ -62,10 +68,7 @@ object DevboxMain {
             skip,
             config.debounceMillis,
             () => (),
-            config.logFile match{
-              case None => Logger.Stdout
-              case Some(path) => Logger.File(path)
-            }
+            Logger.File(config.logFile.get, config.toast)
           )){syncer =>
             syncer.start()
           }

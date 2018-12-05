@@ -57,7 +57,6 @@ object DevboxTests extends TestSuite{
                    debounceMillis: Int,
                    initialCommit: Int,
                    commitIndicesToCheck0: Seq[Int] = Nil,
-                   verbose: Boolean = false,
                    ignoreStrategy: String = "dotgit",
                    restartSyncer: Boolean = false) = {
 
@@ -67,7 +66,7 @@ object DevboxTests extends TestSuite{
 
     var lastWriteCount = 0
 
-    val logger = if (verbose) Logger.Stdout else Logger.File(log)
+    val logger = Logger.File(log, toast = false)
 
     def createSyncer() = instantiateSyncer(
       src, dest, skip, debounceMillis, () => {
