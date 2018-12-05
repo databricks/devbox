@@ -126,16 +126,16 @@ object Syncer{
     for (((src, dest), i) <- mapping.zipWithIndex) {
 
       client.writeMsg(Rpc.FullScan(dest.mkString("/")))
-      var i = 0
+      var n = 0
       while({
         client.readMsg[Option[(String, Signature)]]() match{
           case None =>
             logger("SYNC SCAN DONE")
             false
           case Some((p, sig)) =>
-            i += 1
+            n += 1
             logger("SYNC SCAN REMOTE", (p, sig))
-            logger.progress(s"Scanning remote file $i", p)
+            logger.progress(s"Scanning remote file $n", p)
             Vfs.updateVfs(p, sig, vfsArr(i))
             true
         }

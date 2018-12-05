@@ -112,11 +112,8 @@ object DevboxAgentMain {
         os.perms.set.apply(os.Path(path, wd), perms)
         client.writeMsg(0)
     }catch{case e: Throwable =>
-      if (exitOnError) {
-        logger("AGNT EXIT", e)
-        client.writeMsg(RemoteException.create(e), false)
-        throw e
-      } else {
+      if (exitOnError) throw e
+      else {
         logger("AGNT ERROR", e)
         client.writeMsg(RemoteException.create(e), false)
       }
