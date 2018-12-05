@@ -68,7 +68,8 @@ object DevboxTests extends TestSuite{
     def createSyncer() = instantiateSyncer(
       src, dest, skip, debounceMillis, () => workCount.release(),
       logger, ignoreStrategy, restartSyncer,
-      exitOnError = true
+      exitOnError = true,
+      signatureMapping = identity
     )
     var syncer = createSyncer()
     try{
@@ -173,7 +174,8 @@ object DevboxTests extends TestSuite{
                         logger: Logger,
                         ignoreStrategy: String,
                         inMemoryAgent: Boolean,
-                        exitOnError: Boolean) = {
+                        exitOnError: Boolean,
+                        signatureMapping: Signature => Signature) = {
     new Syncer(
       if (inMemoryAgent) new InMemoryAgent(dest, skip, exitOnError = exitOnError)
       else os.proc(
@@ -186,7 +188,8 @@ object DevboxTests extends TestSuite{
       skip,
       debounceMillis,
       onComplete,
-      logger
+      logger,
+      signatureMapping
     )
   }
 

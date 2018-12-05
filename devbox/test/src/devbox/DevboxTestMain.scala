@@ -1,8 +1,10 @@
 package devbox
 
+import java.nio.file.attribute.PosixFilePermission
+
 import devbox.DevboxMain.Config
 import devbox.DevboxTests.{instantiateSyncer, prepareFolders}
-import devbox.common.{Cli, Logger, Util}
+import devbox.common.{Cli, Logger, Signature, Util}
 import devbox.common.Cli.{Arg, showArg}
 
 object DevboxTestMain {
@@ -13,7 +15,8 @@ object DevboxTestMain {
                     verbose: Boolean = false,
                     ignoreStrategy: String = "dotgit",
                     preserve: Boolean = false,
-                    toast: Boolean = false)
+                    toast: Boolean = false,
+                    readOnlyRemote: Boolean = false)
 
   def main(args: Array[String]): Unit = {
 
@@ -57,6 +60,11 @@ object DevboxTestMain {
         "preserve", None,
         "Preserve starting folder contents",
         (c, v) => c.copy(preserve = true)
+      ),
+      Arg[Config, Unit](
+        "readonly-remote", None,
+        "",
+        (c, v) => c.copy(readOnlyRemote = true)
       )
     )
 
@@ -83,7 +91,20 @@ object DevboxTestMain {
               logger,
               config.ignoreStrategy,
               inMemoryAgent = false,
-              exitOnError = false
+              exitOnError = false,
+              if (!config.readOnlyRemote) identity[Signature]
+              else {
+                case Signature.File(perms, blockHashes, size) =>
+                  Signature.File(
+                    perms
+                      - PosixFilePermission.GROUP_WRITE
+                      - PosixFilePermission.OTHERS_WRITE
+                      - PosixFilePermission.OWNER_WRITE,
+                    blockHashes,
+                    size
+                  )
+                case sig => sig
+              }
             )
             try {
               syncer.start()

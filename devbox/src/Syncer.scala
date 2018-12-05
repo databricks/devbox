@@ -21,7 +21,8 @@ class Syncer(agent: AgentApi,
              skip: (os.Path, os.Path) => Boolean,
              debounceTime: Int,
              onComplete: () => Unit,
-             logger: Logger) extends AutoCloseable{
+             logger: Logger,
+             signatureTransformer: Signature => Signature) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), eventQueue.add, logger)
@@ -73,6 +74,7 @@ class Syncer(agent: AgentApi,
         debounceTime,
         () => running,
         logger,
+        signatureTransformer
       )
     }
 
@@ -111,7 +113,8 @@ object Syncer{
                    skip: (os.Path, os.Path) => Boolean,
                    debounceTime: Int,
                    continue: () => Boolean,
-                   logger: Logger) = {
+                   logger: Logger,
+                   signatureTransformer: Signature => Signature) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val buffer = new Array[Byte](Util.blockSize)
@@ -147,7 +150,7 @@ object Syncer{
 
           (streamedByteCount, signatureCount) <- synchronizeRepo(
             logger, eventQueue, vfsArr(i), skip, src, dest,
-            client, buffer, interestingBases, srcEventDirs
+            client, buffer, interestingBases, srcEventDirs, signatureTransformer
           )
 
         }{
@@ -228,11 +231,12 @@ object Syncer{
                       client: RpcClient,
                       buffer: Array[Byte],
                       interestingBases: mutable.Buffer[Array[String]],
-                      srcEventDirs: mutable.Buffer[Path]) = {
+                      srcEventDirs: mutable.Buffer[Path],
+                      signatureTransformer: Signature => Signature) = {
     for{
       signatureMapping <- restartOnFailure(
         logger, interestingBases, eventQueue,
-        computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger)
+        computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
       )
 
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
@@ -482,7 +486,8 @@ object Syncer{
                         stateVfs: Vfs[Signature],
                         skip: (os.Path, os.Path) => Boolean,
                         src: os.Path,
-                        logger: Logger): Seq[(os.Path, Option[Signature], Option[Signature])] = {
+                        logger: Logger,
+                        signatureTransformer: Signature => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
     interestingBases.zipWithIndex.flatMap { case (p, i) =>
         logger.progress(
           s"Scanning local folder [$i/${interestingBases.length}]",
@@ -512,7 +517,7 @@ object Syncer{
         for(k <- (listedNames ++ virtual.keys).toArray.sorted)
         yield (
           p / k,
-          if (!listedNames(k)) None else Signature.compute(p / k, buffer),
+          if (!listedNames(k)) None else Signature.compute(p / k, buffer).map(signatureTransformer),
           virtual.get(k).map(_.value)
         )
       }

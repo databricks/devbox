@@ -1,5 +1,7 @@
 package devbox
-import devbox.common.{Cli, Logger, Util}
+import java.nio.file.attribute.PosixFilePermission
+
+import devbox.common.{Cli, Logger, Signature, Util}
 import devbox.common.Cli.{Arg, showArg}
 import Cli.pathScoptRead
 object DevboxMain {
@@ -9,7 +11,8 @@ object DevboxMain {
                     help: Boolean = false,
                     toast: Boolean = false,
                     logFile: Option[os.Path] = None,
-                    ignoreStrategy: String = "")
+                    ignoreStrategy: String = "",
+                    readOnlyRemote: Boolean = false)
 
   def main(args: Array[String]): Unit = {
 
@@ -43,6 +46,11 @@ object DevboxMain {
         "ignore-strategy", None,
         "",
         (c, v) => c.copy(ignoreStrategy = v)
+      ),
+      Arg[Config, Unit](
+        "readonly-remote", None,
+        "",
+        (c, v) => c.copy(readOnlyRemote = true)
       )
     )
 
@@ -68,7 +76,20 @@ object DevboxMain {
             skip,
             config.debounceMillis,
             () => (),
-            Logger.File(config.logFile.get, config.toast)
+            Logger.File(config.logFile.get, config.toast),
+            if (!config.readOnlyRemote) identity[Signature]
+            else {
+              case Signature.File(perms, blockHashes, size) =>
+                Signature.File(
+                  perms
+                    - PosixFilePermission.GROUP_WRITE
+                    - PosixFilePermission.OTHERS_WRITE
+                    - PosixFilePermission.OWNER_WRITE,
+                  blockHashes,
+                  size
+                )
+              case sig => sig
+            }
           )){syncer =>
             syncer.start()
           }
