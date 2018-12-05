@@ -8,7 +8,7 @@ import devbox.common.Cli
 import devbox.common.Cli.Arg
 import devbox.common._
 import Cli.pathScoptRead
-object Agent {
+object DevboxAgentMain {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
                     ignoreStrategy: String = "",

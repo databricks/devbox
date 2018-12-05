@@ -35,7 +35,7 @@ class InMemoryAgent(dest: os.Path,
     def close() = () // do nothing
   }
   val thread = new Thread(() =>
-    try devbox.agent.Agent.mainLoop(
+    try devbox.agent.DevboxAgentMain.mainLoop(
       logger,
       skip,
       new RpcClient(stdout0.out, stdin0.in, (tag, t) => logger("AGNT " + tag, t)),
