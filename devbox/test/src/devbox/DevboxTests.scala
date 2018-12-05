@@ -115,7 +115,9 @@ object DevboxTests extends TestSuite{
             syncer.close()
             syncer = null
           }
-          validate(src, dest, skip)
+
+          logger("TEST VALIDATE")
+          validate(src, dest, skip, logger)
         }
       }
     }finally{
