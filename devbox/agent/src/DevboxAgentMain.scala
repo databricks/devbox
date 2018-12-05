@@ -111,12 +111,9 @@ object DevboxAgentMain {
       case Rpc.SetPerms(path, perms) =>
         os.perms.set.apply(os.Path(path, wd), perms)
         client.writeMsg(0)
-    }catch{case e: Throwable =>
-      if (exitOnError) throw e
-      else {
-        logger("AGNT ERROR", e)
-        client.writeMsg(RemoteException.create(e), false)
-      }
+    }catch{case e: Throwable if !exitOnError =>
+      logger("AGNT ERROR", e)
+      client.writeMsg(RemoteException.create(e), false)
     }
   }
   def withWritable[T](p: os.Path)(t: => T) = {

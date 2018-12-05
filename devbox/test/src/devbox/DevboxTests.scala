@@ -63,17 +63,10 @@ object DevboxTests extends TestSuite{
     val (src, dest, log, commits, workCount, skip, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
 
-
-    var lastWriteCount = 0
-
     val logger = Logger.File(log, toast = false)
 
     def createSyncer() = instantiateSyncer(
-      src, dest, skip, debounceMillis, () => {
-        logger("TEST WC RELEASE1", workCount.availablePermits())
-        workCount.release()
-        logger("TEST WC RELEASE2", workCount.availablePermits())
-      },
+      src, dest, skip, debounceMillis, () => workCount.release(),
       logger, ignoreStrategy, restartSyncer,
       exitOnError = true
     )
@@ -81,9 +74,7 @@ object DevboxTests extends TestSuite{
     try{
       printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
       syncer.start()
-      println("Write Count: " + (syncer.writeCount - lastWriteCount))
 
-      lastWriteCount = syncer.writeCount
 
       for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
         val commit = commits(i)
@@ -94,17 +85,12 @@ object DevboxTests extends TestSuite{
         logger("TEST CHECKOUT DONE", commit.getShortMessage)
 
         if (restartSyncer && syncer == null){
-          lastWriteCount = 0
           logger("TEST RESTART SYNCER")
           syncer = createSyncer()
           syncer.start()
         }
-        logger("TEST WC ACQUIRE 1a", workCount.availablePermits())
+
         workCount.acquire()
-        logger("TEST WC ACQUIRE 1b", workCount.availablePermits())
-        println("Write Count: " + (syncer.writeCount - lastWriteCount))
-        logger("TEST WRITE COUNT", syncer.writeCount - lastWriteCount)
-        lastWriteCount = syncer.writeCount
 
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later

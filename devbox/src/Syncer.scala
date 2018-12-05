@@ -8,7 +8,7 @@ import os.Path
 import upickle.default
 
 import scala.annotation.tailrec
-import scala.collection.mutable
+import scala.collection.{immutable, mutable}
 
 /**
   * The Syncer class instances contain all the stateful, close-able parts of
@@ -34,7 +34,6 @@ class Syncer(agent: AgentApi,
 
   @volatile private[this] var asyncException: Throwable = null
 
-  @volatile var writeCount = 0
 
   def makeLoggedThread(name: String)(t: => Unit) = new Thread(
     () =>
@@ -74,7 +73,6 @@ class Syncer(agent: AgentApi,
         debounceTime,
         () => running,
         logger,
-        writeCount += _
       )
     }
 
@@ -113,8 +111,7 @@ object Syncer{
                    skip: (os.Path, os.Path) => Boolean,
                    debounceTime: Int,
                    continue: () => Boolean,
-                   logger: Logger,
-                   countWrite: Int => Unit) = {
+                   logger: Logger) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val buffer = new Array[Byte](Util.blockSize)
@@ -123,41 +120,9 @@ object Syncer{
 
     logger("SYNC SCAN")
     logger.info(s"Performing initial scan on ${mapping.length} repos", mapping.map(_._1).mkString("\n"))
-    for (((src, dest), i) <- mapping.zipWithIndex) {
 
-      client.writeMsg(Rpc.FullScan(dest.mkString("/")))
-      var n = 0
-      while({
-        client.readMsg[Option[(String, Signature)]]() match{
-          case None =>
-            logger("SYNC SCAN DONE")
-            false
-          case Some((p, sig)) =>
-            n += 1
-            logger("SYNC SCAN REMOTE", (p, sig))
-            logger.progress(s"Scanning remote file $n", p)
-            Vfs.updateVfs(p, sig, vfsArr(i))
-            true
-        }
-      })()
-
-      val initialLocal = os.walk.stream(
-        src,
-        p => skip(p, src) || !os.isDir(p, followLinks = false),
-        includeTarget = true
-      )
-      eventQueue.add(
-        initialLocal
-          .zipWithIndex
-          .map{case (p, i) =>
-            lazy val rel = p.relativeTo(src).toString
-            logger.progress(s"Scanning local file $i", rel)
-            logger("SYNC SCAN LOCAL", rel)
-            p.toString
-          }
-          .toArray
-      )
-    }
+    performInitialScans(mapping, eventQueue, skip, logger, vfsArr, client)
+    var initialSync = true
     var pathCount: Int = 0
     var byteCount: Int = 0
 
@@ -177,35 +142,19 @@ object Syncer{
           srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skip(p, src))
 
           if srcEventDirs.nonEmpty
+
           _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
-          signatureMapping <- restartOnFailure(
-            logger, interestingBases, eventQueue,
-            computeSignatures(srcEventDirs, buffer, vfsArr(i), skip, src, logger)
+
+          (streamedByteCount, signatureCount) <- synchronizeRepo(
+            logger, eventQueue, vfsArr(i), skip, src, dest,
+            client, buffer, interestingBases, srcEventDirs
           )
 
-          _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
-
-          sortedSignatures = sortSignatureChanges(signatureMapping)
-
-          filteredSignatures = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
-
-          if filteredSignatures.nonEmpty
-
-          _ = logger.info(s"${filteredSignatures.length} paths changed", s"$src")
-
-          vfsRpcClient = new VfsRpcClient(client, vfsArr(i))
-
-          _ = Syncer.syncMetadata(vfsRpcClient, filteredSignatures, src, dest, vfsArr(i), logger, buffer)
-
-          streamedByteCount <- restartOnFailure(
-            logger, interestingBases, eventQueue,
-            streamAllFileContents(logger, vfsArr(i), vfsRpcClient, src, filteredSignatures)
-          )
-        } {
-          pathCount += filteredSignatures.length
+        }{
+          pathCount += signatureCount
           byteCount += streamedByteCount
-          countWrite(signatureMapping.length)
         }
+
 
         if (eventQueue.isEmpty) {
           logger("SYNC COMPLETE")
@@ -214,13 +163,97 @@ object Syncer{
             logger.info("Syncing Complete", s"$pathCount paths, $byteCount bytes")
             byteCount = 0
             pathCount = 0
+          }else if (initialSync){
+            logger.info("Nothing to sync", "watching for changes")
           }
+          initialSync = false
         }else{
+          logger.info("˜Ongoing changes detected", "scanning for changes")
           logger("SYNC PARTIAL")
         }
 
       }
     }
+  }
+
+  def performInitialScans(mapping: Seq[(Path, Seq[String])],
+                          eventQueue: BlockingQueue[Array[String]],
+                          skip: (Path, Path) => Boolean,
+                          logger: Logger,
+                          vfsArr: immutable.IndexedSeq[Vfs[Signature]],
+                          client: RpcClient) = {
+    for (((src, dest), i) <- mapping.zipWithIndex) {
+
+      client.writeMsg(Rpc.FullScan(dest.mkString("/")))
+      var n = 0
+      while ( {
+        client.readMsg[Option[(String, Signature)]]() match {
+          case None =>
+            logger("SYNC SCAN DONE")
+            false
+          case Some((p, sig)) =>
+            n += 1
+            logger("SYNC SCAN REMOTE", (p, sig))
+            logger.progress(s"Scanning remote file $n", p)
+            Vfs.updateVfs(p, sig, vfsArr(i))
+            true
+        }
+      }) ()
+
+      val initialLocal = os.walk.stream(
+        src,
+        p => skip(p, src) || !os.isDir(p, followLinks = false),
+        includeTarget = true
+      )
+      eventQueue.add(
+        initialLocal
+          .zipWithIndex
+          .map { case (p, i) =>
+            lazy val rel = p.relativeTo(src).toString
+            logger.progress(s"Scanning local file $i", rel)
+            logger("SYNC SCAN LOCAL", rel)
+            p.toString
+          }
+          .toArray
+      )
+    }
+  }
+
+  def synchronizeRepo(logger: Logger,
+                      eventQueue: BlockingQueue[Array[String]],
+                      vfs: Vfs[Signature],
+                      skip: (os.Path, os.Path) => Boolean,
+                      src: os.Path,
+                      dest: Seq[String],
+                      client: RpcClient,
+                      buffer: Array[Byte],
+                      interestingBases: mutable.Buffer[Array[String]],
+                      srcEventDirs: mutable.Buffer[Path]) = {
+    for{
+      signatureMapping <- restartOnFailure(
+        logger, interestingBases, eventQueue,
+        computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger)
+      )
+
+      _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
+
+      sortedSignatures = sortSignatureChanges(signatureMapping)
+
+      filteredSignatures = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
+
+      if filteredSignatures.nonEmpty
+
+      _ = logger.info(s"${filteredSignatures.length} paths changed", s"$src")
+
+      vfsRpcClient = new VfsRpcClient(client, vfs)
+
+      _ = Syncer.syncMetadata(vfsRpcClient, filteredSignatures, src, dest, vfs, logger, buffer)
+
+      streamedByteCount <- restartOnFailure(
+        logger, interestingBases, eventQueue,
+        streamAllFileContents(logger, vfs, vfsRpcClient, src, filteredSignatures)
+      )
+    } yield (streamedByteCount, filteredSignatures.length)
   }
 
   def sortSignatureChanges(signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])]) = {
@@ -380,31 +413,16 @@ object Syncer{
                 client(Rpc.PutLink(segments, dest))
             }
           case (Some(Signature.File(perms, blockHashes, size)), remote) =>
-            prepareRemoteFile(client, stateVfs, p, segments, perms, blockHashes, size, remote)
+            if (remote.exists(!_.isInstanceOf[Signature.File])) client(Rpc.Remove(segments))
+
+            remote match {
+              case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
+                if (perms != otherPerms) client(Rpc.SetPerms(segments, perms))
+
+              case _ => client(Rpc.PutFile(segments, perms))
+            }
         }
-
       }
-    }
-  }
-
-  def prepareRemoteFile(client: VfsRpcClient,
-                        stateVfs: Vfs[Signature],
-                        p: Path,
-                        segments: String,
-                        perms: os.PermSet,
-                        blockHashes: Seq[Bytes],
-                        size: Long,
-                        remote: Option[Signature]) = {
-    if (remote.exists(!_.isInstanceOf[Signature.File])) {
-      client(Rpc.Remove(segments))
-    }
-
-    remote match {
-      case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
-        if (perms != otherPerms) client(Rpc.SetPerms(segments, perms))
-
-      case _ => client(Rpc.PutFile(segments, perms))
-
     }
   }
 
