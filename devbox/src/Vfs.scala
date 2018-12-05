@@ -76,18 +76,18 @@ object Vfs{
     else Vfs.Dir(sig, mutable.LinkedHashMap.empty[String, Vfs.Node[Signature]])
   }
 
-  def updateVfs(a: Action, stateVfs: Vfs[Signature]) = a match{
-    case Rpc.PutFile(path, perms) =>
+  def updateVfs(root: String, a: Action, stateVfs: Vfs[Signature]) = a match{
+    case Rpc.PutFile(_, path, perms) =>
       val (name, folder) = stateVfs.resolveParent(path).get
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.File(perms, Nil, 0))
 
-    case Rpc.Remove(path) =>
+    case Rpc.Remove(_, path) =>
       for((name, folder) <- stateVfs.resolveParent(path)){
         folder.children.remove(name)
       }
 
-    case Rpc.PutDir(path, perms) =>
+    case Rpc.PutDir(_, path, perms) =>
       val (name, folder) = stateVfs.resolveParent(path).get
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.Dir(
@@ -95,12 +95,12 @@ object Vfs{
         mutable.LinkedHashMap.empty[String, Vfs.Node[Signature]]
       )
 
-    case Rpc.PutLink(path, dest) =>
+    case Rpc.PutLink(_, path, dest) =>
       val (name, folder) = stateVfs.resolveParent(path).get
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.Symlink(dest))
 
-    case Rpc.WriteChunk(path, offset, bytes, hash) =>
+    case Rpc.WriteChunk(_, path, offset, bytes, hash) =>
       assert(offset % Util.blockSize == 0)
       val index = offset / Util.blockSize
       val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[Signature.File]]
@@ -111,7 +111,7 @@ object Vfs{
           else ???
       )
 
-    case Rpc.SetSize(path, offset) =>
+    case Rpc.SetSize(_, path, offset) =>
       val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         size = offset,
@@ -122,7 +122,7 @@ object Vfs{
         )
       )
 
-    case Rpc.SetPerms(path, perms) =>
+    case Rpc.SetPerms(_, path, perms) =>
       stateVfs.resolve(path) match{
         case Some(f @ Vfs.File(file: Signature.File)) => f.value = file.copy(perms = perms)
         case Some(f @ Vfs.Dir(dir: Signature.Dir, _)) => f.value = dir.copy(perms = perms)
