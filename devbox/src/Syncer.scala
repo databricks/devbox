@@ -305,7 +305,7 @@ object Syncer{
     var byteCount = 0
     draining(client) {
       for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
-        val segments = (os.rel / dest / p.relativeTo(src)).toString
+        val segments = p.relativeTo(src).toString
         val (otherHashes, otherSize) = otherSig match {
           case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
           case _ => (Nil, 0L)
