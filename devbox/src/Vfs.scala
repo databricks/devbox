@@ -76,7 +76,7 @@ object Vfs{
     else Vfs.Dir(sig, mutable.LinkedHashMap.empty[String, Vfs.Node[Signature]])
   }
 
-  def updateVfs(root: String, a: Action, stateVfs: Vfs[Signature]) = a match{
+  def updateVfs(a: Action, stateVfs: Vfs[Signature]) = a match{
     case Rpc.PutFile(_, path, perms) =>
       val (name, folder) = stateVfs.resolveParent(path).get
       assert(!folder.children.contains(name))
