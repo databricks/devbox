@@ -22,7 +22,7 @@ object DevboxTestMain {
         (c, v) => c.copy(label = v)
       ),
       Arg[Config, String](
-        "ignoreStrategy", None,
+        "ignore-strategy", None,
         "Which files to ignore",
         (c, v) => c.copy(ignoreStrategy = v)
       ),
