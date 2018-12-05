@@ -13,7 +13,8 @@ object devbox extends ScalaModule{
       ivy"org.eclipse.jgit:org.eclipse.jgit:5.1.3.201810200350-r",
       ivy"com.lihaoyi::pprint:0.5.3",
       ivy"com.github.scopt::scopt:3.5.0",
-      ivy"net.java.dev.jna:jna:5.0.0"
+      ivy"net.java.dev.jna:jna:5.0.0",
+      ivy"org.slf4j:slf4j-simple:1.7.25"
     )
   }
 
