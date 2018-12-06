@@ -25,7 +25,12 @@ class Syncer(agent: AgentApi,
              signatureTransformer: Signature => Signature) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
-  private[this] val watcher = new FSEventsWatcher(mapping.map(_._1), eventQueue.add, logger)
+  private[this] val watcher = new FSEventsWatcher(
+    mapping.map(_._1),
+    eventQueue.add,
+    logger,
+    0.05
+  )
 
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
@@ -133,8 +138,8 @@ object Syncer{
     }
 
     var initialSync = true
-    var pathCount: Int = 0
-    var byteCount: Int = 0
+    val allChangedPaths = mutable.Buffer.empty[os.Path]
+    var allSyncedBytes = 0
     while (continue() && agent.isAlive()) {
       logger("SYNC LOOP")
 
@@ -154,7 +159,7 @@ object Syncer{
 
           _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
 
-          (streamedByteCount, signatureCount) <- synchronizeRepo(
+          (streamedByteCount, changedPaths) <- synchronizeRepo(
             logger, eventQueue, vfsArr(i), skipArr(i), skipper, src, dest,
             client, buffer, interestingBases, srcEventDirs, signatureTransformer,
             () => {
@@ -165,26 +170,33 @@ object Syncer{
           )
 
         }{
-          pathCount += signatureCount
-          byteCount += streamedByteCount
+          allChangedPaths.appendAll(changedPaths.map(_._1))
+          allSyncedBytes += streamedByteCount
         }
 
 
         if (eventQueue.isEmpty) {
           logger("SYNC COMPLETE")
           onComplete()
-          if (pathCount != 0 || byteCount != 0){
-            logger.info("Syncing Complete", s"$pathCount paths, $byteCount bytes")
-            byteCount = 0
-            pathCount = 0
+          if (allChangedPaths.nonEmpty){
+            logger.info(
+              s"Finished syncing ${allChangedPaths.length} paths, $allSyncedBytes bytes",
+              s"${allChangedPaths.head}" + (if(allChangedPaths.length == 1) "" else s" and ${allChangedPaths.length-1} others")
+            )
+            allSyncedBytes = 0
+            allChangedPaths.clear()
           }else if (initialSync){
             logger.info("Nothing to sync", "watching for changes")
           }
           initialSync = false
         }else{
+
+          logger.info(
+            "Ongoing changes detected",
+            eventQueue.peek().head
+          )
           logger("SYNC PARTIAL")
         }
-
       }
     }
   }
@@ -284,7 +296,7 @@ object Syncer{
         logger, interestingBases, eventQueue,
         streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
       )
-    } yield (streamedByteCount, filteredSignatures.length)
+    } yield (streamedByteCount, filteredSignatures)
   }
 
   def sortSignatureChanges(signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])]) = {

@@ -4,7 +4,8 @@ import devbox.common.Logger
 
 class FSEventsWatcher(srcs: Seq[os.Path],
                       onEvent: Array[String] => Unit,
-                      logger: Logger) {
+                      logger: Logger,
+                      latency: Double) {
   val callback = new FSEventStreamCallback{
     def invoke(streamRef: FSEventStreamRef,
                clientCallBackInfo: Pointer,
@@ -30,7 +31,7 @@ class FSEventsWatcher(srcs: Seq[os.Path],
       null
     ),
     -1,
-    0.01,
+    latency,
     0
   )
 

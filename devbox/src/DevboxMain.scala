@@ -8,7 +8,7 @@ import Cli.pathScoptRead
 object DevboxMain {
   case class Config(repo: List[String] = Nil,
                     stride: Int = 1,
-                    debounceMillis: Int = 100,
+                    debounceMillis: Int = 150,
                     help: Boolean = false,
                     toast: Boolean = false,
                     logFile: Option[os.Path] = None,
