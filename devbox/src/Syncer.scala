@@ -222,7 +222,6 @@ object Syncer{
       if newSig != vfs.resolve(pathToCheck.relativeTo(src)).map(_.value)
     } yield (pathToCheck, newSig)
 
-    _ <-
     if (allModifiedSkipFiles.isEmpty) Right(())
     else{
       logger.info(

@@ -69,8 +69,10 @@ object DevboxAgentMain {
     val buffer = new Array[Byte](Util.blockSize)
     while (true) try client.readMsg[Rpc]() match {
       case Rpc.FullScan(path) =>
-        val scanRoot = os.Path(path, wd)
+        val scanRoot = wd / path
         val skip = skipper.initialize(scanRoot)
+        if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
+
         val fileStream = os.walk.stream(scanRoot, p => skip(p) && ! os.isDir(p, followLinks = false))
         client.writeMsg(fileStream.count())
         for {

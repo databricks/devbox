@@ -27,7 +27,7 @@ class FSEventsWatcher(srcs: Seq[os.Path],
     CarbonApi.INSTANCE.CFArrayCreate(
       null,
       srcs.map(p => CFStringRef.toCFString(p.toString).getPointer).toArray,
-      CFIndex.valueOf(1),
+      CFIndex.valueOf(srcs.length),
       null
     ),
     -1,
