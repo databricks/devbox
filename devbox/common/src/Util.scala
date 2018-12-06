@@ -8,6 +8,11 @@ object Util {
       _.toString(),
       os.PermSet.fromString
     )
+  implicit val relpathRw: upickle.default.ReadWriter[os.RelPath] =
+    upickle.default.readwriter[String].bimap[os.RelPath](
+      _.toString(),
+      os.RelPath(_)
+    )
 
   def autoclose[T <: AutoCloseable, V](x: T)(f: T => V) = {
     try f(x)

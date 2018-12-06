@@ -8,6 +8,7 @@ import devbox.common.Cli
 import devbox.common.Cli.Arg
 import devbox.common._
 import Cli.pathScoptRead
+import Util.relpathRw
 object DevboxAgentMain {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
@@ -76,43 +77,43 @@ object DevboxAgentMain {
           p <- fileStream
           sig <- Signature.compute(p, buffer)
         } {
-          client.writeMsg(Some((p.relativeTo(scanRoot).toString, sig)))
+          client.writeMsg(Some((p.relativeTo(scanRoot), sig)))
         }
 
         client.writeMsg(None)
 
       case Rpc.Remove(root, path) =>
-        os.remove.all(os.Path(path, wd / root))
+        os.remove.all(wd / root / path)
         client.writeMsg(0)
 
       case Rpc.PutFile(root, path, perms) =>
-        os.write(os.Path(path, wd / root), "", perms)
+        os.write(wd / root / path, "", perms)
         client.writeMsg(0)
 
       case Rpc.PutDir(root, path, perms) =>
-        os.makeDir(os.Path(path, wd / root), perms)
+        os.makeDir(wd / root / path, perms)
         client.writeMsg(0)
 
       case Rpc.PutLink(root, path, dest) =>
-        os.symlink(os.Path(path, wd / root), os.FilePath(dest))
+        os.symlink(wd / root / path, os.FilePath(dest))
         client.writeMsg(0)
 
       case Rpc.WriteChunk(root, path, offset, data, hash) =>
-        val p = os.Path(path, wd / root)
+        val p = wd / root / path
         withWritable(p){
           os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
         }
         client.writeMsg(0)
 
       case Rpc.SetSize(root, path, offset) =>
-        val p = os.Path(path, wd / root)
+        val p = wd / root / path
         withWritable(p) {
           os.truncate(p, offset)
         }
         client.writeMsg(0)
 
       case Rpc.SetPerms(root, path, perms) =>
-        os.perms.set.apply(os.Path(path, wd / root), perms)
+        os.perms.set.apply(wd / root / path, perms)
         client.writeMsg(0)
     }catch{
       case e: EOFException => throw e // master process has closed up, exit

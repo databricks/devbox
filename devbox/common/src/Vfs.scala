@@ -34,28 +34,21 @@ final class Vfs[T](rootMetadata: T) {
     }
   }
 
-  def resolve(p: String): Option[Vfs.Node[T]] = {
-    if (p == "") Some(root)
-    else {
-      assert(p.head != '/' && p.last != '/')
-      val segments = p.split('/')
-      var current: Option[Vfs.Node[T]] = Some(root)
-      for(segment <- segments) current = current match{
-        case Some(Vfs.Dir(metadata, value)) => value.get(segment)
-        case _ => None
-      }
-      current
+  def resolve(p: os.RelPath): Option[Vfs.Node[T]] = {
+    assert(p.ups == 0)
+    var current: Option[Vfs.Node[T]] = Some(root)
+    for(segment <- p.segments) current = current match{
+      case Some(Vfs.Dir(metadata, value)) => value.get(segment)
+      case _ => None
     }
+    current
+
   }
 
-  def resolveParent(p: String): Option[(String, Vfs.Dir[T])] = {
-    if (p == "") None
-    else{
-      assert(p.head != '/' && p.last != '/')
-      val segments = p.split('/')
-      resolve(segments.dropRight(1).mkString("/"))
-        .collect { case v: Vfs.Dir[T] => (segments.last, v)}
-    }
+  def resolveParent(p: os.RelPath): Option[(String, Vfs.Dir[T])] = {
+    assert(p.ups == 0)
+    if (p.segments.isEmpty) None
+    else resolve(p / os.up).collect { case v: Vfs.Dir[T] => (p.segments.last, v)}
   }
 }
 
@@ -68,7 +61,7 @@ object Vfs{
                     children: mutable.LinkedHashMap[String, Node[T]]) extends Node[T]
 
   // Update stateVfs according to the given action
-  def updateVfs(p: String, sig: Signature, vfs: Vfs[Signature]) = {
+  def updateVfs(p: os.RelPath, sig: Signature, vfs: Vfs[Signature]) = {
     val (name, folder) = vfs.resolveParent(p).get
     assert(!folder.children.contains(name))
     folder.children(name) =
@@ -78,7 +71,7 @@ object Vfs{
 
   def updateVfs(a: Action, stateVfs: Vfs[Signature]) = a match{
     case Rpc.PutFile(_, path, perms) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path))
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.File(perms, Nil, 0))
 
@@ -88,7 +81,7 @@ object Vfs{
       }
 
     case Rpc.PutDir(_, path, perms) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path))
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.Dir(
         Signature.Dir(perms),
@@ -96,14 +89,14 @@ object Vfs{
       )
 
     case Rpc.PutLink(_, path, dest) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path))
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.Symlink(dest))
 
     case Rpc.WriteChunk(_, path, offset, bytes, hash) =>
       assert(offset % Util.blockSize == 0)
       val index = offset / Util.blockSize
-      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception(path)).asInstanceOf[Vfs.File[Signature.File]]
+      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception(path.toString)).asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         blockHashes =
           if (index < currentFile.value.blockHashes.length) currentFile.value.blockHashes.updated(index.toInt, hash)
@@ -112,7 +105,7 @@ object Vfs{
       )
 
     case Rpc.SetSize(_, path, offset) =>
-      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception(path)).asInstanceOf[Vfs.File[Signature.File]]
+      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception(path.toString)).asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         size = offset,
         blockHashes = currentFile.value.blockHashes.take(

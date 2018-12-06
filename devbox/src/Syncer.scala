@@ -6,7 +6,7 @@ import java.util.concurrent._
 import devbox.common._
 import os.Path
 import upickle.default
-
+import Util.relpathRw
 import scala.annotation.tailrec
 import scala.collection.{immutable, mutable}
 
@@ -17,7 +17,7 @@ import scala.collection.{immutable, mutable}
   * companion object
   */
 class Syncer(agent: AgentApi,
-             mapping: Seq[(os.Path, Seq[String])],
+             mapping: Seq[(os.Path, os.RelPath)],
              skipper: Skipper,
              debounceTime: Int,
              onComplete: () => Unit,
@@ -113,7 +113,7 @@ object Syncer{
   }
 
   def syncAllRepos(agent: AgentApi,
-                   mapping: Seq[(os.Path, Seq[String])],
+                   mapping: Seq[(os.Path, os.RelPath)],
                    onComplete: () => Unit,
                    eventQueue: BlockingQueue[Array[String]],
                    skipper: Skipper,
@@ -204,20 +204,20 @@ object Syncer{
   def initialRemoteScan(logger: Logger,
                         vfsArr: immutable.IndexedSeq[Vfs[Signature]],
                         client: RpcClient,
-                        dest: Seq[String],
+                        dest: os.RelPath,
                         i: Int): Unit = {
-    client.writeMsg(Rpc.FullScan(dest.mkString("/")))
+    client.writeMsg(Rpc.FullScan(dest))
     val total = client.readMsg[Int]()
     var n = 0
     while ( {
-      client.readMsg[Option[(String, Signature)]]() match {
+      client.readMsg[Option[(os.RelPath, Signature)]]() match {
         case None =>
           logger("SYNC SCAN DONE")
           false
         case Some((p, sig)) =>
           n += 1
           logger("SYNC SCAN REMOTE", (p, sig))
-          logger.progress(s"Scanning remote file [$n/$total]", p)
+          logger.progress(s"Scanning remote file [$n/$total]", p.toString())
           Vfs.updateVfs(p, sig, vfsArr(i))
           true
       }
@@ -246,7 +246,7 @@ object Syncer{
                       skip0: os.Path => Boolean,
                       skipper: Skipper,
                       src: os.Path,
-                      dest: Seq[String],
+                      dest: os.RelPath,
                       client: RpcClient,
                       buffer: Array[Byte],
                       interestingBases: mutable.Buffer[Array[String]],
@@ -338,13 +338,13 @@ object Syncer{
                             stateVfs: Vfs[Signature],
                             client: VfsRpcClient,
                             src: Path,
-                            dest: Seq[String],
+                            dest: os.RelPath,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
     val total = signatureMapping.length
     var byteCount = 0
     draining(client) {
       for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
-        val segments = p.relativeTo(src).toString
+        val segments = p.relativeTo(src)
         val (otherHashes, otherSize) = otherSig match {
           case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
           case _ => (Nil, 0L)
@@ -425,7 +425,7 @@ object Syncer{
   def syncMetadata(client: VfsRpcClient,
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
-                   dest: Seq[String],
+                   dest: os.RelPath,
                    stateVfs: Vfs[Signature],
                    logger: Logger,
                    buffer: Array[Byte]): Unit = {
@@ -433,8 +433,8 @@ object Syncer{
     val total = signatureMapping.length
     draining(client) {
       for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
-        val segments = p.relativeTo(src).toString
-        logger.progress(s"Syncing path [$i/$total]", segments)
+        val segments = p.relativeTo(src)
+        logger.progress(s"Syncing path [$i/$total]", segments.toString())
         (localSig, remoteSig) match {
           case (None, _) =>
             client(Rpc.Remove(dest, segments))
@@ -474,9 +474,9 @@ object Syncer{
   def streamFileContents(logger: Logger,
                          client: VfsRpcClient,
                          stateVfs: Vfs[Signature],
-                         dest: Seq[String],
+                         dest: os.RelPath,
                          p: Path,
-                         segments: String,
+                         segments: os.RelPath,
                          blockHashes: Seq[Bytes],
                          otherHashes: Seq[Bytes],
                          size: Long,
@@ -494,7 +494,7 @@ object Syncer{
         val hashMsg = if (blockHashes.size > 1) s" $i/${blockHashes.length}" else ""
         logger.progress(
           s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]",
-          segments
+          segments.toString()
         )
         buf.rewind()
         channel.position(i * Util.blockSize)
@@ -543,7 +543,7 @@ object Syncer{
 
         val listedNames = listed.toSet
 
-        val virtual = stateVfs.resolve(p.relativeTo(src).toString) match {
+        val virtual = stateVfs.resolve(p.relativeTo(src)) match {
           // We only care about the case where the there interesting path
           // points to a folder within the Vfs.
           case Some(f: Vfs.Dir[Signature]) => f.children

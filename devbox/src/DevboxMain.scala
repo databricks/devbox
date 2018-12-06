@@ -79,8 +79,8 @@ object DevboxMain {
             },
             for(s <- config.repo)
             yield s.split(':') match{
-              case Array(src) => (os.Path(src, os.pwd), Seq(os.Path(src, os.pwd).last))
-              case Array(src, dest) => (os.Path(src, os.pwd), dest.split('/').toSeq)
+              case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
+              case Array(src, dest) => (os.Path(src, os.pwd), os.rel / dest.split('/'))
             },
             skipper,
             config.debounceMillis,
