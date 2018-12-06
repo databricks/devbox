@@ -137,10 +137,9 @@ object Syncer{
       initialLocalScan(src, eventQueue, logger, skipArr(i))
     }
 
-    var initialSync = true
+    var messagedSync = true
     val allChangedPaths = mutable.Buffer.empty[os.Path]
     var allSyncedBytes = 0
-    var modifiedSkipFile: List[Int] = Nil
     while (continue() && agent.isAlive()) {
       logger("SYNC LOOP")
 
@@ -151,38 +150,35 @@ object Syncer{
         val allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
         logger("SYNC EVENTS", allSrcEventDirs)
 
-        for {
-          ((src, dest), i) <- mapping.zipWithIndex
+        for (((src, dest), i) <- mapping.zipWithIndex) {
+          val srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skipArr(i)(p))
 
-          srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skipArr(i)(p))
+          logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
 
-          if srcEventDirs.nonEmpty
+          val exitCode = for{
+            _ <- if (srcEventDirs.isEmpty) Left(NoOp: ExitCode) else Right(())
+            _ <- updateSkipPredicate(
+              srcEventDirs, skipper, vfsArr(i), src, buffer, logger,
+              skipArr(i) = _
+            )
+            res <- synchronizeRepo(
+              logger, vfsArr(i), skipArr(i), src, dest,
+              client, buffer, srcEventDirs, signatureTransformer
+            )
+          } yield res
 
-          _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
-
-          allModifiedSkipFiles = for{
-            p <- srcEventDirs
-            pathToCheck <- skipper.checkReset(p)
-            if os.exists(pathToCheck)
-            if Some(Signature.compute(pathToCheck, buffer)) != vfsArr(i).resolve(pathToCheck.relativeTo(src)).map(_.value)
-          } yield pathToCheck
-
-          _ <-
-            if (allModifiedSkipFiles.isEmpty) Some(())
-            else{
-              modifiedSkipFile ::= i
-              interestingBases.foreach(eventQueue.add)
-              None
-            }
-
-          (streamedByteCount, changedPaths) <- synchronizeRepo(
-            logger, eventQueue, vfsArr(i), skipArr(i), src, dest,
-            client, buffer, interestingBases, srcEventDirs, signatureTransformer
-          )
-
-        }{
-          allChangedPaths.appendAll(changedPaths.map(_._1))
-          allSyncedBytes += streamedByteCount
+          exitCode match{
+            case Right((streamedByteCount, changedPaths)) =>
+              allChangedPaths.appendAll(changedPaths)
+              allSyncedBytes += streamedByteCount
+            case Left(NoOp) => // do nothing
+            case Left(SyncFail(value)) =>
+              eventQueue.add(srcEventDirs.map(_.toString).toArray)
+              val x = new StringWriter()
+              val p = new PrintWriter(x)
+              value.printStackTrace(p)
+              logger("SYNC FAILED", x.toString)
+          }
         }
 
         if (eventQueue.isEmpty) {
@@ -191,34 +187,51 @@ object Syncer{
           if (allChangedPaths.nonEmpty){
             logger.info(
               s"Finished syncing ${allChangedPaths.length} paths, $allSyncedBytes bytes",
-              s"${allChangedPaths.head}" + (if(allChangedPaths.length == 1) "" else s" and ${allChangedPaths.length-1} others")
+              s"${allChangedPaths.head}" +
+                (if(allChangedPaths.length == 1) "" else s" and ${allChangedPaths.length-1} others")
             )
             allSyncedBytes = 0
             allChangedPaths.clear()
-          }else if (initialSync){
+          }else if (messagedSync){
             logger.info("Nothing to sync", "watching for changes")
           }
-          initialSync = false
+          messagedSync = false
         }else{
-          if (modifiedSkipFile.nonEmpty){
-            logger.info(
-              "Gitignore file modified, re-scanning repository",
-              eventQueue.peek().head
-            )
-            for(i <- modifiedSkipFile) skipArr(i) = skipper.initialize(mapping(i)._1)
-            modifiedSkipFile = Nil
-          }else{
-            logger.info(
-              "Ongoing changes detected",
-              eventQueue.peek().head
-            )
-          }
+          logger.info(
+            "Ongoing changes detected",
+            eventQueue.peek().head
+          )
           logger("SYNC PARTIAL")
+          messagedSync = true
         }
       }
     }
   }
 
+  def updateSkipPredicate(srcEventDirs: Seq[os.Path],
+                          skipper: Skipper,
+                          vfs: Vfs[Signature],
+                          src: os.Path,
+                          buffer: Array[Byte],
+                          logger: Logger,
+                          setSkip: (os.Path => Boolean) => Unit) = {
+    val allModifiedSkipFiles = for{
+      p <- srcEventDirs
+      pathToCheck <- skipper.checkReset(p)
+      newSig = if (os.exists(pathToCheck)) Signature.compute(pathToCheck, buffer) else None
+      if newSig != vfs.resolve(pathToCheck.relativeTo(src)).map(_.value)
+    } yield (pathToCheck, newSig)
+
+    _ <-
+    if (allModifiedSkipFiles.isEmpty) Right(())
+    else{
+      logger.info(
+        "Gitignore file changed, re-scanning repository",
+        allModifiedSkipFiles.head._1.toString
+      )
+      restartOnFailure{setSkip(skipper.initialize(src))}
+    }
+  }
   def initialRemoteScan(logger: Logger,
                         vfsArr: immutable.IndexedSeq[Vfs[Signature]],
                         client: RpcClient,
@@ -258,20 +271,32 @@ object Syncer{
     )
   }
 
+  /**
+    * Represents the various ways a repo synchronization can exit early.
+    */
+  sealed trait ExitCode
+
+  /**
+    * Something failed with an exception, and we want to re-try the sync
+    */
+  case class SyncFail(value: Exception) extends ExitCode
+
+  /**
+    * There was nothing to do so we stopped.
+    */
+  case object NoOp extends ExitCode
+
   def synchronizeRepo(logger: Logger,
-                      eventQueue: BlockingQueue[Array[String]],
                       vfs: Vfs[Signature],
                       skip: os.Path => Boolean,
                       src: os.Path,
                       dest: os.RelPath,
                       client: RpcClient,
                       buffer: Array[Byte],
-                      interestingBases: mutable.Buffer[Array[String]],
                       srcEventDirs: mutable.Buffer[Path],
-                      signatureTransformer: Signature => Signature) = {
+                      signatureTransformer: Signature => Signature): Either[ExitCode, (Int, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
-        logger, interestingBases, eventQueue,
         computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
       )
 
@@ -281,11 +306,11 @@ object Syncer{
 
       filteredSignatures0 = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
 
-      if filteredSignatures0.nonEmpty
+      _ <- if (filteredSignatures0.nonEmpty) Right(()) else Left(NoOp)
 
       filteredSignatures = filteredSignatures0.filter{ t => !skip(t._1) }
 
-      if filteredSignatures.nonEmpty
+      _ <- if (filteredSignatures.nonEmpty) Right(()) else Left(NoOp)
 
       _ = logger.info(s"${filteredSignatures.length} paths changed", s"$src")
 
@@ -294,14 +319,13 @@ object Syncer{
       _ = Syncer.syncMetadata(vfsRpcClient, filteredSignatures, src, dest, vfs, logger, buffer)
 
       streamedByteCount <- restartOnFailure(
-        logger, interestingBases, eventQueue,
         streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
       )
-    } yield (streamedByteCount, filteredSignatures)
+    } yield (streamedByteCount, filteredSignatures.map(_._1))
   }
 
-  def sortSignatureChanges(signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])]) = {
-    signatureMapping.sortBy { case (p, local, remote) =>
+  def sortSignatureChanges(sigs: Seq[(os.Path, Option[Signature], Option[Signature])]) = {
+    sigs.sortBy { case (p, local, remote) =>
       (
         // First, sort by how deep the path is. We want to operate on the
         // shallower paths first before the deeper paths, so folders can be
@@ -318,20 +342,11 @@ object Syncer{
     }
   }
 
-  def restartOnFailure[T](logger: Logger,
-                          interestingBases: Seq[Array[String]],
-                          eventQueue: BlockingQueue[Array[String]],
-                          t: => T)  = {
-    try Some(t)
+  def restartOnFailure[T](t: => T)  = {
+    try Right(t)
     catch{
       case e: RpcException => throw e
-      case e: Exception =>
-        val x = new StringWriter()
-        val p = new PrintWriter(x)
-        e.printStackTrace(p)
-        logger("SYNC FAILED", x.toString)
-        interestingBases.foreach(eventQueue.add)
-        None
+      case e: Exception => Left(SyncFail(e))
     }
   }
 

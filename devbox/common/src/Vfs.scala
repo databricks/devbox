@@ -42,7 +42,6 @@ final class Vfs[T](rootMetadata: T) {
       case _ => None
     }
     current
-
   }
 
   def resolveParent(p: os.RelPath): Option[(String, Vfs.Dir[T])] = {
