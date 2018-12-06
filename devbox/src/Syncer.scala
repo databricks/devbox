@@ -182,7 +182,6 @@ object Syncer{
           }
           initialSync = false
         }else{
-          logger.info("Ongoing changes detected", "scanning for changes")
           logger("SYNC PARTIAL")
         }
 
@@ -273,6 +272,8 @@ object Syncer{
 
       filteredSignatures = filteredSignatures0.filter{ t => !skip(t._1) }
 
+      if filteredSignatures.nonEmpty
+
       _ = logger.info(s"${filteredSignatures.length} paths changed", s"$src")
 
       vfsRpcClient = new VfsRpcClient(client, vfs)
@@ -283,8 +284,6 @@ object Syncer{
         logger, interestingBases, eventQueue,
         streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
       )
-
-
     } yield (streamedByteCount, filteredSignatures.length)
   }
 
