@@ -159,7 +159,7 @@ object Syncer{
             _ <- if (srcEventDirs.isEmpty) Left(NoOp: ExitCode) else Right(())
             _ <- updateSkipPredicate(
               srcEventDirs, skipper, vfsArr(i), src, buffer, logger,
-              skipArr(i) = _
+              signatureTransformer, skipArr(i) = _
             )
             res <- synchronizeRepo(
               logger, vfsArr(i), skipArr(i), src, dest,
@@ -214,13 +214,15 @@ object Syncer{
                           src: os.Path,
                           buffer: Array[Byte],
                           logger: Logger,
+                          signatureTransformer: Signature => Signature,
                           setSkip: (os.Path => Boolean) => Unit) = {
     val allModifiedSkipFiles = for{
       p <- srcEventDirs
       pathToCheck <- skipper.checkReset(p)
-      newSig = if (os.exists(pathToCheck)) Signature.compute(pathToCheck, buffer) else None
-      if newSig != vfs.resolve(pathToCheck.relativeTo(src)).map(_.value)
-    } yield (pathToCheck, newSig)
+      newSig = if (os.exists(pathToCheck)) Signature.compute(pathToCheck, buffer).map(signatureTransformer) else None
+      oldSig = vfs.resolve(pathToCheck.relativeTo(src)).map(_.value)
+      if newSig != oldSig
+    } yield (pathToCheck, oldSig, newSig)
 
     if (allModifiedSkipFiles.isEmpty) Right(())
     else{
@@ -228,6 +230,7 @@ object Syncer{
         "Gitignore file changed, re-scanning repository",
         allModifiedSkipFiles.head._1.toString
       )
+      logger("SYNC GITIGNORE", allModifiedSkipFiles)
       restartOnFailure{setSkip(skipper.initialize(src))}
     }
   }
