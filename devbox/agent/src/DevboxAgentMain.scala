@@ -49,7 +49,7 @@ object DevboxAgentMain {
 
         logger("AGNT START", config.workingDir)
 
-        val skipper = Util.ignoreCallback(config.ignoreStrategy)
+        val skipper = Skipper.fromString(config.ignoreStrategy)
         val client = new RpcClient(
           new DataOutputStream(System.out),
           new DataInputStream(System.in),

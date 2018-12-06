@@ -117,7 +117,8 @@ object Syncer{
                    signatureTransformer: Signature => Signature) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
-    val skipArr = for (i <- mapping.indices.toArray) yield skipper.initialize(mapping(i)._1)
+    val skipArr = for ((src, dest) <- mapping.toArray) yield skipper.initialize(src)
+
     val buffer = new Array[Byte](Util.blockSize)
 
     val client = new RpcClient(agent.stdin, agent.stdout, (tag, t) => logger("SYNC " + tag, t))
@@ -125,11 +126,14 @@ object Syncer{
     logger("SYNC SCAN")
     logger.info(s"Performing initial scan on ${mapping.length} repos", mapping.map(_._1).mkString("\n"))
 
-    performInitialScans(mapping, eventQueue, skipArr, logger, vfsArr, client)
+    for (((src, dest), i) <- mapping.zipWithIndex) {
+      initialRemoteScan(logger, vfsArr, client, dest, i)
+      initialLocalScan(src, eventQueue, logger, skipArr(i))
+    }
+
     var initialSync = true
     var pathCount: Int = 0
     var byteCount: Int = 0
-
     while (continue() && agent.isAlive()) {
       logger("SYNC LOOP")
 
@@ -155,6 +159,7 @@ object Syncer{
             () => {
               skipArr(i) = skipper.initialize(mapping(i)._1)
               initialLocalScan(src, eventQueue, logger, skipArr(i))
+              skipArr(i)
             }
           )
 
@@ -176,7 +181,7 @@ object Syncer{
           }
           initialSync = false
         }else{
-          logger.info("˜Ongoing changes detected", "scanning for changes")
+          logger.info("Ongoing changes detected", "scanning for changes")
           logger("SYNC PARTIAL")
         }
 
@@ -184,32 +189,26 @@ object Syncer{
     }
   }
 
-  def performInitialScans(mapping: Seq[(Path, Seq[String])],
-                          eventQueue: BlockingQueue[Array[String]],
-                          skipArr: Seq[os.Path => Boolean],
-                          logger: Logger,
-                          vfsArr: immutable.IndexedSeq[Vfs[Signature]],
-                          client: RpcClient) = {
-    for (((src, dest), i) <- mapping.zipWithIndex) {
-
-      client.writeMsg(Rpc.FullScan(dest.mkString("/")))
-      var n = 0
-      while ( {
-        client.readMsg[Option[(String, Signature)]]() match {
-          case None =>
-            logger("SYNC SCAN DONE")
-            false
-          case Some((p, sig)) =>
-            n += 1
-            logger("SYNC SCAN REMOTE", (p, sig))
-            logger.progress(s"Scanning remote file $n", p)
-            Vfs.updateVfs(p, sig, vfsArr(i))
-            true
-        }
-      }) ()
-
-      initialLocalScan(src, eventQueue, logger, skipArr(i))
-    }
+  def initialRemoteScan(logger: Logger,
+                        vfsArr: immutable.IndexedSeq[Vfs[Signature]],
+                        client: RpcClient,
+                        dest: Seq[String],
+                        i: Int): Unit = {
+    client.writeMsg(Rpc.FullScan(dest.mkString("/")))
+    var n = 0
+    while ( {
+      client.readMsg[Option[(String, Signature)]]() match {
+        case None =>
+          logger("SYNC SCAN DONE")
+          false
+        case Some((p, sig)) =>
+          n += 1
+          logger("SYNC SCAN REMOTE", (p, sig))
+          logger.progress(s"Scanning remote file $n", p)
+          Vfs.updateVfs(p, sig, vfsArr(i))
+          true
+      }
+    }) ()
   }
 
   def initialLocalScan(src: os.Path,
@@ -237,7 +236,7 @@ object Syncer{
   def synchronizeRepo(logger: Logger,
                       eventQueue: BlockingQueue[Array[String]],
                       vfs: Vfs[Signature],
-                      skip: os.Path => Boolean,
+                      skip0: os.Path => Boolean,
                       skipper: Skipper,
                       src: os.Path,
                       dest: Seq[String],
@@ -246,20 +245,37 @@ object Syncer{
                       interestingBases: mutable.Buffer[Array[String]],
                       srcEventDirs: mutable.Buffer[Path],
                       signatureTransformer: Signature => Signature,
-                      resetSkip: () => Unit) = {
+                      resetSkip: () => os.Path => Boolean) = {
     for{
       signatureMapping <- restartOnFailure(
         logger, interestingBases, eventQueue,
-        computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
+        computeSignatures(srcEventDirs, buffer, vfs, skip0, src, logger, signatureTransformer)
       )
 
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
 
       sortedSignatures = sortSignatureChanges(signatureMapping)
 
-      filteredSignatures = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
+      filteredSignatures0 = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
 
-      if filteredSignatures.nonEmpty
+      if filteredSignatures0.nonEmpty
+
+      modifiedSkippedFile = filteredSignatures0
+        .map(p => (p._1, skipper.checkReset(p._1)))
+        .collectFirst{case (p, Some(msg)) => (p, msg)}
+
+      skip <- modifiedSkippedFile match{
+        case None => Some(skip0)
+        case Some((p, msg)) =>
+          logger.info(s"$msg, re-scanning skipped files", p.toString)
+          logger("SYNC SKIP RESET", p)
+          restartOnFailure(
+            logger, interestingBases, eventQueue,
+            resetSkip()
+          )
+      }
+
+      filteredSignatures = filteredSignatures0.filter{ t => !skip(t._1) }
 
       _ = logger.info(s"${filteredSignatures.length} paths changed", s"$src")
 
@@ -272,19 +288,7 @@ object Syncer{
         streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
       )
 
-      _ <- {
-        println("FILTERED SIGNATURES")
-        filteredSignatures.map(_._1).foreach(println)
-        println("FILTERED SIGNATURES")
-        filteredSignatures.map(_._1).find(skipper.checkReset) match{
-          case None => Some(())
-          case Some(p) =>
-            interestingBases.foreach(eventQueue.add)
-            resetSkip()
-            logger("SYNC SKIP RESET", p)
-            None
-        }
-      }
+
     } yield (streamedByteCount, filteredSignatures.length)
   }
 

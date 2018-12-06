@@ -1,7 +1,7 @@
 package devbox
 import java.nio.file.attribute.PosixFilePermission
 
-import devbox.common.{Cli, Logger, Signature, Util}
+import devbox.common._
 import devbox.common.Cli.{Arg, showArg}
 import Cli.pathScoptRead
 object DevboxMain {
@@ -64,7 +64,7 @@ object DevboxMain {
           val leftMargin = signature.map(showArg(_).length).max + 2
           System.out.println(Cli.formatBlock(signature, leftMargin).mkString("\n"))
         }else {
-          val skip = Util.ignoreCallback(config.ignoreStrategy)
+          val skipper = Skipper.fromString(config.ignoreStrategy)
           val agent = os.proc(remaining).spawn()
           Util.autoclose(new Syncer(
             agent,
@@ -73,7 +73,7 @@ object DevboxMain {
               case Array(src) => (os.Path(src, os.pwd), Seq(os.Path(src, os.pwd).last))
               case Array(src, dest) => (os.Path(src, os.pwd), dest.split('/').toSeq)
             },
-            skip,
+            skipper,
             config.debounceMillis,
             () => (),
             Logger.File(config.logFile.get, config.toast),

@@ -10,7 +10,7 @@ object devbox extends ScalaModule{
     def ivyDeps = Agg(
       ivy"com.lihaoyi::os-lib:0.2.5",
       ivy"com.lihaoyi::upickle:0.7.1",
-      ivy"org.eclipse.jgit:org.eclipse.jgit:5.1.3.201810200350-r",
+      ivy"com.google.re2j:re2j:1.2",
       ivy"com.lihaoyi::pprint:0.5.3",
       ivy"com.github.scopt::scopt:3.5.0",
       ivy"net.java.dev.jna:jna:5.0.0",
@@ -57,7 +57,10 @@ object devbox extends ScalaModule{
 
 
     def testFrameworks = Seq("devbox.UTestFramework")
-    def ivyDeps = Agg(ivy"com.lihaoyi::utest:0.6.5")
+    def ivyDeps = Agg(
+      ivy"com.lihaoyi::utest:0.6.5",
+      ivy"org.eclipse.jgit:org.eclipse.jgit:5.1.3.201810200350-r",
+    )
     def forkEnv = Map(
       "AGENT_EXECUTABLE" -> agent.assembly().path.toString,
       "SCALATAGS_BUNDLE" -> scalatagsBundle().path.toString,

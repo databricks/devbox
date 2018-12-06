@@ -4,7 +4,7 @@ import java.nio.file.attribute.PosixFilePermission
 
 import devbox.DevboxMain.Config
 import devbox.DevboxTests.{instantiateSyncer, prepareFolders}
-import devbox.common.{Cli, Logger, Signature, Util}
+import devbox.common._
 import devbox.common.Cli.{Arg, showArg}
 
 object DevboxTestMain {
@@ -88,7 +88,7 @@ object DevboxTestMain {
           if (config.label == "manual"){
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
             val logger = new Logger.File(log, config.toast)
-            val skip = Util.ignoreCallback(config.ignoreStrategy)
+            val skip = Skipper.fromString(config.ignoreStrategy)
             val syncer = instantiateSyncer(
               src, dest,
               skip,

@@ -141,7 +141,7 @@ object DevboxTests extends TestSuite{
         // huge edits modifying lots of different files
         (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
-    val skipper = Util.ignoreCallback(ignoreStrategy)
+    val skipper = Skipper.fromString(ignoreStrategy)
     (src, dest, log, commits, workCount, skipper, commitsIndicesToCheck, repo)
   }
 
