@@ -1,6 +1,6 @@
 package devbox.agent
 
-import java.io.{DataInputStream, DataOutputStream}
+import java.io.{DataInputStream, DataOutputStream, EOFException}
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.StandardOpenOption
 
@@ -45,8 +45,8 @@ object DevboxAgentMain {
         System.exit(1)
 
       case Right((config, remaining)) =>
-        val logger = Logger.JsonStderr
-
+        os.makeDir.all(os.home / ".devbox")
+        val logger = Logger.JsonStderr(os.home / ".devbox" / "log.txt")
         logger("AGNT START", config.workingDir)
 
         val skipper = Skipper.fromString(config.ignoreStrategy)
@@ -70,8 +70,10 @@ object DevboxAgentMain {
       case Rpc.FullScan(path) =>
         val scanRoot = os.Path(path, wd)
         val skip = skipper.initialize(scanRoot)
+        val fileStream = os.walk.stream(scanRoot, p => skip(p) && ! os.isDir(p, followLinks = false))
+        client.writeMsg(fileStream.count())
         for {
-          p <- os.walk.stream(scanRoot, p => skip(p) && ! os.isDir(p, followLinks = false))
+          p <- fileStream
           sig <- Signature.compute(p, buffer)
         } {
           client.writeMsg(Some((p.relativeTo(scanRoot).toString, sig)))
@@ -112,9 +114,11 @@ object DevboxAgentMain {
       case Rpc.SetPerms(root, path, perms) =>
         os.perms.set.apply(os.Path(path, wd / root), perms)
         client.writeMsg(0)
-    }catch{case e: Throwable if !exitOnError =>
-      logger("AGNT ERROR", e)
-      client.writeMsg(RemoteException.create(e), false)
+    }catch{
+      case e: EOFException => throw e // master process has closed up, exit
+      case e: Throwable if !exitOnError =>
+        logger("AGNT ERROR", e)
+        client.writeMsg(RemoteException.create(e), false)
     }
   }
   def withWritable[T](p: os.Path)(t: => T) = {

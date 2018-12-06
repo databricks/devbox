@@ -1,6 +1,6 @@
 package devbox.common
 
-import java.nio.file.StandardOpenOption.{CREATE, WRITE, APPEND}
+import java.nio.file.StandardOpenOption.{CREATE, WRITE, TRUNCATE_EXISTING}
 
 trait Logger extends AutoCloseable{
   def write(s: String): Unit
@@ -24,7 +24,7 @@ object Logger{
   val margin = 20
   val marginStr = "\n" + (" " * margin) + " | "
   case class File(dest: os.Path, toast: Boolean) extends Logger{
-    val output = os.write.outputStream(dest, openOptions = Seq(CREATE, WRITE, APPEND))
+    val output = os.write.outputStream(dest, openOptions = Seq(CREATE, WRITE, TRUNCATE_EXISTING))
     def write(s: String): Unit = synchronized{
       output.write(fansi.Str(s).plainText.getBytes("UTF-8"))
       output.write('\n')
@@ -50,9 +50,14 @@ object Logger{
     }
   }
 
-  object JsonStderr extends Logger{
-    def write(s: String) = synchronized{ System.err.println(ujson.write(s)) }
-    def close() = () // do nothing
+  case class JsonStderr(dest: os.Path) extends Logger{
+    val output = os.write.outputStream(dest, openOptions = Seq(CREATE, WRITE, TRUNCATE_EXISTING))
+    def write(s: String) = synchronized{
+      System.err.println(ujson.write(s))
+      output.write(fansi.Str(s).plainText.getBytes("UTF-8"))
+      output.write('\n')
+    }
+    def close() = output.close()
     def info(title: => String, body: => String): Unit = ???
     def progress(title: => String, body: => String): Unit = ???
   }

@@ -40,7 +40,7 @@ object Skipper{
       type NodeType = Option[com.google.re2j.Pattern]
       def resolve(p: os.Path) = {
         if (!os.exists(p)) None
-        else Some(gitIgnoreToRegex(p))
+        else Some(gitIgnoreToRegex(base, p))
       }
       val gitIgnoreVfs = new Vfs[NodeType](resolve(base / ".gitignore"))
       for(gitignore <- os.walk.stream(base).filter(_.last == ".gitignore")){

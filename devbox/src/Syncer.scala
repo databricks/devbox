@@ -100,6 +100,7 @@ object Syncer{
   class VfsRpcClient(val client: RpcClient, stateVfs: Vfs[Signature]){
     def clearOutstandingMsgs() = client.clearOutstandingMsgs()
     def drainOutstandingMsgs() = client.drainOutstandingMsgs()
+
     def apply[T <: Action: default.Writer](p: T) = {
       client.writeMsg(p)
       Vfs.updateVfs(p, stateVfs)
@@ -195,6 +196,7 @@ object Syncer{
                         dest: Seq[String],
                         i: Int): Unit = {
     client.writeMsg(Rpc.FullScan(dest.mkString("/")))
+    val total = client.readMsg[Int]()
     var n = 0
     while ( {
       client.readMsg[Option[(String, Signature)]]() match {
@@ -204,7 +206,7 @@ object Syncer{
         case Some((p, sig)) =>
           n += 1
           logger("SYNC SCAN REMOTE", (p, sig))
-          logger.progress(s"Scanning remote file $n", p)
+          logger.progress(s"Scanning remote file [$n/$total]", p)
           Vfs.updateVfs(p, sig, vfsArr(i))
           true
       }
@@ -220,12 +222,14 @@ object Syncer{
       p => skip(p) || !os.isDir(p, followLinks = false),
       includeTarget = true
     )
+
+    val total = initialLocal.count()
     eventQueue.add(
       initialLocal
         .zipWithIndex
         .map { case (p, i) =>
           lazy val rel = p.relativeTo(src).toString
-          logger.progress(s"Scanning local file $i", rel)
+          logger.progress(s"Scanning local file [$i/$total]", rel)
           logger("SYNC SCAN LOCAL", rel)
           p.toString
         }
@@ -484,8 +488,9 @@ object Syncer{
         i <- blockHashes.indices
         if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
       } {
+        val hashMsg = if (blockHashes.size > 1) s" $i/${blockHashes.length}" else ""
         logger.progress(
-          s"Syncing file chunk [$fileIndex/$fileTotalCount $i/${blockHashes.length}]",
+          s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]",
           segments
         )
         buf.rewind()

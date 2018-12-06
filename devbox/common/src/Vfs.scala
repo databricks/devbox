@@ -78,7 +78,7 @@ object Vfs{
 
   def updateVfs(a: Action, stateVfs: Vfs[Signature]) = a match{
     case Rpc.PutFile(_, path, perms) =>
-      val (name, folder) = stateVfs.resolveParent(path).get
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.File(perms, Nil, 0))
 
@@ -88,7 +88,7 @@ object Vfs{
       }
 
     case Rpc.PutDir(_, path, perms) =>
-      val (name, folder) = stateVfs.resolveParent(path).get
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.Dir(
         Signature.Dir(perms),
@@ -96,14 +96,14 @@ object Vfs{
       )
 
     case Rpc.PutLink(_, path, dest) =>
-      val (name, folder) = stateVfs.resolveParent(path).get
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.Symlink(dest))
 
     case Rpc.WriteChunk(_, path, offset, bytes, hash) =>
       assert(offset % Util.blockSize == 0)
       val index = offset / Util.blockSize
-      val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[Signature.File]]
+      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception(path)).asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         blockHashes =
           if (index < currentFile.value.blockHashes.length) currentFile.value.blockHashes.updated(index.toInt, hash)
@@ -112,7 +112,7 @@ object Vfs{
       )
 
     case Rpc.SetSize(_, path, offset) =>
-      val currentFile = stateVfs.resolve(path).get.asInstanceOf[Vfs.File[Signature.File]]
+      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception(path)).asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         size = offset,
         blockHashes = currentFile.value.blockHashes.take(
