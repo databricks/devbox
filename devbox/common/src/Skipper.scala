@@ -8,7 +8,7 @@ import scala.collection.mutable
 
 trait Skipper {
   def initialize(p: os.Path): (os.Path => Boolean)
-  def checkReset(p: os.Path): Option[String]
+  def checkReset(p: os.Path): Option[os.Path]
 }
 
 object Skipper{
@@ -80,8 +80,6 @@ object Skipper{
       }
     }
 
-    def checkReset(p: Path) =
-      if (p.last != ".gitignore") None
-      else Some(".gitignore file changed")
+    def checkReset(p: Path) = Some(p / ".gitignore")
   }
 }

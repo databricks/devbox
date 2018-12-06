@@ -140,6 +140,7 @@ object Syncer{
     var initialSync = true
     val allChangedPaths = mutable.Buffer.empty[os.Path]
     var allSyncedBytes = 0
+    var modifiedSkipFile: List[Int] = Nil
     while (continue() && agent.isAlive()) {
       logger("SYNC LOOP")
 
@@ -159,21 +160,30 @@ object Syncer{
 
           _ = logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
 
-          (streamedByteCount, changedPaths) <- synchronizeRepo(
-            logger, eventQueue, vfsArr(i), skipArr(i), skipper, src, dest,
-            client, buffer, interestingBases, srcEventDirs, signatureTransformer,
-            () => {
-              skipArr(i) = skipper.initialize(mapping(i)._1)
-              initialLocalScan(src, eventQueue, logger, skipArr(i))
-              skipArr(i)
+          allModifiedSkipFiles = for{
+            p <- srcEventDirs
+            pathToCheck <- skipper.checkReset(p)
+            if os.exists(pathToCheck)
+            if Some(Signature.compute(pathToCheck, buffer)) != vfsArr(i).resolve(pathToCheck.relativeTo(src)).map(_.value)
+          } yield pathToCheck
+
+          _ <-
+            if (allModifiedSkipFiles.isEmpty) Some(())
+            else{
+              modifiedSkipFile ::= i
+              interestingBases.foreach(eventQueue.add)
+              None
             }
+
+          (streamedByteCount, changedPaths) <- synchronizeRepo(
+            logger, eventQueue, vfsArr(i), skipArr(i), src, dest,
+            client, buffer, interestingBases, srcEventDirs, signatureTransformer
           )
 
         }{
           allChangedPaths.appendAll(changedPaths.map(_._1))
           allSyncedBytes += streamedByteCount
         }
-
 
         if (eventQueue.isEmpty) {
           logger("SYNC COMPLETE")
@@ -190,11 +200,19 @@ object Syncer{
           }
           initialSync = false
         }else{
-
-          logger.info(
-            "Ongoing changes detected",
-            eventQueue.peek().head
-          )
+          if (modifiedSkipFile.nonEmpty){
+            logger.info(
+              "Gitignore file modified, re-scanning repository",
+              eventQueue.peek().head
+            )
+            for(i <- modifiedSkipFile) skipArr(i) = skipper.initialize(mapping(i)._1)
+            modifiedSkipFile = Nil
+          }else{
+            logger.info(
+              "Ongoing changes detected",
+              eventQueue.peek().head
+            )
+          }
           logger("SYNC PARTIAL")
         }
       }
@@ -243,20 +261,18 @@ object Syncer{
   def synchronizeRepo(logger: Logger,
                       eventQueue: BlockingQueue[Array[String]],
                       vfs: Vfs[Signature],
-                      skip0: os.Path => Boolean,
-                      skipper: Skipper,
+                      skip: os.Path => Boolean,
                       src: os.Path,
                       dest: os.RelPath,
                       client: RpcClient,
                       buffer: Array[Byte],
                       interestingBases: mutable.Buffer[Array[String]],
                       srcEventDirs: mutable.Buffer[Path],
-                      signatureTransformer: Signature => Signature,
-                      resetSkip: () => os.Path => Boolean) = {
+                      signatureTransformer: Signature => Signature) = {
     for{
       signatureMapping <- restartOnFailure(
         logger, interestingBases, eventQueue,
-        computeSignatures(srcEventDirs, buffer, vfs, skip0, src, logger, signatureTransformer)
+        computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
       )
 
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
@@ -266,21 +282,6 @@ object Syncer{
       filteredSignatures0 = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
 
       if filteredSignatures0.nonEmpty
-
-      modifiedSkippedFile = filteredSignatures0
-        .map(p => (p._1, skipper.checkReset(p._1)))
-        .collectFirst{case (p, Some(msg)) => (p, msg)}
-
-      skip <- modifiedSkippedFile match{
-        case None => Some(skip0)
-        case Some((p, msg)) =>
-          logger.info(s"$msg, re-scanning skipped files", p.toString)
-          logger("SYNC SKIP RESET", p)
-          restartOnFailure(
-            logger, interestingBases, eventQueue,
-            resetSkip()
-          )
-      }
 
       filteredSignatures = filteredSignatures0.filter{ t => !skip(t._1) }
 
