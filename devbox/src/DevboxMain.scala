@@ -1,4 +1,5 @@
 package devbox
+import java.io._
 import java.nio.file.attribute.PosixFilePermission
 
 import devbox.common._
@@ -65,9 +66,17 @@ object DevboxMain {
           System.out.println(Cli.formatBlock(signature, leftMargin).mkString("\n"))
         }else {
           val skipper = Skipper.fromString(config.ignoreStrategy)
-          val agent = os.proc(remaining).spawn()
+          val agent = new java.lang.ProcessBuilder()
+              .command(remaining:_*)
+              .start()
           Util.autoclose(new Syncer(
-            agent,
+            new AgentApi {
+              def isAlive() = agent.isAlive
+              def destroy() = agent.destroy()
+              def stderr = new DataInputStream(agent.getErrorStream)
+              def stdout = new DataInputStream(agent.getInputStream)
+              def stdin = new DataOutputStream(agent.getOutputStream)
+            },
             for(s <- config.repo)
             yield s.split(':') match{
               case Array(src) => (os.Path(src, os.pwd), Seq(os.Path(src, os.pwd).last))

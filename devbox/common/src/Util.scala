@@ -32,7 +32,7 @@ object Util {
           val lastChunk = new collection.mutable.StringBuilder()
           val output = new collection.mutable.StringBuilder()
           if (!isRoot) {
-            if (!containsSlash) output.append(".*")
+            if (!containsSlash) output.append("(.*/|^)")
             else output.append(
               com.google.re2j.Pattern.quote((p / os.up).relativeTo(base).toString())
             )
@@ -55,7 +55,7 @@ object Util {
           output.append(com.google.re2j.Pattern.quote(lastChunk.toString()))
           lastChunk.clear()
 
-          output.append("($|/).*")
+          output.append("($|/.*)")
 
           output.toString()
         }

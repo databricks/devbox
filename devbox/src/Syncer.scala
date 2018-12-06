@@ -217,22 +217,14 @@ object Syncer{
                        eventQueue: BlockingQueue[Array[String]],
                        logger: Logger,
                        skip: os.Path => Boolean) = {
-    val initialLocal = os.walk.stream(
-      src,
-      p => skip(p) || !os.isDir(p, followLinks = false),
-      includeTarget = true
-    )
-
-    val total = initialLocal.count()
     eventQueue.add(
-      initialLocal
-        .zipWithIndex
-        .map { case (p, i) =>
-          lazy val rel = p.relativeTo(src).toString
-          logger.progress(s"Scanning local file [$i/$total]", rel)
-          logger("SYNC SCAN LOCAL", rel)
-          p.toString
-        }
+      os.walk
+        .stream(
+          src,
+          p => skip(p) || !os.isDir(p, followLinks = false),
+          includeTarget = true
+        )
+        .map(_.toString())
         .toArray
     )
   }
