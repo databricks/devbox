@@ -69,7 +69,7 @@ object DevboxTests extends TestSuite{
       src, dest, skipper, debounceMillis, () => workCount.release(),
       logger, ignoreStrategy, restartSyncer,
       exitOnError = true,
-      signatureMapping = identity
+      signatureMapping = (_, sig) => sig
     )
     var syncer = createSyncer()
     try{
@@ -175,7 +175,7 @@ object DevboxTests extends TestSuite{
                         ignoreStrategy: String,
                         inMemoryAgent: Boolean,
                         exitOnError: Boolean,
-                        signatureMapping: Signature => Signature) = {
+                        signatureMapping: (os.Path, Signature) => Signature) = {
     new Syncer(
       if (inMemoryAgent) new InMemoryAgent(dest, skipper, exitOnError = exitOnError)
       else os.proc(

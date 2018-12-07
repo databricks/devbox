@@ -22,7 +22,7 @@ class Syncer(agent: AgentApi,
              debounceTime: Int,
              onComplete: () => Unit,
              logger: Logger,
-             signatureTransformer: Signature => Signature) extends AutoCloseable{
+             signatureTransformer: (os.RelPath, Signature) => Signature) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(
@@ -120,7 +120,7 @@ object Syncer{
                    debounceTime: Int,
                    continue: () => Boolean,
                    logger: Logger,
-                   signatureTransformer: Signature => Signature) = {
+                   signatureTransformer: (os.RelPath, Signature) => Signature) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val skipArr = for ((src, dest) <- mapping.toArray) yield skipper.initialize(src)
@@ -214,12 +214,14 @@ object Syncer{
                           src: os.Path,
                           buffer: Array[Byte],
                           logger: Logger,
-                          signatureTransformer: Signature => Signature,
+                          signatureTransformer: (os.RelPath, Signature) => Signature,
                           setSkip: (os.Path => Boolean) => Unit) = {
     val allModifiedSkipFiles = for{
       p <- srcEventDirs
       pathToCheck <- skipper.checkReset(p)
-      newSig = if (os.exists(pathToCheck)) Signature.compute(pathToCheck, buffer).map(signatureTransformer) else None
+      newSig =
+        if (!os.exists(pathToCheck)) None
+        else Signature.compute(pathToCheck, buffer).map(signatureTransformer(pathToCheck.relativeTo(src), _))
       oldSig = vfs.resolve(pathToCheck.relativeTo(src)).map(_.value)
       if newSig != oldSig
     } yield (pathToCheck, oldSig, newSig)
@@ -296,7 +298,7 @@ object Syncer{
                       client: RpcClient,
                       buffer: Array[Byte],
                       srcEventDirs: mutable.Buffer[Path],
-                      signatureTransformer: Signature => Signature): Either[ExitCode, (Int, Seq[os.Path])] = {
+                      signatureTransformer: (os.RelPath, Signature) => Signature): Either[ExitCode, (Int, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
         computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
@@ -549,7 +551,7 @@ object Syncer{
                         skip: os.Path => Boolean,
                         src: os.Path,
                         logger: Logger,
-                        signatureTransformer: Signature => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
+                        signatureTransformer: (os.RelPath, Signature) => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
     interestingBases.zipWithIndex.flatMap { case (p, i) =>
         logger.progress(
           s"Scanning local folder [$i/${interestingBases.length}]",
@@ -579,7 +581,8 @@ object Syncer{
         for(k <- (listedNames ++ virtual.keys).toArray.sorted)
         yield (
           p / k,
-          if (!listedNames(k)) None else Signature.compute(p / k, buffer).map(signatureTransformer),
+          if (!listedNames(k)) None
+          else Signature.compute(p / k, buffer).map(signatureTransformer((p / k).relativeTo(src), _)),
           virtual.get(k).map(_.value)
         )
       }

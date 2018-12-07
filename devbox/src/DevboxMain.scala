@@ -13,7 +13,7 @@ object DevboxMain {
                     toast: Boolean = false,
                     logFile: Option[os.Path] = None,
                     ignoreStrategy: String = "",
-                    readOnlyRemote: Boolean = false)
+                    readOnlyRemote: String = null)
 
   def main(args: Array[String]): Unit = {
 
@@ -48,10 +48,10 @@ object DevboxMain {
         "",
         (c, v) => c.copy(ignoreStrategy = v)
       ),
-      Arg[Config, Unit](
+      Arg[Config, String](
         "readonly-remote", None,
         "",
-        (c, v) => c.copy(readOnlyRemote = true)
+        (c, v) => c.copy(readOnlyRemote = v)
       )
     )
 
@@ -86,18 +86,26 @@ object DevboxMain {
             config.debounceMillis,
             () => (),
             Logger.File(config.logFile.get, config.toast),
-            if (!config.readOnlyRemote) identity[Signature]
+            if (config.readOnlyRemote == null) (_, sig) => sig
             else {
-              case Signature.File(perms, blockHashes, size) =>
-                Signature.File(
-                  perms
-                    - PosixFilePermission.GROUP_WRITE
-                    - PosixFilePermission.OTHERS_WRITE
-                    - PosixFilePermission.OWNER_WRITE,
-                  blockHashes,
-                  size
-                )
-              case sig => sig
+              val (regexStr, negate) =
+                if (config.readOnlyRemote.head != '!') (config.readOnlyRemote, false)
+                else (config.readOnlyRemote.drop(1), true)
+              val regex = com.google.re2j.Pattern.compile(regexStr)
+
+              {
+                case (path, Signature.File(perms, blockHashes, size))
+                  if regex.matches(path.toString) ^ negate =>
+                  Signature.File(
+                    perms
+                      - PosixFilePermission.GROUP_WRITE
+                      - PosixFilePermission.OTHERS_WRITE
+                      - PosixFilePermission.OWNER_WRITE,
+                    blockHashes,
+                    size
+                  )
+                case (path, sig) => sig
+              }
             }
           )){syncer =>
             syncer.start()
