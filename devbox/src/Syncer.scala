@@ -139,7 +139,7 @@ object Syncer{
 
     var messagedSync = true
     val allChangedPaths = mutable.Buffer.empty[os.Path]
-    var allSyncedBytes = 0
+    var allSyncedBytes = 0L
     while (continue() && agent.isAlive()) {
       logger("SYNC LOOP")
 
@@ -298,7 +298,7 @@ object Syncer{
                       client: RpcClient,
                       buffer: Array[Byte],
                       srcEventDirs: mutable.Buffer[Path],
-                      signatureTransformer: (os.RelPath, Signature) => Signature): Either[ExitCode, (Int, Seq[os.Path])] = {
+                      signatureTransformer: (os.RelPath, Signature) => Signature): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
         computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
@@ -361,7 +361,7 @@ object Syncer{
                             dest: os.RelPath,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
     val total = signatureMapping.length
-    var byteCount = 0
+    var byteCount = 0L
     draining(client) {
       for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
         val segments = p.relativeTo(src)
