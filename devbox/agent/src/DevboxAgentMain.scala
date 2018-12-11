@@ -80,7 +80,7 @@ object DevboxAgentMain {
         client.writeMsg(fileStream.count())
         for {
           (p, attrs) <- fileStream
-          sig <- Signature.compute0(p, buffer, attrs.fileType)
+          sig <- Signature.compute(p, buffer, attrs.fileType)
         } {
           client.writeMsg(Some((p.relativeTo(scanRoot), sig: Signature)))
         }

@@ -17,12 +17,7 @@ object Signature{
   /**
     * Computes the signature of a given path. Assumes the file exists.
     */
-  def compute(p: os.Path, buffer: Array[Byte]): Option[Signature] = {
-    val stat = os.stat(p, followLinks = false)
-    compute0(p, buffer, stat.fileType)
-  }
-
-  def compute0(p: Path, buffer: Array[Byte], fileType: os.FileType) = {
+  def compute(p: Path, buffer: Array[Byte], fileType: os.FileType) = {
     fileType match {
       case os.FileType.Other => None
       case os.FileType.SymLink => Some(Symlink(os.readLink(p).toString))
@@ -50,9 +45,6 @@ object Signature{
 
   case class Symlink(dest: String) extends Signature
   object Symlink{ implicit val rw: ReadWriter[Symlink] = macroRW }
-
-  case class Other() extends Signature
-  object Other{ implicit val rw: ReadWriter[Other] = macroRW }
 
   implicit val rw: ReadWriter[Signature] = macroRW
 }

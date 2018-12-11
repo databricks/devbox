@@ -1,12 +1,16 @@
 package devbox
 import java.io._
 import java.nio.ByteBuffer
+import java.nio.file.{Files, LinkOption}
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent._
 
 import devbox.common._
 import os.Path
 import upickle.default
 import Util.relpathRw
+import geny.Generator
+
 import scala.annotation.tailrec
 import scala.collection.{immutable, mutable}
 
@@ -223,7 +227,7 @@ object Syncer{
       pathToCheck <- skipper.checkReset(p)
       newSig =
         if (!os.exists(pathToCheck)) None
-        else Signature.compute(pathToCheck, buffer).map(signatureTransformer(pathToCheck.relativeTo(src), _))
+        else Signature.compute(pathToCheck, buffer, os.FileType.Dir).map(signatureTransformer(pathToCheck.relativeTo(src), _))
       oldSig = vfs.resolve(pathToCheck.relativeTo(src)).map(_.value)
       if newSig != oldSig
     } yield (pathToCheck, oldSig, newSig)
@@ -551,38 +555,67 @@ object Syncer{
                         logger: Logger,
                         signatureTransformer: (os.RelPath, Signature) => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
     interestingBases.zipWithIndex.flatMap { case (p, i) =>
-        logger.progress(
-          s"Scanning local folder [$i/${interestingBases.length}]",
-          p.relativeTo(src).toString()
+      logger.progress(
+        s"Scanning local folder [$i/${interestingBases.length}]",
+        p.relativeTo(src).toString()
+      )
+      val listedGen =
+        if (!os.isDir(p, followLinks = false)) os.Generator.apply()
+        else for{
+          p <- os.list.stream(p)
+          // avoid using os.stat to avoid making two filesystem calls
+          attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
+          if !skip(p, attrs.isDirectory)
+        } yield (
+          p.last,
+          if (attrs.isRegularFile) os.FileType.File
+          else if (attrs.isDirectory) os.FileType.Dir
+          else if (attrs.isSymbolicLink) os.FileType.SymLink
+          else if (attrs.isOther) os.FileType.Other
+          else ???
         )
-        val listed =
-          if (!os.isDir(p, followLinks = false)) os.Generator.apply()
-          else os.list.stream(p).filter(!skip(_, os.isDir(p, followLinks = false))).map(_.last)
 
-        val listedNames = listed.toSet
+      val listed = listedGen.toArray
+      val listedNames = listed.map(_._1).toSet
 
-        val virtual = stateVfs.resolve(p.relativeTo(src)) match {
-          // We only care about the case where the there interesting path
-          // points to a folder within the Vfs.
-          case Some(f: Vfs.Dir[Signature]) => f.children
-          // If it points to a non-folder, or a non-existent path, we assume
-          // that previously there must have been a folder at that path that
-          // got replaced by a non-folder or deleted. In which case the
-          // enclosing folder should have it's own interestingBase
-          case Some(_) => Map.empty[String, Vfs.Node[Signature]]
-          case None => Map.empty[String, Vfs.Node[Signature]]
-        }
+      val virtual = stateVfs.resolve(p.relativeTo(src)) match {
+        // We only care about the case where the there interesting path
+        // points to a folder within the Vfs.
+        case Some(f: Vfs.Dir[Signature]) => f.children
+        // If it points to a non-folder, or a non-existent path, we assume
+        // that previously there must have been a folder at that path that
+        // got replaced by a non-folder or deleted. In which case the
+        // enclosing folder should have it's own interestingBase
+        case Some(_) => Map.empty[String, Vfs.Node[Signature]]
+        case None => Map.empty[String, Vfs.Node[Signature]]
+      }
 
-        // We de-dup the combined list of names listed from the filesystem and
-        // listed from the VFS, because they often have overlaps, and use
-        // `listedNames` to check for previously-present-but-now-deleted files
-        for(k <- (listedNames ++ virtual.keys).toArray.sorted)
-        yield (
+      val virtualWithFileType = virtual.map{ case (k, node) =>
+        (
+          k,
+          node.value match{
+            case _: Signature.File => os.FileType.File
+            case _: Signature.Dir => os.FileType.Dir
+            case _: Signature.Symlink => os.FileType.SymLink
+          }
+        )
+      }
+
+      val allKeys = listedNames ++ virtualWithFileType.keys
+      val fileTypeLookup = (virtualWithFileType ++ listed).toMap
+      // We de-dup the combined list of names listed from the filesystem and
+      // listed from the VFS, because they often have overlaps, and use
+      // `listedNames` to check for previously-present-but-now-deleted files
+      for(k <- allKeys.toArray.sorted)
+      yield {
+        val fileType = fileTypeLookup(k)
+        (
           p / k,
           if (!listedNames(k)) None
-          else Signature.compute(p / k, buffer).map(signatureTransformer((p / k).relativeTo(src), _)),
+          else Signature.compute(p / k, buffer, fileType).map(signatureTransformer((p / k).relativeTo(src), _)),
           virtual.get(k).map(_.value)
         )
       }
+    }
   }
 }

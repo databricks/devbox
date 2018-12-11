@@ -209,8 +209,8 @@ object DevboxTests extends TestSuite{
     val buffer = new Array[Byte](Util.blockSize)
 
     val differentSigs = srcPaths.zip(destPaths).flatMap{ case ((s, sAttrs), (d, dAttrs)) =>
-      val srcSig = Signature.compute0(s, buffer, sAttrs.fileType)
-      val destSig = Signature.compute0(d, buffer, dAttrs.fileType)
+      val srcSig = Signature.compute(s, buffer, sAttrs.fileType)
+      val destSig = Signature.compute(d, buffer, dAttrs.fileType)
 
       if(srcSig == destSig) None
       else Some((s.relativeTo(src), srcSig, destSig))
