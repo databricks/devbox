@@ -195,11 +195,11 @@ object DevboxTests extends TestSuite{
 
   def validate(src: os.Path, dest: os.Path, skipper: Skipper) = {
     println("Validating...")
-    val srcPaths = os.walk(src, p => skipper.initialize(src)(p, os.isDir(p, followLinks = false)))
-    val destPaths = os.walk(dest, p => skipper.initialize(dest)(p, os.isDir(p, followLinks = false)))
+    val srcPaths = os.walk.attrs(src, (p, attrs) => skipper.initialize(src)(p, attrs.isDir))
+    val destPaths = os.walk.attrs(dest, (p, attrs) => skipper.initialize(dest)(p, attrs.isDir))
 
-    val srcRelPaths = srcPaths.map(_.relativeTo(src)).toSet
-    val destRelPaths = destPaths.map(_.relativeTo(dest)).toSet
+    val srcRelPaths = srcPaths.map(_._1.relativeTo(src)).toSet
+    val destRelPaths = destPaths.map(_._1.relativeTo(dest)).toSet
 
     if (srcRelPaths != destRelPaths){
       throw new Exception(
@@ -208,9 +208,9 @@ object DevboxTests extends TestSuite{
     }
     val buffer = new Array[Byte](Util.blockSize)
 
-    val differentSigs = srcPaths.zip(destPaths).flatMap{ case (s, d) =>
-      val srcSig = if (os.exists(s, followLinks = false)) Signature.compute(s, buffer) else None
-      val destSig = if (os.exists(d, followLinks = false)) Signature.compute(d, buffer) else None
+    val differentSigs = srcPaths.zip(destPaths).flatMap{ case ((s, sAttrs), (d, dAttrs)) =>
+      val srcSig = Signature.compute0(s, buffer, sAttrs.fileType)
+      val destSig = Signature.compute0(d, buffer, dAttrs.fileType)
 
       if(srcSig == destSig) None
       else Some((s.relativeTo(src), srcSig, destSig))

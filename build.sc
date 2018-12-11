@@ -8,7 +8,7 @@ object devbox extends ScalaModule{
   object common extends ScalaModule{
     def scalaVersion = "2.12.7"
     def ivyDeps = Agg(
-      ivy"com.lihaoyi::os-lib:0.2.5",
+      ivy"com.lihaoyi::os-lib:0.2.6",
       ivy"com.lihaoyi::upickle:0.7.1",
       ivy"com.google.re2j:re2j:1.2",
       ivy"com.lihaoyi::pprint:0.5.3",

@@ -267,15 +267,12 @@ object Syncer{
                        skip: (os.Path, Boolean) => Boolean) = {
     eventQueue.add(
       os.walk
-        .stream(
+        .stream.attrs(
           src,
-          p => {
-            val isDir = os.isDir(p, followLinks = false)
-            skip(p, isDir) || !isDir
-          },
+          (p, attrs) => skip(p, attrs.isDir) || !attrs.isDir,
           includeTarget = true
         )
-        .map(_.toString())
+        .map(_._1.toString())
         .toArray
     )
   }

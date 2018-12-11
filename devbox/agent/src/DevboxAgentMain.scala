@@ -73,19 +73,16 @@ object DevboxAgentMain {
         val skip = skipper.initialize(scanRoot)
         if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
 
-        val fileStream = os.walk.stream(
+        val fileStream = os.walk.stream.attrs(
           scanRoot,
-          p => {
-            val isDir = os.isDir(p, followLinks = false)
-            skip(p, isDir) && !isDir
-          }
+          (p, attrs) => skip(p, attrs.isDir) && !attrs.isDir
         )
         client.writeMsg(fileStream.count())
         for {
-          p <- fileStream
-          sig <- Signature.compute(p, buffer)
+          (p, attrs) <- fileStream
+          sig <- Signature.compute0(p, buffer, attrs.fileType)
         } {
-          client.writeMsg(Some((p.relativeTo(scanRoot), sig)))
+          client.writeMsg(Some((p.relativeTo(scanRoot), sig: Signature)))
         }
 
         client.writeMsg(None)

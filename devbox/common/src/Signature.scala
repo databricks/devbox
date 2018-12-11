@@ -2,6 +2,9 @@ package devbox.common
 import Util.permsetRw
 import upickle.default.{ReadWriter, macroRW}
 import java.security.MessageDigest
+
+import os.{Path, StatInfo}
+
 import scala.collection.mutable
 
 /**
@@ -16,7 +19,11 @@ object Signature{
     */
   def compute(p: os.Path, buffer: Array[Byte]): Option[Signature] = {
     val stat = os.stat(p, followLinks = false)
-    stat.fileType match{
+    compute0(p, buffer, stat.fileType)
+  }
+
+  def compute0(p: Path, buffer: Array[Byte], fileType: os.FileType) = {
+    fileType match {
       case os.FileType.Other => None
       case os.FileType.SymLink => Some(Symlink(os.readLink(p).toString))
       case os.FileType.Dir => Some(Dir(os.perms(p).toInt()))
@@ -24,7 +31,7 @@ object Signature{
         val digest = MessageDigest.getInstance("MD5")
         val chunks = mutable.ArrayBuffer.empty[Bytes]
         var size = 0L
-        for((buffer, n) <- os.read.chunks(p, buffer)){
+        for ((buffer, n) <- os.read.chunks(p, buffer)) {
           size += n
           digest.reset()
           digest.update(buffer, 0, n)
