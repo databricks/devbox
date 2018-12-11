@@ -67,6 +67,11 @@ object GitIgnoreTests extends TestSuite {
         checkIgnore("world/cow", "hello", "world/cow") ==> false
         checkIgnore("world/cow", "hello", "hello/nested/world/cow") ==> false
       }
+      'rooted - {
+        checkIgnore("world/", "hello", "hello/world/cow") ==> true
+        checkIgnore("world/", "hello", "world/cow") ==> false
+        checkIgnore("world/", "hello", "hello/nested/world/cow") ==> false
+      }
       'noslash - {
         checkIgnore("world", "hello", "hello/world/cow") ==> true
         checkIgnore("world", "hello", "world/cow") ==> true

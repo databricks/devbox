@@ -38,7 +38,7 @@ object Util {
   def gitIgnoreLineToRegex(line0: String, enclosingPrefix: String) = {
     val isRoot = line0(0) == '/'
     val line = line0.stripPrefix("/")
-    val containsSlash = line.stripSuffix("/").contains('/')
+    val containsSlash = line.contains('/')
     val lastChunk = new collection.mutable.StringBuilder()
     val output = new collection.mutable.StringBuilder()
     if (!isRoot) {
