@@ -576,7 +576,6 @@ object Syncer{
         )
 
       val listed = listedGen.toArray
-      val listedNames = listed.map(_._1).toSet
 
       val virtual = stateVfs.resolve(p.relativeTo(src)) match {
         // We only care about the case where the there interesting path
@@ -590,29 +589,21 @@ object Syncer{
         case None => Map.empty[String, Vfs.Node[Signature]]
       }
 
-      val virtualWithFileType = virtual.map{ case (k, node) =>
-        (
-          k,
-          node.value match{
-            case _: Signature.File => os.FileType.File
-            case _: Signature.Dir => os.FileType.Dir
-            case _: Signature.Symlink => os.FileType.SymLink
-          }
-        )
-      }
+      val virtualWithFileType = virtual.keys
 
-      val allKeys = listedNames ++ virtualWithFileType.keys
-      val fileTypeLookup = (virtualWithFileType ++ listed).toMap
+      val allKeys = listed.map(_._1) ++ virtualWithFileType
+      val listedFiletypeLookup = listed.toMap
       // We de-dup the combined list of names listed from the filesystem and
       // listed from the VFS, because they often have overlaps, and use
       // `listedNames` to check for previously-present-but-now-deleted files
-      for(k <- allKeys.toArray.sorted)
+      for(k <- allKeys.distinct.sorted)
       yield {
-        val fileType = fileTypeLookup(k)
         (
           p / k,
-          if (!listedNames(k)) None
-          else Signature.compute(p / k, buffer, fileType).map(signatureTransformer((p / k).relativeTo(src), _)),
+          for{
+            fileType <- listedFiletypeLookup.get(k)
+            signature <- Signature.compute(p / k, buffer, fileType)
+          } yield signatureTransformer((p / k).relativeTo(src), signature),
           virtual.get(k).map(_.value)
         )
       }
