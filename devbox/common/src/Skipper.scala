@@ -1,5 +1,6 @@
 package devbox.common
 
+import devbox.common
 import devbox.common.Util.gitIgnoreToRegex
 import devbox.common.Vfs.Node
 import os.Path
@@ -35,7 +36,16 @@ object Skipper{
 
   object GitIgnore extends  Skipper {
     def initialize(base: os.Path): (os.Path, Boolean) => Boolean = {
-      val listed = os.proc("git", "ls-files").call(cwd = base).out.lines.toSet
+      val listed = new Vfs[Unit](())
+      for(line <- os.proc("git", "ls-files").call(cwd = base).out.lines){
+        val rel = os.RelPath(line)
+        for(prefix <- rel.segments.dropRight(1).inits.toList.reverseIterator.drop(1)){
+          val Some((k, d)) = listed.resolveParent(prefix)
+          if (!d.children.contains(k)) d.children(k) = new common.Vfs.Dir[Unit]((), mutable.LinkedHashMap.empty[String, Node[Unit]])
+        }
+        val Some((k, d)) = listed.resolveParent(rel)
+        d.children(k) = new common.Vfs.File(())
+      }
 
       type NodeType = Option[com.google.re2j.Pattern]
       def resolve(p: os.Path) = {
@@ -62,7 +72,7 @@ object Skipper{
       { (path, isDir) =>
         val pathString = path.relativeTo(base).toString
         assert(path.startsWith(base), path + " " + base)
-        if (listed(pathString)) false
+        if (listed.resolve(os.RelPath(pathString)).isDefined) false
         else {
           var current = gitIgnoreVfs.root
           var parents = current.value.toList
