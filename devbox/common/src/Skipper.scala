@@ -7,7 +7,7 @@ import os.Path
 import scala.collection.mutable
 
 trait Skipper {
-  def initialize(p: os.Path): (os.Path => Boolean)
+  def initialize(p: os.Path): (os.Path, Boolean) => Boolean
   def checkReset(p: os.Path): Option[os.Path]
 }
 
@@ -19,13 +19,13 @@ object Skipper{
   }
 
   object Null extends Skipper {
-    def initialize(p: Path): Path => Boolean = _ => false
+    def initialize(p: Path): (Path, Boolean) => Boolean = (_, _) => false
 
     def checkReset(p: Path) = None
   }
 
   object DotGit extends Skipper {
-    def initialize(base: Path): Path => Boolean = { path =>
+    def initialize(base: Path): (Path, Boolean) => Boolean = { (path, isDir) =>
       assert(path.startsWith(base), path + " " + base)
       path.relativeTo(base).segments.startsWith(Seq(".git"))
     }
@@ -34,7 +34,7 @@ object Skipper{
   }
 
   object GitIgnore extends  Skipper {
-    def initialize(base: os.Path): os.Path => Boolean = {
+    def initialize(base: os.Path): (os.Path, Boolean) => Boolean = {
       val listed = os.proc("git", "ls-files").call(cwd = base).out.lines.toSet
 
       type NodeType = Option[com.google.re2j.Pattern]
@@ -59,7 +59,7 @@ object Skipper{
         }
       }
 
-      { path =>
+      { (path, isDir) =>
         val pathString = path.relativeTo(base).toString
         assert(path.startsWith(base), path + " " + base)
         if (listed(pathString)) false
@@ -75,7 +75,7 @@ object Skipper{
               continue = false
             }
           }
-          parents.exists(_.matches(pathString + (if (os.isDir(path)) "/" else "")))
+          parents.exists(_.matches(pathString + (if (isDir) "/" else "")))
         }
       }
     }

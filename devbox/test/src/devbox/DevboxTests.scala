@@ -175,7 +175,7 @@ object DevboxTests extends TestSuite{
                         ignoreStrategy: String,
                         inMemoryAgent: Boolean,
                         exitOnError: Boolean,
-                        signatureMapping: (os.Path, Signature) => Signature) = {
+                        signatureMapping: (os.RelPath, Signature) => Signature) = {
     new Syncer(
       if (inMemoryAgent) new InMemoryAgent(dest, skipper, exitOnError = exitOnError)
       else os.proc(
@@ -195,8 +195,8 @@ object DevboxTests extends TestSuite{
 
   def validate(src: os.Path, dest: os.Path, skipper: Skipper) = {
     println("Validating...")
-    val srcPaths = os.walk(src, skipper.initialize(src))
-    val destPaths = os.walk(dest, skipper.initialize(dest))
+    val srcPaths = os.walk(src, p => skipper.initialize(src)(p, os.isDir(p, followLinks = false)))
+    val destPaths = os.walk(dest, p => skipper.initialize(dest)(p, os.isDir(p, followLinks = false)))
 
     val srcRelPaths = srcPaths.map(_.relativeTo(src)).toSet
     val destRelPaths = destPaths.map(_.relativeTo(dest)).toSet

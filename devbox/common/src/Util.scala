@@ -30,41 +30,43 @@ object Util {
     com.google.re2j.Pattern.compile(
       os.read.lines.stream(p)
         .filter(l => l.nonEmpty && l(0) != '#')
-        .map { line0 =>
-          val isRoot = line0(0) == '/'
-          val line = line0.stripPrefix("/")
-          val containsSlash = line.stripSuffix("/").contains('/')
-          val lastChunk = new collection.mutable.StringBuilder()
-          val output = new collection.mutable.StringBuilder()
-          if (!isRoot) {
-            if (!containsSlash) output.append("(.*/|^)")
-            else output.append(
-              com.google.re2j.Pattern.quote((p / os.up).relativeTo(base).toString())
-            )
-          }
-
-          for (c <- line) {
-            c match {
-              case '*' =>
-                output.append(com.google.re2j.Pattern.quote(lastChunk.toString()))
-                lastChunk.clear()
-                output.append(".*")
-              case '?' =>
-                output.append(com.google.re2j.Pattern.quote(lastChunk.toString()))
-                lastChunk.clear()
-                output.append(".")
-              case c =>
-                lastChunk.append(c)
-            }
-          }
-          output.append(com.google.re2j.Pattern.quote(lastChunk.toString()))
-          lastChunk.clear()
-
-          output.append("($|/.*)")
-
-          output.toString()
-        }
+        .map(gitIgnoreLineToRegex(_, (p / os.up).relativeTo(base).toString()))
         .mkString("|")
     )
+  }
+
+  def gitIgnoreLineToRegex(line0: String, enclosingPrefix: String) = {
+    val isRoot = line0(0) == '/'
+    val line = line0.stripPrefix("/")
+    val containsSlash = line.stripSuffix("/").contains('/')
+    val lastChunk = new collection.mutable.StringBuilder()
+    val output = new collection.mutable.StringBuilder()
+    if (!isRoot) {
+      if (!containsSlash) output.append("(.*/|^)")
+      else output.append(
+        com.google.re2j.Pattern.quote(enclosingPrefix match{case "" => "" case s => s + "/"})
+      )
+    }
+
+    for (c <- line) {
+      c match {
+        case '*' =>
+          output.append(com.google.re2j.Pattern.quote(lastChunk.toString()))
+          lastChunk.clear()
+          output.append(".*")
+        case '?' =>
+          output.append(com.google.re2j.Pattern.quote(lastChunk.toString()))
+          lastChunk.clear()
+          output.append(".")
+        case c =>
+          lastChunk.append(c)
+      }
+    }
+    output.append(com.google.re2j.Pattern.quote(lastChunk.toString()))
+    if (lastChunk.nonEmpty && lastChunk.last == '/') output.append("($|.*)")
+    else output.append("($|/.*)")
+    lastChunk.clear()
+
+    output.toString()
   }
 }

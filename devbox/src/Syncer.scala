@@ -151,7 +151,9 @@ object Syncer{
         logger("SYNC EVENTS", allSrcEventDirs)
 
         for (((src, dest), i) <- mapping.zipWithIndex) {
-          val srcEventDirs = allSrcEventDirs.filter(p => p.startsWith(src) && !skipArr(i)(p))
+          val srcEventDirs = allSrcEventDirs.filter(p =>
+            p.startsWith(src) && !skipArr(i)(p, true)
+          )
 
           logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
 
@@ -215,7 +217,7 @@ object Syncer{
                           buffer: Array[Byte],
                           logger: Logger,
                           signatureTransformer: (os.RelPath, Signature) => Signature,
-                          setSkip: (os.Path => Boolean) => Unit) = {
+                          setSkip: ((os.Path, Boolean) => Boolean) => Unit) = {
     val allModifiedSkipFiles = for{
       p <- srcEventDirs
       pathToCheck <- skipper.checkReset(p)
@@ -262,12 +264,15 @@ object Syncer{
   def initialLocalScan(src: os.Path,
                        eventQueue: BlockingQueue[Array[String]],
                        logger: Logger,
-                       skip: os.Path => Boolean) = {
+                       skip: (os.Path, Boolean) => Boolean) = {
     eventQueue.add(
       os.walk
         .stream(
           src,
-          p => skip(p) || !os.isDir(p, followLinks = false),
+          p => {
+            val isDir = os.isDir(p, followLinks = false)
+            skip(p, isDir) || !isDir
+          },
           includeTarget = true
         )
         .map(_.toString())
@@ -292,7 +297,7 @@ object Syncer{
 
   def synchronizeRepo(logger: Logger,
                       vfs: Vfs[Signature],
-                      skip: os.Path => Boolean,
+                      skip: (os.Path, Boolean) => Boolean,
                       src: os.Path,
                       dest: os.RelPath,
                       client: RpcClient,
@@ -308,11 +313,7 @@ object Syncer{
 
       sortedSignatures = sortSignatureChanges(signatureMapping)
 
-      filteredSignatures0 = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
-
-      _ <- if (filteredSignatures0.nonEmpty) Right(()) else Left(NoOp)
-
-      filteredSignatures = filteredSignatures0.filter{ t => !skip(t._1) }
+      filteredSignatures = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
 
       _ <- if (filteredSignatures.nonEmpty) Right(()) else Left(NoOp)
 
@@ -548,7 +549,7 @@ object Syncer{
   def computeSignatures(interestingBases: Seq[Path],
                         buffer: Array[Byte],
                         stateVfs: Vfs[Signature],
-                        skip: os.Path => Boolean,
+                        skip: (os.Path, Boolean) => Boolean,
                         src: os.Path,
                         logger: Logger,
                         signatureTransformer: (os.RelPath, Signature) => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
@@ -559,7 +560,7 @@ object Syncer{
         )
         val listed =
           if (!os.isDir(p, followLinks = false)) os.Generator.apply()
-          else os.list.stream(p).filter(!skip(_)).map(_.last)
+          else os.list.stream(p).filter(!skip(_, os.isDir(p, followLinks = false))).map(_.last)
 
         val listedNames = listed.toSet
 

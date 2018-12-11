@@ -98,9 +98,9 @@ object DevboxTestMain {
               config.ignoreStrategy,
               inMemoryAgent = config.inMemoryAgent,
               exitOnError = false,
-              if (!config.readOnlyRemote) identity[Signature]
+              if (!config.readOnlyRemote) {(p, sig) => sig}
               else {
-                case Signature.File(perms, blockHashes, size) =>
+                case (p, Signature.File(perms, blockHashes, size)) =>
                   Signature.File(
                     perms
                       - PosixFilePermission.GROUP_WRITE
@@ -109,7 +109,7 @@ object DevboxTestMain {
                     blockHashes,
                     size
                   )
-                case sig => sig
+                case (p, sig) => sig
               }
             )
             try {

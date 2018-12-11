@@ -1,7 +1,7 @@
 package devbox
 import utest._
 
-object UnitTests extends TestSuite {
+object PipeTests extends TestSuite {
   val tests = Tests{
     def check(totalSize: Int,
               bufferSize: Int,
