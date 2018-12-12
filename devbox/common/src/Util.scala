@@ -38,14 +38,12 @@ object Util {
   def gitIgnoreLineToRegex(line0: String, enclosingPrefix: String) = {
     val isRoot = line0(0) == '/'
     val line = line0.stripPrefix("/")
-    val containsSlash = line.contains('/')
+    val containsSlash = line.stripSuffix("/").contains('/')
     val lastChunk = new collection.mutable.StringBuilder()
     val output = new collection.mutable.StringBuilder()
     if (!isRoot) {
-      if (!containsSlash) output.append("(.*/|^)")
-      else output.append(
-        com.google.re2j.Pattern.quote(enclosingPrefix match{case "" => "" case s => s + "/"})
-      )
+      if (enclosingPrefix != "") output.append(com.google.re2j.Pattern.quote(enclosingPrefix + "/"))
+      if (!containsSlash) output.append("(.*/)?")
     }
 
     for (c <- line) {

@@ -22,6 +22,7 @@ object GitIgnoreTests extends TestSuite {
     'folder - {
       checkIgnore("hello/", "", "hello") ==> false
       checkIgnore("hello/", "", "lol/hello") ==> false
+      checkIgnore("hello/", "", "lol/hello/") ==> true
       checkIgnore("hello/", "", "hello/lol") ==> true
       checkIgnore("hello/", "", "ello") ==> false
       checkIgnore("hello/", "", "hell") ==> false
@@ -66,15 +67,17 @@ object GitIgnoreTests extends TestSuite {
         checkIgnore("world/cow", "hello", "hello/world/cow") ==> true
         checkIgnore("world/cow", "hello", "world/cow") ==> false
         checkIgnore("world/cow", "hello", "hello/nested/world/cow") ==> false
+        checkIgnore("world/cow", "", "hello/nested/world/cow") ==> false
+        checkIgnore("world/cow", "", "world/cow/hello/nested") ==> true
       }
       'rooted - {
         checkIgnore("world/", "hello", "hello/world/cow") ==> true
         checkIgnore("world/", "hello", "world/cow") ==> false
-        checkIgnore("world/", "hello", "hello/nested/world/cow") ==> false
+        checkIgnore("world/", "hello", "hello/nested/world/cow") ==> true
       }
       'noslash - {
         checkIgnore("world", "hello", "hello/world/cow") ==> true
-        checkIgnore("world", "hello", "world/cow") ==> true
+        checkIgnore("world", "hello", "world/cow") ==> false
         checkIgnore("world", "hello", "hello/nested/world/cow") ==> true
       }
     }
