@@ -437,9 +437,12 @@ object Syncer{
       "DevboxDrainerThread"
     )
     drainer.start()
-    val res = t
-    running = false
-    drainer.join()
+    val res =
+      try t
+      finally{
+        running = false
+        drainer.join()
+      }
 
     res
   }
