@@ -569,16 +569,7 @@ object Syncer{
                         logger: Logger,
                         signatureTransformer: (os.RelPath, Signature) => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
 
-    interestingBases
-      .flatMap{ p =>
-        val oldIsDir = stateVfs.resolve(p.relativeTo(src)).exists(_.isInstanceOf[Signature.Dir])
-        val newIsDir = os.isDir(p, followLinks = false)
-        if (!oldIsDir && newIsDir) os.walk(p, includeTarget = true)
-        else Seq(p)
-      }
-      .distinct
-      .zipWithIndex
-      .flatMap { case (p, i) =>
+    interestingBases.zipWithIndex.flatMap { case (p, i) =>
       logger.progress(
         s"Scanning local folder [$i/${interestingBases.length}]",
         p.relativeTo(src).toString()

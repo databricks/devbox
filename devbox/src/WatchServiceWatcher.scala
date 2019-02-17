@@ -38,7 +38,7 @@ class WatchServiceWatcher(root: os.Path,
     }
   }catch {case e: IOException => println("IO error when registering watches")}
 
-  def watchPath(p: os.Path) = {
+  def watchPath(p: os.Path): Unit = {
     if (!currentlyWatchedPaths.contains(p) && os.isDir(p)) {
       try{
         currentlyWatchedPaths.put(
@@ -49,6 +49,9 @@ class WatchServiceWatcher(root: os.Path,
             SensitivityWatchEventModifier.HIGH
           )
         )
+        for(sub <- os.list.stream(p)){
+          watchPath(sub)
+        }
       } catch{case e: java.nio.file.NotDirectoryException =>
         // do nothing
       }
@@ -63,6 +66,7 @@ class WatchServiceWatcher(root: os.Path,
 
     for(e <- events if e.kind() != ENTRY_DELETE){
       val c = os.Path(e.context().asInstanceOf[java.nio.file.Path], p)
+
       bufferedEvents.append(c)
       logger("ProcessWatchKey C", c)
     }
