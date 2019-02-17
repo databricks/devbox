@@ -29,12 +29,19 @@ class Syncer(agent: AgentApi,
              signatureTransformer: (os.RelPath, Signature) => Signature) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
-  private[this] val watcher = new FSEventsWatcher(
-    mapping.map(_._1),
+
+  private[this] val watcher = new WatchServiceWatcher(
+    mapping(0)._1,
     eventQueue.add,
-    logger,
+    skipper.initialize(mapping(0)._1),
     0.05
   )
+//  private[this] val watcher = new FSEventsWatcher(
+//    mapping.map(_._1),
+//    eventQueue.add,
+//    logger,
+//    0.05
+//  )
 
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
@@ -94,7 +101,7 @@ class Syncer(agent: AgentApi,
 
   def close() = {
     running = false
-    watcher.stop()
+    watcher.close()
     watcherThread.join()
     syncThread.interrupt()
     syncThread.join()
