@@ -13,23 +13,23 @@ import scala.collection.mutable
 final class Vfs[T](rootMetadata: T) {
   val root = Vfs.Dir[T](rootMetadata, mutable.LinkedHashMap.empty)
 
-  def walk(preOrder: Boolean = true) = new geny.Generator[(List[String], Vfs.Node[T])]{
-    def generate(handleItem: ((List[String], Vfs.Node[T])) => Generator.Action): Generator.Action = {
+  def walk(preOrder: Boolean = true) = new geny.Generator[(List[String], Vfs.Node[T], Option[Vfs.Dir[T]])]{
+    def generate(handleItem: ((List[String], Vfs.Node[T], Option[Vfs.Dir[T]])) => Generator.Action): Generator.Action = {
       var currentAction: Generator.Action = Generator.Continue
-      def rec(reversePath: List[String], current: Vfs.Node[T]): Unit = current match{
-        case Vfs.File(value) => currentAction = handleItem((reversePath, current))
-        case Vfs.Dir(value, children) =>
+      def rec(reversePath: List[String], current: Vfs.Node[T], parent: Option[Vfs.Dir[T]]): Unit = current match{
+        case Vfs.File(value) => currentAction = handleItem((reversePath, current, parent))
+        case dir @ Vfs.Dir(value, children) =>
           if (preOrder){
-            if (preOrder) currentAction = handleItem((reversePath, current))
+            if (preOrder) currentAction = handleItem((reversePath, current, parent))
 
             for((k, v) <- children if currentAction == Generator.Continue) {
-              rec(k :: reversePath, v)
+              rec(k :: reversePath, v, Some(dir))
             }
 
-            if (!preOrder) currentAction = handleItem((reversePath, current))
+            if (!preOrder) currentAction = handleItem((reversePath, current, parent))
           }
       }
-      rec(Nil, root)
+      rec(Nil, root, None)
       currentAction
     }
   }
@@ -52,8 +52,9 @@ final class Vfs[T](rootMetadata: T) {
 }
 
 object Vfs{
-  sealed trait Node[+T]{
+  sealed trait Node[T]{
     def value: T
+    def value_=(v: T): Unit
   }
   case class File[T](var value: T) extends Node[T]
   case class Dir[T](var value: T,
