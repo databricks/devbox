@@ -39,9 +39,9 @@ class WatchServiceWatcher(root: os.Path,
   }catch {case e: IOException => println("IO error when registering watches")}
 
   def watchPath(p: os.Path): Unit = {
+    bufferedEvents.append(p)
     if (!currentlyWatchedPaths.contains(p) && os.isDir(p, followLinks = false)) {
       try{
-        bufferedEvents.append(p)
         currentlyWatchedPaths.put(
           p,
           p.toNIO.register(
