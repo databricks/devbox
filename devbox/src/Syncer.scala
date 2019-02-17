@@ -30,19 +30,19 @@ class Syncer(agent: AgentApi,
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
 
-  private[this] val watcher = new WatchServiceWatcher(
-    mapping(0)._1,
-    eventQueue.add,
-    skipper.initialize(mapping(0)._1),
-    logger,
-    0.05
-  )
-//  private[this] val watcher = new FSEventsWatcher(
-//    mapping.map(_._1),
+//  private[this] val watcher = new WatchServiceWatcher(
+//    mapping(0)._1,
 //    eventQueue.add,
+//    skipper.initialize(mapping(0)._1),
 //    logger,
 //    0.05
 //  )
+  private[this] val watcher = new FSEventsWatcher(
+    mapping.map(_._1),
+    eventQueue.add,
+    logger,
+    0.05
+  )
 
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
@@ -568,7 +568,17 @@ object Syncer{
                         src: os.Path,
                         logger: Logger,
                         signatureTransformer: (os.RelPath, Signature) => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
-    interestingBases.zipWithIndex.flatMap { case (p, i) =>
+
+    interestingBases
+      .flatMap{ p =>
+        val oldIsDir = stateVfs.resolve(p.relativeTo(src)).exists(_.isInstanceOf[Signature.Dir])
+        val newIsDir = os.isDir(p, followLinks = false)
+        if (!oldIsDir && newIsDir) os.walk(p, includeTarget = true)
+        else Seq(p)
+      }
+      .distinct
+      .zipWithIndex
+      .flatMap { case (p, i) =>
       logger.progress(
         s"Scanning local folder [$i/${interestingBases.length}]",
         p.relativeTo(src).toString()
