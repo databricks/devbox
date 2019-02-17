@@ -8,6 +8,7 @@ import java.nio.file.StandardWatchEventKinds.{ENTRY_CREATE, ENTRY_DELETE, ENTRY_
 import java.util.concurrent.TimeUnit
 
 import com.sun.nio.file.SensitivityWatchEventModifier
+import devbox.common.Logger
 
 import scala.collection.mutable
 import collection.JavaConverters._
@@ -15,6 +16,7 @@ import collection.JavaConverters._
 class WatchServiceWatcher(root: os.Path,
                           onEvent: Array[String] => Unit,
                           ignorePaths: (os.Path, Boolean) => Boolean,
+                          logger: Logger,
                           settleDelay: Double) extends AutoCloseable{
   val nioWatchService = FileSystems.getDefault.newWatchService()
   val currentlyWatchedPaths = mutable.Map.empty[os.Path, WatchKey]
@@ -23,7 +25,18 @@ class WatchServiceWatcher(root: os.Path,
 
 
   isRunning.set(true)
-  walkTreeAndSetWatches()
+  try {
+    val walk = os.walk.stream.attrs(
+      root,
+      skip = (p, attr) => ignorePaths(p, attr.isDir),
+      includeTarget = true
+    )
+
+    for ((p, attrs) <- walk){
+      try watchPath(p)
+      catch {case e: IOException => println("IO Error when registering watch", e)}
+    }
+  }catch {case e: IOException => println("IO error when registering watches")}
 
   def watchPath(p: os.Path) = {
     if (!currentlyWatchedPaths.contains(p) && os.isDir(p)) {
@@ -43,6 +56,7 @@ class WatchServiceWatcher(root: os.Path,
   }
   def processWatchKey(watchKey: WatchKey) = {
     val p = os.Path(watchKey.watchable().asInstanceOf[java.nio.file.Path], os.pwd)
+    logger("ProcessWatchKey", p)
     bufferedEvents.append(p)
     val events = watchKey.pollEvents()
     val possibleCreations = events.asScala
@@ -53,28 +67,15 @@ class WatchServiceWatcher(root: os.Path,
       for(c <- possibleCreations){
         watchPath(c)
         bufferedEvents.append(c)
+        logger("ProcessWatchKey C", c)
       }
     }
     watchKey.reset()
   }
 
-  def walkTreeAndSetWatches(): Unit = {
-
-    try {
-      for ((p, attrs) <- os.walk.stream.attrs(root, skip = (p, attr) => ignorePaths(p, attr.isDir), includeTarget = true)){
-        try watchPath(p)
-        catch {
-          case e: IOException => println("IO Error when registering watch", e)
-        }
-      }
-    }catch {
-      case e: IOException => println("IO error when registering watches")
-    }
-  }
-
   def start(): Unit = {
     while (isRunning.get()) try {
-      val watchKey0 = nioWatchService.poll(100, TimeUnit.MILLISECONDS)
+      val watchKey0 = nioWatchService.take()
       if (watchKey0 != null){
         processWatchKey(watchKey0)
         while({

@@ -34,6 +34,7 @@ class Syncer(agent: AgentApi,
     mapping(0)._1,
     eventQueue.add,
     skipper.initialize(mapping(0)._1),
+    logger,
     0.05
   )
 //  private[this] val watcher = new FSEventsWatcher(
