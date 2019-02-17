@@ -41,6 +41,7 @@ class WatchServiceWatcher(root: os.Path,
   def watchPath(p: os.Path): Unit = {
     if (!currentlyWatchedPaths.contains(p) && os.isDir(p)) {
       try{
+        bufferedEvents.append(p)
         currentlyWatchedPaths.put(
           p,
           p.toNIO.register(
@@ -67,7 +68,7 @@ class WatchServiceWatcher(root: os.Path,
     for(e <- events if e.kind() != ENTRY_DELETE){
       val c = os.Path(e.context().asInstanceOf[java.nio.file.Path], p)
 
-      bufferedEvents.append(c)
+      watchPath(c)
       logger("ProcessWatchKey C", c)
     }
 
