@@ -43,10 +43,10 @@ class WatchServiceWatcher(root: os.Path,
     if (!currentlyWatchedPaths.contains(p) && os.isDir(p, followLinks = false)) {
       try{
         for(sub <- os.walk.stream(p, includeTarget = true)){
-          bufferedEvents.append(p)
+          bufferedEvents.append(sub)
           currentlyWatchedPaths.put(
-            p,
-            p.toNIO.register(
+            sub,
+            sub.toNIO.register(
               nioWatchService,
               Array[WatchEvent.Kind[_]](ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY, OVERFLOW),
               SensitivityWatchEventModifier.HIGH
