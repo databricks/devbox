@@ -52,7 +52,6 @@ class WatchServiceWatcher(root: os.Path,
         (p, attrs) <- os.walk.stream.attrs(root, skip = (p, attr) => ignorePaths(p, attr.isDir), includeTarget = true)
         if attrs.isDir && !currentlyWatchedPaths.contains(p)
       } {
-        pprint.log(p)
         try currentlyWatchedPaths.put(
           p,
           p.toNIO.register(
