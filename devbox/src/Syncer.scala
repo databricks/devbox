@@ -30,19 +30,19 @@ class Syncer(agent: AgentApi,
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
 
-//  private[this] val watcher = new WatchServiceWatcher(
-//    mapping(0)._1,
-//    eventQueue.add,
-//    skipper.initialize(mapping(0)._1),
-//    logger,
-//    0.05
-//  )
-  private[this] val watcher = new FSEventsWatcher(
-    mapping.map(_._1),
+  private[this] val watcher = new WatchServiceWatcher(
+    mapping(0)._1,
     eventQueue.add,
+    skipper.initialize(mapping(0)._1),
     logger,
     0.05
   )
+//  private[this] val watcher = new FSEventsWatcher(
+//    mapping.map(_._1),
+//    eventQueue.add,
+//    logger,
+//    0.05
+//  )
 
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
