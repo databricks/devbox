@@ -39,7 +39,7 @@ class WatchServiceWatcher(root: os.Path,
   }catch {case e: IOException => println("IO error when registering watches")}
 
   def watchPath(p: os.Path): Unit = {
-    if (!currentlyWatchedPaths.contains(p) && os.isDir(p)) {
+    if (!currentlyWatchedPaths.contains(p) && os.isDir(p, followLinks = false)) {
       try{
         bufferedEvents.append(p)
         currentlyWatchedPaths.put(
@@ -118,12 +118,12 @@ class WatchServiceWatcher(root: os.Path,
   }
 
   private def debouncedTriggerListener(): Unit = {
-    onEvent(
-      bufferedEvents.iterator
-        .map{p => if (os.isDir(p, followLinks = false)) p else p / os.up}
-        .map(_.toString)
-        .toArray
-    )
+    val strings = bufferedEvents.iterator
+      .map{p => if (os.isDir(p, followLinks = false)) p else p / os.up}
+      .map(_.toString)
+      .toArray
+    logger("DTL strings", strings)
+    onEvent(strings)
     bufferedEvents.clear()
   }
 }
