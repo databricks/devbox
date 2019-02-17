@@ -68,9 +68,9 @@ class WatchServiceWatcher(root: os.Path,
       if os.isDir(c)
       c2 <- os.walk(c)
     } {
-      watchPath(c)
-      bufferedEvents.append(c)
-      logger("ProcessWatchKey C", c)
+      watchPath(c2)
+      bufferedEvents.append(c2)
+      logger("ProcessWatchKey C", c2)
     }
 
     watchKey.reset()
