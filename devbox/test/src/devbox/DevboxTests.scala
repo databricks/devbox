@@ -76,9 +76,6 @@ object DevboxTests extends TestSuite{
       printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
       syncer.start()
 
-//      println("Sleep 0")
-//      Thread.sleep(1000)
-//      println("Sleep 1")
 
       for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
         val commit = commits(i)
@@ -86,7 +83,6 @@ object DevboxTests extends TestSuite{
         logger("TEST CHECKOUT", commit.getShortMessage)
         repo.checkout().setName(commit.getName).call()
 
-        println("TEST CHECKOUT DONE " + commit.getShortMessage)
         logger("TEST CHECKOUT DONE", commit.getShortMessage)
 
         if (restartSyncer && syncer == null){
@@ -107,16 +103,12 @@ object DevboxTests extends TestSuite{
             syncer = null
           }
 
-          println("TEST VALIDATE")
           logger("TEST VALIDATE")
           validate(src, dest, skipper)
         }
       }
     }finally{
-      if (syncer != null) {
-        println("CLOSING SYNCER AT TEARDOWN")
-        syncer.close()
-      }
+      if (syncer != null) syncer.close()
     }
   }
 

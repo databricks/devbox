@@ -74,6 +74,7 @@ class Syncer(agent: AgentApi,
           val str = agent.stderr.readLine()
           if (str != null) logger.write(ujson.read(str).str)
         }catch{
+          case e: IOException => //do nothing
           case e: InterruptedIOException => //do nothing
           case e: InterruptedException => //do nothing
         }
