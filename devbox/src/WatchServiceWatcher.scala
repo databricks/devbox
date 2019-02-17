@@ -58,8 +58,9 @@ class WatchServiceWatcher(root: os.Path,
     val p = os.Path(watchKey.watchable().asInstanceOf[java.nio.file.Path], os.pwd)
     logger("ProcessWatchKey", p)
     bufferedEvents.append(p)
-    val events = watchKey.pollEvents()
-    val possibleCreations = events.asScala
+    val events = watchKey.pollEvents().asScala
+    logger("WKE", events)
+    val possibleCreations = events
       .filter(_.kind() != ENTRY_DELETE)
       .map(e => os.Path(e.context().asInstanceOf[java.nio.file.Path], p))
 
@@ -70,7 +71,9 @@ class WatchServiceWatcher(root: os.Path,
         logger("ProcessWatchKey C", c)
       }
     }
-    if (watchKey.pollEvents().asScala.nonEmpty) ???
+    if (watchKey.pollEvents().asScala.nonEmpty) {
+      logger("WKPE", watchKey.pollEvents().asScala)
+    }
     watchKey.reset()
   }
 
