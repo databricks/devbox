@@ -70,6 +70,7 @@ class WatchServiceWatcher(root: os.Path,
         logger("ProcessWatchKey C", c)
       }
     }
+    if (watchKey.pollEvents().asScala.nonEmpty) ???
     watchKey.reset()
   }
 
