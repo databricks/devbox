@@ -71,10 +71,7 @@ class WatchServiceWatcher(root: os.Path,
         logger("ProcessWatchKey C", c)
       }
     }
-    val remaining = watchKey.pollEvents().asScala
-    if (remaining.nonEmpty) {
-      logger("WKPE", remaining.map(_.context()))
-    }
+
     watchKey.reset()
   }
 
