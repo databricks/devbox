@@ -72,6 +72,7 @@ class WatchServiceWatcher(root: os.Path,
 
   def start(): Unit = {
     while (isRunning.get()) try {
+      logger("Watched", currentlyWatchedPaths)
       val watchKey0 = nioWatchService.take()
       if (watchKey0 != null){
         processWatchKey(watchKey0)
