@@ -65,6 +65,7 @@ class WatchServiceWatcher(root: os.Path,
     val events = watchKey.pollEvents().asScala
     logger("WKE", events.map(_.context()))
 
+    logger("EVENT KINDS", events.map(_.kind()))
     if (os.isDir(p, followLinks = false)){
       for(c <- os.list(p)){
         watchPath(c)
