@@ -118,6 +118,7 @@ class WatchServiceWatcher(root: os.Path,
   }
 
   private def debouncedTriggerListener(): Unit = {
+    logger("bufferedEvents", bufferedEvents)
     val strings = bufferedEvents.iterator
       .map{p => if (os.isDir(p, followLinks = false)) p else p / os.up}
       .map(_.toString)
