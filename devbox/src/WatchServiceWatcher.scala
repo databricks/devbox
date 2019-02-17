@@ -25,41 +25,45 @@ class WatchServiceWatcher(root: os.Path,
   isRunning.set(true)
   walkTreeAndSetWatches()
 
-  def processWatchKey(watchKey: WatchKey) = {
-    val p = os.Path(watchKey.watchable().asInstanceOf[java.nio.file.Path], os.pwd)
-    bufferedEvents.append(p)
-    val events = watchKey.pollEvents()
-    val possibleCreations = events.asScala.filter(_.kind() != ENTRY_DELETE)
-    if (possibleCreations.nonEmpty){
-      bufferedEvents.appendAll(
-        possibleCreations.map(e => os.Path(e.context().asInstanceOf[java.nio.file.Path], p))
-      )
-    }
-    watchKey.reset()
-  }
-
-  def watchEventsOccurred(): Unit = {
-    for(p <- currentlyWatchedPaths.keySet if !os.exists(p, followLinks = false)){
-      currentlyWatchedPaths.remove(p).foreach(_.cancel())
-    }
-    walkTreeAndSetWatches()
-  }
-
-  def walkTreeAndSetWatches(): Unit = {
-
-    try {
-      for {
-        (p, attrs) <- os.walk.stream.attrs(root, skip = (p, attr) => ignorePaths(p, attr.isDir), includeTarget = true)
-        if attrs.isDir && !currentlyWatchedPaths.contains(p)
-      } {
-        try currentlyWatchedPaths.put(
+  def watchPath(p: os.Path) = {
+    if (!currentlyWatchedPaths.contains(p) && os.isDir(p)) {
+      try{
+        currentlyWatchedPaths.put(
           p,
           p.toNIO.register(
             nioWatchService,
             Array[WatchEvent.Kind[_]](ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY, OVERFLOW),
             SensitivityWatchEventModifier.HIGH
           )
-        ) catch {
+        )
+      } catch{case e: java.nio.file.NotDirectoryException =>
+        // do nothing
+      }
+    }
+  }
+  def processWatchKey(watchKey: WatchKey) = {
+    val p = os.Path(watchKey.watchable().asInstanceOf[java.nio.file.Path], os.pwd)
+    bufferedEvents.append(p)
+    val events = watchKey.pollEvents()
+    val possibleCreations = events.asScala
+      .filter(_.kind() != ENTRY_DELETE)
+      .map(e => os.Path(e.context().asInstanceOf[java.nio.file.Path], p))
+
+    if (possibleCreations.nonEmpty){
+      for(c <- possibleCreations){
+        watchPath(c)
+        bufferedEvents.append(c)
+      }
+    }
+    watchKey.reset()
+  }
+
+  def walkTreeAndSetWatches(): Unit = {
+
+    try {
+      for ((p, attrs) <- os.walk.stream.attrs(root, skip = (p, attr) => ignorePaths(p, attr.isDir), includeTarget = true)){
+        try watchPath(p)
+        catch {
           case e: IOException => println("IO Error when registering watch", e)
         }
       }
@@ -70,21 +74,24 @@ class WatchServiceWatcher(root: os.Path,
 
   def start(): Unit = {
     while (isRunning.get()) try {
-      nioWatchService.poll(100, TimeUnit.MILLISECONDS) match{
-        case null => //continue
-        case watchKey0 =>
-          processWatchKey(watchKey0)
-          while({
-            nioWatchService.poll() match{
-              case null => false
-              case watchKey =>
-                processWatchKey(watchKey)
-                true
-            }
-          })()
+      val watchKey0 = nioWatchService.poll(100, TimeUnit.MILLISECONDS)
+      if (watchKey0 != null){
+        processWatchKey(watchKey0)
+        while({
+          nioWatchService.poll() match{
+            case null => false
+            case watchKey =>
+              processWatchKey(watchKey)
+              true
+          }
+        })()
 
-          debouncedTriggerListener()
-          watchEventsOccurred()
+        debouncedTriggerListener()
+
+        // cleanup stale watches
+        for(p <- currentlyWatchedPaths.keySet if !os.exists(p, followLinks = false)){
+          currentlyWatchedPaths.remove(p).foreach(_.cancel())
+        }
       }
 
     } catch {
