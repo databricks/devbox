@@ -65,9 +65,11 @@ class WatchServiceWatcher(root: os.Path,
     val events = watchKey.pollEvents().asScala
     logger("WKE", events.map(_.context()))
 
-    for(c <- os.list(p)){
-      watchPath(c)
-      logger("ProcessWatchKey C", c)
+    if (os.exists(p)){
+      for(c <- os.list(p)){
+        watchPath(c)
+        logger("ProcessWatchKey C", c)
+      }
     }
 
     watchKey.reset()
