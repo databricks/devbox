@@ -39,19 +39,19 @@ class WatchServiceWatcher(root: os.Path,
   }catch {case e: IOException => println("IO error when registering watches")}
 
   def watchPath(p: os.Path): Unit = {
-
+    bufferedEvents.append(p)
     if (!currentlyWatchedPaths.contains(p) && os.isDir(p, followLinks = false)) {
       try{
-        for(sub <- os.walk.stream(p, includeTarget = true)){
-          bufferedEvents.append(sub)
-          currentlyWatchedPaths.put(
-            sub,
-            sub.toNIO.register(
-              nioWatchService,
-              Array[WatchEvent.Kind[_]](ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY, OVERFLOW),
-              SensitivityWatchEventModifier.HIGH
-            )
+        currentlyWatchedPaths.put(
+          p,
+          p.toNIO.register(
+            nioWatchService,
+            Array[WatchEvent.Kind[_]](ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY, OVERFLOW),
+            SensitivityWatchEventModifier.HIGH
           )
+        )
+        for(sub <- os.list.stream(p)){
+          watchPath(sub)
         }
       } catch{case e: java.nio.file.NotDirectoryException =>
         // do nothing
