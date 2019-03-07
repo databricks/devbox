@@ -18,6 +18,7 @@ class WatchServiceWatcher(root: os.Path,
                           ignorePaths: (os.Path, Boolean) => Boolean,
                           logger: Logger,
                           settleDelay: Double) extends AutoCloseable{
+
   val nioWatchService = FileSystems.getDefault.newWatchService()
   val currentlyWatchedPaths = mutable.Map.empty[os.Path, WatchKey]
   val bufferedEvents = mutable.Buffer.empty[os.Path]
@@ -33,43 +34,48 @@ class WatchServiceWatcher(root: os.Path,
     )
 
     for ((p, attrs) <- walk){
-      try watchPath(p)
+      try watchSinglePath(p)
       catch {case e: IOException => println("IO Error when registering watch", e)}
     }
   }catch {case e: IOException => println("IO error when registering watches")}
 
-  def watchPath(p: os.Path): Unit = {
-    bufferedEvents.append(p)
-    if (!currentlyWatchedPaths.contains(p) && os.isDir(p, followLinks = false)) {
+  def watchSinglePath(p: os.Path) = {
+    for(c <- os.walk(p, includeTarget = true) if os.isDir(c, followLinks = false)){
       try{
+        logger("walk", c)
         currentlyWatchedPaths.put(
-          p,
-          p.toNIO.register(
+          c,
+          c.toNIO.register(
             nioWatchService,
             Array[WatchEvent.Kind[_]](ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY, OVERFLOW),
             SensitivityWatchEventModifier.HIGH
           )
         )
-        for(sub <- os.list.stream(p)){
-          watchPath(sub)
-        }
-      } catch{case e: java.nio.file.NotDirectoryException =>
-        // do nothing
+        bufferedEvents.append(c)
+      }catch{
+        case e: NotDirectoryException => /*donothing*/
+        case e: NoSuchFileException => /*donothing*/
       }
     }
   }
-  def processWatchKey(watchKey: WatchKey) = {
+
+  def processEvent(watchKey: WatchKey) = {
     val p = os.Path(watchKey.watchable().asInstanceOf[java.nio.file.Path], os.pwd)
     logger("ProcessWatchKey", p)
-    bufferedEvents.append(p)
+
     val events = watchKey.pollEvents().asScala
-    logger("WKE", events.map(_.context()))
+    logger("EVENT CONTEXTS", events.map(_.context()))
+
 
     logger("EVENT KINDS", events.map(_.kind()))
-    if (os.isDir(p, followLinks = false)){
-      for(c <- os.list(p)){
-        watchPath(c)
-        logger("ProcessWatchKey C", c)
+    if (os.isDir(p, followLinks = false)) bufferedEvents.append(p)
+    else bufferedEvents.append(p / os.up)
+
+    for(e <- events if e.kind() == ENTRY_CREATE){
+      val c = p / e.context().toString
+      if (os.isDir(c, followLinks = false)){
+        logger("watchSinglePath", c)
+        watchSinglePath(c)
       }
     }
 
@@ -82,13 +88,13 @@ class WatchServiceWatcher(root: os.Path,
       val watchKey0 = nioWatchService.take()
       if (watchKey0 != null){
         logger("watchKey0", watchKey0.watchable())
-        processWatchKey(watchKey0)
+        processEvent(watchKey0)
         while({
           nioWatchService.poll() match{
             case null => false
             case watchKey =>
               logger("watchKey", watchKey.watchable())
-              processWatchKey(watchKey)
+              processEvent(watchKey)
               true
           }
         })()
@@ -96,8 +102,9 @@ class WatchServiceWatcher(root: os.Path,
         debouncedTriggerListener()
 
         // cleanup stale watches
-        for(p <- currentlyWatchedPaths.keySet if !os.exists(p, followLinks = false)){
-          currentlyWatchedPaths.remove(p).foreach(_.cancel())
+        for(p <- currentlyWatchedPaths.keySet if !os.isDir(p, followLinks = false)){
+          logger("cancel", p)
+//          currentlyWatchedPaths.remove(p).foreach(_.cancel())
         }
       }
 
@@ -126,6 +133,7 @@ class WatchServiceWatcher(root: os.Path,
       .map{p => if (os.isDir(p, followLinks = false)) p else p / os.up}
       .map(_.toString)
       .toArray
+      .distinct
     logger("DTL strings", strings)
     onEvent(strings)
     bufferedEvents.clear()
