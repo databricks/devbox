@@ -54,8 +54,7 @@ object DevboxAgentMain {
         val client = new RpcClient(
           new DataOutputStream(System.out),
           new DataInputStream(System.in),
-          (tag, t) => logger("AGNT " + tag, t)
-        )
+          (tag, t) => logger("AGNT " + tag, t))
         mainLoop(logger, skipper, client, os.Path(config.workingDir, os.pwd), config.exitOnError)
     }
   }
@@ -87,39 +86,43 @@ object DevboxAgentMain {
 
         client.writeMsg(None)
 
-      case Rpc.Remove(root, path) =>
+      case rpc @ Rpc.Remove(root, path) =>
         os.remove.all(wd / root / path)
-        client.writeMsg(0)
+        client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
-      case Rpc.PutFile(root, path, perms) =>
+      case rpc @ Rpc.PutFile(root, path, perms) =>
         os.write(wd / root / path, "", perms)
-        client.writeMsg(0)
+        client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
-      case Rpc.PutDir(root, path, perms) =>
+      case rpc @ Rpc.PutDir(root, path, perms) =>
         os.makeDir(wd / root / path, perms)
-        client.writeMsg(0)
+        client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
-      case Rpc.PutLink(root, path, dest) =>
+      case rpc @ Rpc.PutLink(root, path, dest) =>
         os.symlink(wd / root / path, os.FilePath(dest))
-        client.writeMsg(0)
+        client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
-      case Rpc.WriteChunk(root, path, offset, data, hash) =>
+      case rpc @ Rpc.WriteChunk(root, path, offset, data, hash) =>
         val p = wd / root / path
         withWritable(p){
           os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
         }
-        client.writeMsg(0)
+        client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
-      case Rpc.SetSize(root, path, offset) =>
+      case rpc @ Rpc.SetSize(root, path, offset) =>
         val p = wd / root / path
         withWritable(p) {
           os.truncate(p, offset)
         }
-        client.writeMsg(0)
+        client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
-      case Rpc.SetPerms(root, path, perms) =>
+      case rpc @ Rpc.SetPerms(root, path, perms) =>
         os.perms.set.apply(wd / root / path, perms)
-        client.writeMsg(0)
+        client.writeMsg(Rpc.Ack(rpc.hashCode()))
+
+      case rpc: Rpc.Ping =>
+        client.pong()
+
     }catch{
       case e: EOFException => throw e // master process has closed up, exit
       case e: Throwable if !exitOnError =>

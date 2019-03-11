@@ -70,13 +70,14 @@ object DevboxMain {
               .command(remaining:_*)
               .start()
           Util.autoclose(new Syncer(
-            new AgentApi {
-              def isAlive() = agent.isAlive
-              def destroy() = agent.destroy()
-              def stderr = new DataInputStream(agent.getErrorStream)
-              def stdout = new DataInputStream(agent.getInputStream)
-              def stdin = new DataOutputStream(agent.getOutputStream)
-            },
+//            new AgentApi {
+//              def isAlive() = agent.isAlive
+//              def destroy() = agent.destroy()
+//              def stderr = new DataInputStream(agent.getErrorStream)
+//              def stdout = new DataInputStream(agent.getInputStream)
+//              def stdin = new DataOutputStream(agent.getOutputStream)
+//            },
+            new ReliableAgent(remaining),
             for(s <- config.repo)
             yield s.split(':') match{
               case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
