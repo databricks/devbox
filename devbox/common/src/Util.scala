@@ -15,9 +15,9 @@ object Util {
     )
 
   def autoclose[T <: AutoCloseable, V](x: T)(f: T => V) = {
-    f(x)
-//    try f(x)
-//    finally x.close()
+//    f(x)
+    try f(x)
+    finally x.close()
   }
 
   /**

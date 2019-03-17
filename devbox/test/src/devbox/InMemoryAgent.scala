@@ -14,6 +14,7 @@ class InMemoryAgent(dest: os.Path,
   var alive = true
   def isAlive() = alive
   var thread: Thread = _
+  start()
 
   override def start(): Unit = {
     thread = new Thread(() =>

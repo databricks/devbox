@@ -10,6 +10,7 @@ import devbox.common._
 import os.Path
 import upickle.default
 import Util.relpathRw
+import devbox.Syncer.draining
 import geny.Generator
 
 import scala.annotation.tailrec
@@ -98,7 +99,7 @@ class Syncer(agent: AgentApi,
   }
 
   def close() = {
-//    running = false
+    running = false
     watcher.stop()
     watcherThread.join()
     syncThread.interrupt()
@@ -183,10 +184,11 @@ object Syncer{
     val ex = new ScheduledThreadPoolExecutor(1)
     val task = new Runnable() {
       override def run(): Unit = {
+        logger.info("connectionAlive", connectionAlive.toString)
+        logger.info("draining", draining.toString)
+        logger.info("retryAttempted", retryAttempted.toString)
         val timestamp = System.currentTimeMillis()
-        if (!draining) {
-          Thread.sleep(5)
-        } else if (!connectionAlive && timestamp - lastRetryTime > 5000) {
+        if (!connectionAlive && timestamp - lastRetryTime > 5000) {
           logger.info("Connection drop detected", "Retry on connection and flush buffer")
           logger("CONNECTION", "RETRY CONNECT")
           lastRetryTime = timestamp
@@ -213,76 +215,88 @@ object Syncer{
     }
     ex.scheduleAtFixedRate(task, 2, 1, TimeUnit.SECONDS)
 
+    val backgroundDrainer = new Thread(
+      () => {
+        while(true) {
+          if (!draining) {
+            client.drainOutstandingMsgs()
+          } else {
+            Thread.sleep(10)
+          }
+        }
+      },
+      "DevboxBackgroundDrainerThread"
+    )
+    backgroundDrainer.start()
+
 
     var messagedSync = true
     val allChangedPaths = mutable.Buffer.empty[os.Path]
     var allSyncedBytes = 0L
     while (continue()) {
-      if (connectionAlive) {
-        logger("SYNC LOOP")
+      logger("SYNC LOOP")
 
-        for (interestingBases <- Syncer.drainUntilStable(eventQueue, debounceTime, agent, logger)) {
-          // We need to .distinct after we convert the strings to paths, in order
-          // to ensure the inputs are canonicalized and don't have meaningless
-          // differences such as trailing slashes
-          val allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
-          logger("SYNC EVENTS", allSrcEventDirs)
+      for (interestingBases <- Syncer.drainUntilStable(eventQueue, debounceTime, agent, logger)) {
+        // We need to .distinct after we convert the strings to paths, in order
+        // to ensure the inputs are canonicalized and don't have meaningless
+        // differences such as trailing slashes
+        val allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
+        logger("SYNC EVENTS", allSrcEventDirs)
 
-          for (((src, dest), i) <- mapping.zipWithIndex) {
-            val srcEventDirs = allSrcEventDirs.filter(p =>
-              p.startsWith(src) && !skipArr(i)(p, true)
+        for (((src, dest), i) <- mapping.zipWithIndex) {
+          val srcEventDirs = allSrcEventDirs.filter(p =>
+            p.startsWith(src) && !skipArr(i)(p, true)
+          )
+
+          logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
+
+          val exitCode = for {
+            _ <- if (srcEventDirs.isEmpty) Left(NoOp: ExitCode) else Right(())
+            _ <- updateSkipPredicate(
+              srcEventDirs, skipper, vfsArr(i), src, buffer, logger,
+              signatureTransformer, skipArr(i) = _
             )
+            res <- synchronizeRepo(
+              logger, vfsArr(i), skipArr(i), src, dest,
+              client, buffer, srcEventDirs, signatureTransformer, setDraining)
+          } yield res
 
-            logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
-
-            val exitCode = for {
-              _ <- if (srcEventDirs.isEmpty) Left(NoOp: ExitCode) else Right(())
-              _ <- updateSkipPredicate(
-                srcEventDirs, skipper, vfsArr(i), src, buffer, logger,
-                signatureTransformer, skipArr(i) = _
-              )
-              res <- synchronizeRepo(
-                logger, vfsArr(i), skipArr(i), src, dest,
-                client, buffer, srcEventDirs, signatureTransformer, setDraining)
-            } yield res
-
-            exitCode match {
-              case Right((streamedByteCount, changedPaths)) =>
-                allChangedPaths.appendAll(changedPaths)
-                allSyncedBytes += streamedByteCount
-              case Left(NoOp) => // do nothing
-              case Left(SyncFail(value)) =>
-                eventQueue.add(srcEventDirs.map(_.toString).toArray)
-                val x = new StringWriter()
-                val p = new PrintWriter(x)
-                value.printStackTrace(p)
-                logger("SYNC FAILED", x.toString)
-            }
+          exitCode match {
+            case Right((streamedByteCount, changedPaths)) =>
+              allChangedPaths.appendAll(changedPaths)
+              allSyncedBytes += streamedByteCount
+            case Left(NoOp) => // do nothing
+            case Left(SyncFail(value)) =>
+              eventQueue.add(srcEventDirs.map(_.toString).toArray)
+              val x = new StringWriter()
+              val p = new PrintWriter(x)
+              value.printStackTrace(p)
+              logger("SYNC FAILED", x.toString)
           }
+        }
 
-          if (eventQueue.isEmpty) {
-            logger("SYNC COMPLETE")
-            onComplete()
-            if (allChangedPaths.nonEmpty) {
-              logger.info(
-                s"Finished syncing ${allChangedPaths.length} paths, $allSyncedBytes bytes",
-                s"${allChangedPaths.head}" +
-                  (if (allChangedPaths.length == 1) "" else s" and ${allChangedPaths.length - 1} others")
-              )
-              allSyncedBytes = 0
-              allChangedPaths.clear()
-            } else if (messagedSync) {
-              logger.info("Nothing to sync", "watching for changes")
-            }
-            messagedSync = false
-          } else {
+        if (eventQueue.isEmpty) {
+          logger("SYNC COMPLETE")
+          onComplete()
+          if (allChangedPaths.nonEmpty) {
             logger.info(
-              "Ongoing changes detected",
-              eventQueue.peek().head
+              s"Finished syncing ${allChangedPaths.length} paths, $allSyncedBytes bytes",
+              s"${allChangedPaths.head}" +
+                (if (allChangedPaths.length == 1) "" else s" and ${allChangedPaths.length - 1} others")
             )
-            logger("SYNC PARTIAL")
-            messagedSync = true
+            allSyncedBytes = 0
+            allChangedPaths.clear()
+          } else if (messagedSync) {
+            logger.info("Nothing to sync", "watching for changes")
           }
+          messagedSync = false
+        } else {
+          logger.info(
+            "Ongoing changes detected",
+            eventQueue.peek().head
+          )
+          logger("SYNC PARTIAL")
+          messagedSync = true
         }
       }
     }
@@ -506,6 +520,7 @@ object Syncer{
     val drainer = new Thread(
       () => {
         while(running || client.client.getOutstandingMsgs > 0) {
+          logger("OUTSTANDING", client.client.getOutstandingMsgs)
           if (client.client.shouldFlush()) {
             try {
               client.flushOutstandingMsgs()
