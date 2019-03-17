@@ -13,6 +13,23 @@ class InMemoryAgent(dest: os.Path,
                     exitOnError: Boolean) extends AgentApi {
   var alive = true
   def isAlive() = alive
+  var thread: Thread = _
+
+  override def start(): Unit = {
+    thread = new Thread(() =>
+      try devbox.agent.DevboxAgentMain.mainLoop(
+        logger,
+        skipper,
+        new RpcClient(stdout0.out, stdin0.in, (tag, t) => logger("AGNT " + tag, t)),
+        dest,
+        exitOnError
+      ) catch{
+        case e: java.lang.InterruptedException => () // do nothing
+      },
+      "DevboxMockAgentThread"
+    )
+    thread.start()
+  }
 
   def destroy(): Unit = {
     thread.interrupt()
@@ -37,18 +54,4 @@ class InMemoryAgent(dest: os.Path,
 
     def progress(title: => String, body: => String): Unit = ???
   }
-  val thread = new Thread(() =>
-    try devbox.agent.DevboxAgentMain.mainLoop(
-      logger,
-      skipper,
-      new RpcClient(stdout0.out, stdin0.in, (tag, t) => logger("AGNT " + tag, t)),
-      dest,
-      exitOnError
-    ) catch{
-      case e: java.lang.InterruptedException => () // do nothing
-    },
-    "DevboxMockAgentThread"
-  )
-
-  thread.start()
 }
