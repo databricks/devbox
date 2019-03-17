@@ -1,7 +1,6 @@
 package devbox.common
 import java.io._
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.LinkedBlockingQueue
 
 import scala.util.control.NonFatal
 
@@ -9,7 +8,7 @@ class RpcClient(var out: OutputStream with DataOutput,
                 var in: InputStream with DataInput,
                 logger: (String, Any) => Unit,
                 ackPing: Option[() => Unit] = None) {
-  private[this] val pendingQueue = new ConcurrentHashMap[Int, Rpc]()
+  private[this] val pendingQueue = new LinkedBlockingQueue[Rpc]()
   private[this] var flushing = false
 
   def resetOut(out: OutputStream with DataOutput) = {this.out = out}
@@ -33,10 +32,7 @@ class RpcClient(var out: OutputStream with DataOutput,
 
   def flushOutstandingMsgs() = {
     logger("PENDING FLUSH", pendingQueue.size())
-    pendingQueue.values().forEach { rpc =>
-      logger("FLUSH", rpc)
-      writeMsg0(rpc)
-    }
+    pendingQueue.iterator().forEachRemaining(rpc => writeMsg0(rpc))
     flushing = false
   }
 
@@ -56,7 +52,7 @@ class RpcClient(var out: OutputStream with DataOutput,
       case rpc: Rpc if !rpc.isInstanceOf[Rpc.Ack] && !rpc.isInstanceOf[Rpc.FullScan] =>
         logger("KEY", rpc.hashCode())
         logger("VALUE", rpc)
-        pendingQueue.put(rpc.hashCode(), rpc)
+        pendingQueue.offer(rpc)
       case _ =>
     }
     writeMsg0(t)
@@ -85,9 +81,8 @@ class RpcClient(var out: OutputStream with DataOutput,
 
     res match {
       case Rpc.Ack(hash) =>
-        logger(s"ACK VALUE", pendingQueue.get(hash))
-        logger(s"ACK", s"Pending queue size ${pendingQueue.size()}")
-        pendingQueue.remove(hash)
+        val rpc = pendingQueue.take()
+        assert(rpc.hashCode() == hash)
       case Rpc.Pong() =>
         ackPing.get()
       case _ =>
