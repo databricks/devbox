@@ -4,13 +4,17 @@ import java.util.concurrent.{ScheduledThreadPoolExecutor, TimeUnit}
 
 import devbox.common.{Logger, RpcClient}
 
-class DevboxStateMonitor(logger: Logger, agent: AgentApi) {
+class DevboxStateMonitor(logger: Logger,
+                         agent: AgentApi,
+                         healthCheckInterval: Int,
+                         retryInterval: Int) {
 
   // State
   private var connectionAlive: Boolean = true
   private var retryAttempted: Boolean = false
   private var draining: Boolean = false
   private var lastRetryTime: Long = 0
+  private var startTime: Long = 0
 
   // Rpc client
   var client: RpcClient = _
@@ -23,7 +27,7 @@ class DevboxStateMonitor(logger: Logger, agent: AgentApi) {
   def setConnectionAlive(): Unit = {
     logger("CONNECTION", "PONG")
     if (!connectionAlive && retryAttempted) {
-      logger.info("Connection reestablished", "Devbox is back alive")
+      logger.info("Connection reestablished", "Devbox is back alive", Some(Console.GREEN))
       retryAttempted = false
     }
     connectionAlive = true
@@ -31,37 +35,52 @@ class DevboxStateMonitor(logger: Logger, agent: AgentApi) {
 
   def setDraining(draining: Boolean): Unit = this.draining = draining
 
-  def startHealthChecker(): Unit = {
+  def getNextRetry(timestamp: Long): Long = {
+    retryInterval - getSecondsSinceLastRetry(timestamp)
+  }
+
+  def getSecondsSinceLastRetry(timestamp: Long): Long = {
+    (1.0 * (timestamp - lastRetryTime) / 1000).round
+  }
+
+  def initHealthChecker(): Unit = {
     ex = new ScheduledThreadPoolExecutor(1)
     task = () => {
       val timestamp = System.currentTimeMillis()
-      if (!connectionAlive && timestamp - lastRetryTime > 5000) {
-        logger.info("Connection drop detected", "Retry on connection and flush buffer")
-        logger("CONNECTION", "RETRY CONNECT")
-        lastRetryTime = timestamp
-        connectionAlive = false
-        retryAttempted = true
+      val timeElapsed = (1.0 * (timestamp - startTime) / 1000).round
+      if (!connectionAlive && retryAttempted) {
+        print(s"${Console.RESET}${Console.BOLD}Next retry in ${getNextRetry(timestamp)} seconds ⌛️${Console.RESET}\r")
+      }
+      if (timeElapsed % healthCheckInterval == 0) {
+        if (!connectionAlive && getSecondsSinceLastRetry(timestamp) >= retryInterval) {
+          logger.info("Connection drop detected", "Retry on connection and flush buffer", Some(Console.YELLOW))
+          logger("CONNECTION", "RETRY CONNECT")
+          lastRetryTime = timestamp
+          connectionAlive = false
+          retryAttempted = true
 
-        // Re-establish connection
-        agent.destroy()
-        agent.start()
-        client.resetIn(agent.stdout)
-        client.resetOut(agent.stdin)
+          // Re-establish connection
+          agent.destroy()
+          agent.start()
+          client.resetIn(agent.stdout)
+          client.resetOut(agent.stdin)
 
-        // Send Ping and flush buffer
-        client.ping()
-        client.setShouldFlush()
-      } else if (!connectionAlive && retryAttempted) {
-        logger("CONNECTION", "TIMEOUT")
-      } else {
-        logger("CONNECTION", "PING")
-        connectionAlive = false
-        client.ping()
+          // Send Ping and flush buffer
+          client.ping()
+          client.setShouldFlush()
+          logger("CONNECTION", "SET SHOULD FLUSH")
+        } else if (!connectionAlive && retryAttempted) {
+          logger("CONNECTION", "TIMEOUT")
+        } else {
+          logger("CONNECTION", "PING")
+          connectionAlive = false
+          client.ping()
+        }
       }
     }
   }
 
-  def startBackgroundDrainer(): Unit = {
+  def initBackgroundDrainer(): Unit = {
     backgroundDrainerThread = new Thread(
       () => {
         while(true) {
@@ -77,10 +96,16 @@ class DevboxStateMonitor(logger: Logger, agent: AgentApi) {
   }
 
   def start(client: RpcClient): Unit = {
-    startHealthChecker()
-    startBackgroundDrainer()
+    initHealthChecker()
+    initBackgroundDrainer()
     this.client = client
-    ex.scheduleAtFixedRate(task, 2, 1, TimeUnit.SECONDS)
-    backgroundDrainerThread.start()
+    logger.info("CONNECTION", s"Health check interval $healthCheckInterval seconds")
+    logger.info("CONNECTION", s"Retry interval $retryInterval seconds")
+    if (healthCheckInterval != 0 && retryInterval != 0) {
+      ex.scheduleAtFixedRate(task, 0, 1, TimeUnit.SECONDS)
+      backgroundDrainerThread.start()
+      startTime = System.currentTimeMillis()
+      lastRetryTime = System.currentTimeMillis()
+    }
   }
 }

@@ -92,8 +92,12 @@ class RpcClient(var out: OutputStream with DataOutput,
   }
 
   def ping(): Unit = {
-    val ping = Rpc.Ping()
-    writeMsg0(ping)
+    try {
+      val ping = Rpc.Ping()
+      writeMsg0(ping)
+    } catch {
+      case NonFatal(ex) => logger("CONNECTION", s"CANNOT SEND PING $ex")
+    }
   }
 
   def pong(): Unit = {

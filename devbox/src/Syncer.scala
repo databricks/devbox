@@ -29,7 +29,9 @@ class Syncer(agent: AgentApi,
              debounceTime: Int,
              onComplete: () => Unit,
              logger: Logger,
-             signatureTransformer: (os.RelPath, Signature) => Signature) extends AutoCloseable{
+             signatureTransformer: (os.RelPath, Signature) => Signature,
+             healthCheckInterval: Int,
+             retryInterval: Int) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(
@@ -88,7 +90,9 @@ class Syncer(agent: AgentApi,
         debounceTime,
         () => running,
         logger,
-        signatureTransformer
+        signatureTransformer,
+        healthCheckInterval,
+        retryInterval
       )
     }
 
@@ -130,14 +134,16 @@ object Syncer{
                    debounceTime: Int,
                    continue: () => Boolean,
                    logger: Logger,
-                   signatureTransformer: (os.RelPath, Signature) => Signature) = {
+                   signatureTransformer: (os.RelPath, Signature) => Signature,
+                   healthCheckInterval: Int,
+                   retryInterval: Int) = {
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val skipArr = for ((src, dest) <- mapping.toArray) yield skipper.initialize(src)
 
     val buffer = new Array[Byte](Util.blockSize)
 
-    val devboxStateMonitor = new DevboxStateMonitor(logger, agent)
+    val devboxStateMonitor = new DevboxStateMonitor(logger, agent, healthCheckInterval, retryInterval)
     val client = new RpcClient(
             agent.stdin,
             agent.stdout,

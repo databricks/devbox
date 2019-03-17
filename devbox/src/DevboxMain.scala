@@ -13,7 +13,9 @@ object DevboxMain {
                     toast: Boolean = false,
                     logFile: Option[os.Path] = None,
                     ignoreStrategy: String = "",
-                    readOnlyRemote: String = null)
+                    readOnlyRemote: String = null,
+                    healthCheckInterval: Int = 0,
+                    retryInterval: Int = 0)
 
   def main(args: Array[String]): Unit = {
 
@@ -52,6 +54,16 @@ object DevboxMain {
         "readonly-remote", None,
         "",
         (c, v) => c.copy(readOnlyRemote = v)
+      ),
+      Arg[Config, Int](
+        "healthcheck-interval", None,
+        "Interval between health check, health check should succeed before the next health check (in seconds)",
+        (c, v) => c.copy(healthCheckInterval = v)
+      ),
+      Arg[Config, Int](
+        "retry-interval", None,
+        "Interval between retries when health check failed (in seconds)",
+        (c, v) => c.copy(retryInterval = v)
       )
     )
 
@@ -100,7 +112,9 @@ object DevboxMain {
                   )
                 case (path, sig) => sig
               }
-            }
+            },
+            healthCheckInterval = config.healthCheckInterval,
+            retryInterval = config.retryInterval
           )){syncer =>
             syncer.start()
             Thread.sleep(Long.MaxValue)
