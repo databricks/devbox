@@ -42,7 +42,6 @@ class Syncer(agent: AgentApi,
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
   private[this] var agentLoggerThread: Thread = null
-  private[this] var agentPingThread: Thread = null
 
   @volatile private[this] var running: Boolean = false
 
@@ -138,33 +137,13 @@ object Syncer{
 
     val buffer = new Array[Byte](Util.blockSize)
 
-
-    var connectionAlive: Boolean = true
-    var retryAttempted: Boolean = false
-    var draining: Boolean = false
-    var lastRetryTime: Long = 0
-
-    def setConnectionAlive(): Unit = {
-      logger("CONNECTION", "PONG")
-      if (!connectionAlive && retryAttempted) {
-        logger.info("Connection reestablished", "Devbox is back alive")
-        retryAttempted = false
-      }
-      connectionAlive = true
-    }
-
-    def setDraining(flag: Boolean): Unit = {
-      draining = flag
-      if (flag) {
-        lastRetryTime = System.currentTimeMillis()
-      }
-    }
-
+    val devboxStateMonitor = new DevboxStateMonitor(logger, agent)
     val client = new RpcClient(
-      agent.stdin,
-      agent.stdout,
-      (tag, t) => logger("SYNC " + tag, t),
-      Some(setConnectionAlive))
+            agent.stdin,
+            agent.stdout,
+            (tag, t) => logger("SYNC " + tag, t),
+            Some(devboxStateMonitor.setConnectionAlive))
+
 
     logger("SYNC SCAN")
     logger.info(s"Performing initial scan on ${mapping.length} repos", mapping.map(_._1).mkString("\n"))
@@ -174,61 +153,7 @@ object Syncer{
       initialLocalScan(src, eventQueue, logger, skipArr(i))
     }
 
-    /**
-      * This thread does ping/pong health check between syncer and agent
-      * - If not draining responses from remote agent, don't do health check
-      * - else if connection is not alive and reaches retry timeout, retry
-      * - else if connection is not alive and retry attempted, timeout
-      * - else send out ping for health check
-      */
-    val ex = new ScheduledThreadPoolExecutor(1)
-    val task = new Runnable() {
-      override def run(): Unit = {
-        logger.info("connectionAlive", connectionAlive.toString)
-        logger.info("draining", draining.toString)
-        logger.info("retryAttempted", retryAttempted.toString)
-        val timestamp = System.currentTimeMillis()
-        if (!connectionAlive && timestamp - lastRetryTime > 5000) {
-          logger.info("Connection drop detected", "Retry on connection and flush buffer")
-          logger("CONNECTION", "RETRY CONNECT")
-          lastRetryTime = timestamp
-          connectionAlive = false
-          retryAttempted = true
-
-          // Re-establish connection
-          agent.destroy()
-          agent.start()
-          client.resetIn(agent.stdout)
-          client.resetOut(agent.stdin)
-
-          // Send Ping and flush buffer
-          client.ping()
-          client.setShouldFlush()
-        } else if (!connectionAlive && retryAttempted) {
-          logger("CONNECTION", "TIMEOUT")
-        } else {
-          logger("CONNECTION", "PING")
-          connectionAlive = false
-          client.ping()
-        }
-      }
-    }
-    ex.scheduleAtFixedRate(task, 2, 1, TimeUnit.SECONDS)
-
-    val backgroundDrainer = new Thread(
-      () => {
-        while(true) {
-          if (!draining) {
-            client.drainOutstandingMsgs()
-          } else {
-            Thread.sleep(10)
-          }
-        }
-      },
-      "DevboxBackgroundDrainerThread"
-    )
-    backgroundDrainer.start()
-
+    devboxStateMonitor.start(client)
 
     var messagedSync = true
     val allChangedPaths = mutable.Buffer.empty[os.Path]
@@ -236,7 +161,7 @@ object Syncer{
     while (continue()) {
       logger("SYNC LOOP")
 
-      for (interestingBases <- Syncer.drainUntilStable(eventQueue, debounceTime, agent, logger)) {
+      for (interestingBases <- Syncer.drainUntilStable(eventQueue, debounceTime)) {
         // We need to .distinct after we convert the strings to paths, in order
         // to ensure the inputs are canonicalized and don't have meaningless
         // differences such as trailing slashes
@@ -258,7 +183,7 @@ object Syncer{
             )
             res <- synchronizeRepo(
               logger, vfsArr(i), skipArr(i), src, dest,
-              client, buffer, srcEventDirs, signatureTransformer, setDraining)
+              client, buffer, srcEventDirs, signatureTransformer, devboxStateMonitor.setDraining)
           } yield res
 
           exitCode match {
@@ -481,7 +406,7 @@ object Syncer{
     byteCount
   }
 
-  def drainUntilStable[T](eventQueue: BlockingQueue[T], debounceTime: Int, agent: AgentApi, logger: Logger) = {
+  def drainUntilStable[T](eventQueue: BlockingQueue[T], debounceTime: Int) = {
     val interestingBases = mutable.Buffer.empty[T]
 
     /**
