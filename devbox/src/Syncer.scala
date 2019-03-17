@@ -14,6 +14,7 @@ import geny.Generator
 
 import scala.annotation.tailrec
 import scala.collection.{immutable, mutable}
+import scala.util.control.NonFatal
 
 /**
   * The Syncer class instances contain all the stateful, close-able parts of
@@ -139,6 +140,7 @@ object Syncer{
 
     var connectionAlive: Boolean = true
     var retryAttempted: Boolean = false
+    var draining: Boolean = false
     var lastRetryTime: Long = 0
 
     def setConnectionAlive(): Unit = {
@@ -148,6 +150,13 @@ object Syncer{
         retryAttempted = false
       }
       connectionAlive = true
+    }
+
+    def setDraining(flag: Boolean): Unit = {
+      draining = flag
+      if (flag) {
+        lastRetryTime = System.currentTimeMillis()
+      }
     }
 
     val client = new RpcClient(
@@ -164,11 +173,20 @@ object Syncer{
       initialLocalScan(src, eventQueue, logger, skipArr(i))
     }
 
+    /**
+      * This thread does ping/pong health check between syncer and agent
+      * - If not draining responses from remote agent, don't do health check
+      * - else if connection is not alive and reaches retry timeout, retry
+      * - else if connection is not alive and retry attempted, timeout
+      * - else send out ping for health check
+      */
     val ex = new ScheduledThreadPoolExecutor(1)
     val task = new Runnable() {
       override def run(): Unit = {
         val timestamp = System.currentTimeMillis()
-        if (!connectionAlive && timestamp - lastRetryTime > 5000) {
+        if (!draining) {
+          Thread.sleep(5)
+        } else if (!connectionAlive && timestamp - lastRetryTime > 5000) {
           logger.info("Connection drop detected", "Retry on connection and flush buffer")
           logger("CONNECTION", "RETRY CONNECT")
           lastRetryTime = timestamp
@@ -183,7 +201,7 @@ object Syncer{
 
           // Send Ping and flush buffer
           client.ping()
-          client.flushOutstandingMsgs()
+          client.setShouldFlush()
         } else if (!connectionAlive && retryAttempted) {
           logger("CONNECTION", "TIMEOUT")
         } else {
@@ -195,16 +213,6 @@ object Syncer{
     }
     ex.scheduleAtFixedRate(task, 2, 1, TimeUnit.SECONDS)
 
-
-    new Thread(
-      () => {
-        client.clearOutstandingMsgs()
-        while(true) {
-          client.drainOutstandingMsgs()
-        }
-      },
-      "DevboxDrainerThread"
-    ).start()
 
     var messagedSync = true
     val allChangedPaths = mutable.Buffer.empty[os.Path]
@@ -235,8 +243,7 @@ object Syncer{
               )
               res <- synchronizeRepo(
                 logger, vfsArr(i), skipArr(i), src, dest,
-                client, buffer, srcEventDirs, signatureTransformer
-              )
+                client, buffer, srcEventDirs, signatureTransformer, setDraining)
             } yield res
 
             exitCode match {
@@ -371,7 +378,8 @@ object Syncer{
                       client: RpcClient,
                       buffer: Array[Byte],
                       srcEventDirs: mutable.Buffer[Path],
-                      signatureTransformer: (os.RelPath, Signature) => Signature): Either[ExitCode, (Long, Seq[os.Path])] = {
+                      signatureTransformer: (os.RelPath, Signature) => Signature,
+                      setDraining: Boolean => Unit): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
         computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
@@ -389,10 +397,10 @@ object Syncer{
 
       vfsRpcClient = new VfsRpcClient(client, vfs)
 
-      _ = Syncer.syncMetadata(vfsRpcClient, filteredSignatures, src, dest, vfs, logger, buffer)
+      _ = Syncer.syncMetadata(vfsRpcClient, filteredSignatures, src, dest, vfs, logger, buffer, setDraining)
 
       streamedByteCount <- restartOnFailure(
-        streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
+        streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures, setDraining)
       )
     } yield (streamedByteCount, filteredSignatures.map(_._1))
   }
@@ -428,10 +436,11 @@ object Syncer{
                             client: VfsRpcClient,
                             src: Path,
                             dest: os.RelPath,
-                            signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
+                            signatureMapping: Seq[(Path, Option[Signature], Option[Signature])],
+                            setDraining: Boolean => Unit) = {
     val total = signatureMapping.length
     var byteCount = 0L
-//    draining(client) {
+    draining(client, logger, setDraining) {
       for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
         val segments = p.relativeTo(src)
         val (otherHashes, otherSize) = otherSig match {
@@ -454,7 +463,7 @@ object Syncer{
           total
         )
       }
-//    }
+    }
     byteCount
   }
 
@@ -491,12 +500,19 @@ object Syncer{
     }
   }
 
-  def draining[T](client: VfsRpcClient)(t: => T): T = {
-    client.clearOutstandingMsgs()
+  def draining[T](client: VfsRpcClient, logger: Logger, setDraining: Boolean => Unit)(t: => T): T = {
     @volatile var running = true
+    setDraining(running)
     val drainer = new Thread(
       () => {
-        while(running || client.client.getOutstandingMsgs > 0){
+        while(running || client.client.getOutstandingMsgs > 0) {
+          if (client.client.shouldFlush()) {
+            try {
+              client.flushOutstandingMsgs()
+            } catch {
+              case NonFatal(ex) => logger("FLUSH RECONNECTION", s"FAILED")
+            }
+          }
           if (client.client.getOutstandingMsgs > 0) client.drainOutstandingMsgs()
           else Thread.sleep(5)
         }
@@ -506,11 +522,12 @@ object Syncer{
     drainer.start()
     val res =
       try t
-      finally{
+      finally {
         running = false
         drainer.join()
       }
 
+    setDraining(running)
     res
   }
 
@@ -520,9 +537,10 @@ object Syncer{
                    dest: os.RelPath,
                    stateVfs: Vfs[Signature],
                    logger: Logger,
-                   buffer: Array[Byte]): Unit = {
+                   buffer: Array[Byte],
+                   setDraining: Boolean => Unit): Unit = {
     val total = signatureMapping.length
-//    draining(client) {
+    draining(client, logger, setDraining) {
       for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
         val segments = p.relativeTo(src)
         logger.progress(s"Syncing path [$i/$total]", segments.toString())
@@ -560,7 +578,7 @@ object Syncer{
             }
         }
       }
-//    }
+    }
   }
 
   def streamFileContents(logger: Logger,

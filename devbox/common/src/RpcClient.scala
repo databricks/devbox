@@ -9,36 +9,39 @@ class RpcClient(var out: OutputStream with DataOutput,
                 var in: InputStream with DataInput,
                 logger: (String, Any) => Unit,
                 ackPing: Option[() => Unit] = None) {
-  private[this] val outstandingMsgs = new AtomicInteger()
   private[this] val pendingQueue = new ConcurrentHashMap[Int, Rpc]()
+  private[this] var flushing = false
 
   def resetOut(out: OutputStream with DataOutput) = {this.out = out}
   def resetIn(in: InputStream with DataInput) = {this.in = in}
 
-  def clearOutstandingMsgs() = outstandingMsgs.set(0)
-  def getOutstandingMsgs = outstandingMsgs.get()
+  def clearOutstandingMsgs() = pendingQueue.clear()
+  def getOutstandingMsgs = pendingQueue.size()
+  def shouldFlush(): Boolean = flushing
+
   def drainOutstandingMsgs() = {
-    while(getOutstandingMsgs >= 0) {
-      try {
-        readMsg[Rpc]()
-      } catch {
-        case NonFatal(ex) => logger("ERROR", ex)
-      }
+    try {
+      readMsg[Rpc]()
+    } catch {
+      case NonFatal(ex) => logger("ERROR", ex)
     }
+  }
+
+  def setShouldFlush() = {
+    flushing = true
   }
 
   def flushOutstandingMsgs() = {
     logger("PENDING FLUSH", pendingQueue.size())
     pendingQueue.values().forEach { rpc =>
       logger("FLUSH", rpc)
-      outstandingMsgs.incrementAndGet()
       writeMsg0(rpc)
     }
+    flushing = false
   }
 
   def writeMsg0[T: upickle.default.Writer](t: T, success: Boolean = true): Unit = {
     logger("MSG WRITE", t)
-    outstandingMsgs.incrementAndGet()
     val blob = upickle.default.writeBinary(t)
     out.synchronized {
       out.writeBoolean(success)
@@ -50,7 +53,7 @@ class RpcClient(var out: OutputStream with DataOutput,
 
   def writeMsg[T: upickle.default.Writer](t: T, success: Boolean = true): Unit = {
     t match {
-      case rpc: Rpc if !rpc.isInstanceOf[Rpc.Ack] =>
+      case rpc: Rpc if !rpc.isInstanceOf[Rpc.Ack] && !rpc.isInstanceOf[Rpc.FullScan] =>
         logger("KEY", rpc.hashCode())
         logger("VALUE", rpc)
         pendingQueue.put(rpc.hashCode(), rpc)
@@ -79,7 +82,6 @@ class RpcClient(var out: OutputStream with DataOutput,
       }
       else throw RpcException(upickle.default.readBinary[RemoteException](blob))
     logger("MSG READ", res)
-    outstandingMsgs.decrementAndGet()
 
     res match {
       case Rpc.Ack(hash) =>
