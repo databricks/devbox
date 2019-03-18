@@ -99,8 +99,6 @@ class DevboxStateMonitor(logger: Logger,
     initHealthChecker()
     initBackgroundDrainer()
     this.client = client
-    logger.info("CONNECTION", s"Health check interval $healthCheckInterval seconds")
-    logger.info("CONNECTION", s"Retry interval $retryInterval seconds")
     if (healthCheckInterval != 0 && retryInterval != 0) {
       ex.scheduleAtFixedRate(task, 0, 1, TimeUnit.SECONDS)
       backgroundDrainerThread.start()

@@ -175,7 +175,9 @@ object DevboxTests extends TestSuite{
                         ignoreStrategy: String,
                         inMemoryAgent: Boolean,
                         exitOnError: Boolean,
-                        signatureMapping: (os.RelPath, Signature) => Signature) = {
+                        signatureMapping: (os.RelPath, Signature) => Signature,
+                        healthCheckInterval: Int = 10,
+                        retryInterval: Int = 20) = {
     new Syncer(
       if (inMemoryAgent) new InMemoryAgent(dest, skipper, exitOnError = exitOnError)
       else os.proc(
@@ -189,7 +191,9 @@ object DevboxTests extends TestSuite{
       debounceMillis,
       onComplete,
       logger,
-      signatureMapping
+      signatureMapping,
+      healthCheckInterval,
+      retryInterval
     )
   }
 
