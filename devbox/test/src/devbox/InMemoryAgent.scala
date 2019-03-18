@@ -10,32 +10,38 @@ import devbox.common.{Logger, RpcClient, Skipper}
   */
 class InMemoryAgent(dest: os.Path,
                     skipper: Skipper,
-                    exitOnError: Boolean) extends AgentApi {
+                    exitOnError: Boolean,
+                    randomKillConnection: Boolean = false) extends AgentApi {
   var alive = true
   var thread: Thread = _
-  var randomKillThread: Thread = _
   val startTime: Long = System.currentTimeMillis()
 
-  var stderr0: Pipe = _
-  var stdout0: Pipe = _
-  var stdin0: Pipe = _
+  var stderr0: Pipe = new Pipe()
+  var stdin0: Pipe = new Pipe()
+  var stdout0: Pipe = new Pipe()
+
+  var stderr: InputStream with DataInput = stderr0.in
+  var stdin: OutputStream with DataOutput = stdin0.out
+  var stdout: InputStream with DataInput = stdout0.in
 
   def isAlive() = alive
-  var stderr: InputStream with DataInput = null
-  var stdout: InputStream with DataInput = null
-  var stdin: OutputStream with DataOutput = null
+
+  var killerThread = new Thread(() => {
+    var count = 0
+    while (true) {
+      count += 1
+      if (count % 7 == 6) {
+        logger("KILLER", "KILL AGENT")
+        thread.interrupt()
+        thread.join()
+      }
+      Thread.sleep(1000)
+    }
+  })
 
   start()
 
   override def start(): Unit = {
-    stdin0 = new Pipe()
-    stdout0 = new Pipe()
-    stderr0 = new Pipe()
-
-    stdin = stdin0.out
-    stdout = stdout0.in
-    stderr = stderr0.in
-
     thread = new Thread(() =>
       try devbox.agent.DevboxAgentMain.mainLoop(
         logger,
@@ -50,6 +56,9 @@ class InMemoryAgent(dest: os.Path,
     )
     thread.start()
     alive = true
+    if (randomKillConnection) {
+      killerThread.start()
+    }
   }
 
   def destroy(): Unit = {

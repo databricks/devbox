@@ -26,6 +26,7 @@ object DevboxTests extends TestSuite{
     // complexity
     'edge - {
       * - walkValidate("edge", cases("edge"), 1, 50, 0)
+      'pingpong - walkValidate("edge-pingpong", cases("edge"), 1, 50, 0, randomKillConnection = true)
       'git - walkValidate("edge-git", cases("edge"), 1, 50, 0, ignoreStrategy = "")
       'restart - walkValidate("edge-restart", cases("edge"), 1, 50, 0, restartSyncer = true)
     }
@@ -38,14 +39,17 @@ object DevboxTests extends TestSuite{
 
     'scalatags - {
       * - walkValidate("scalatags", cases("scalatags"), 3, 100, 0)
+      'pingpong - walkValidate("scalatags-pingpong", cases("scalatags"), 3, 100, 0, randomKillConnection = true)
       'restart - walkValidate("scalatags-restart", cases("scalatags"), 3, 100, 0, restartSyncer = true)
     }
     'mill - {
       * - walkValidate("mill", cases("mill"), 4, 100, 0)
+      'pingpong - walkValidate("mill-pingpong", cases("mill"), 3, 100, 0, randomKillConnection = true)
       'restart - walkValidate("mill-restart", cases("mill"), 4, 100, 0, restartSyncer = true)
     }
     'ammonite - {
       * - walkValidate("ammonite", cases("ammonite"), 5, 200, 0)
+      'pingpong - walkValidate("ammonite-pingpong", cases("ammonite"), 5, 200, 0, randomKillConnection = true)
       'restart - walkValidate("ammonite-restart", cases("ammonite"), 5, 200, 0, restartSyncer = true)
     }
   }
@@ -58,7 +62,8 @@ object DevboxTests extends TestSuite{
                    initialCommit: Int,
                    commitIndicesToCheck0: Seq[Int] = Nil,
                    ignoreStrategy: String = "dotgit",
-                   restartSyncer: Boolean = false) = {
+                   restartSyncer: Boolean = false,
+                   randomKillConnection: Boolean = false) = {
 
     val (src, dest, log, commits, workCount, skipper, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
@@ -69,7 +74,8 @@ object DevboxTests extends TestSuite{
       src, dest, skipper, debounceMillis, () => workCount.release(),
       logger, ignoreStrategy, restartSyncer,
       exitOnError = true,
-      signatureMapping = (_, sig) => sig
+      signatureMapping = (_, sig) => sig,
+      randomKillConnection = randomKillConnection
     )
     var syncer = createSyncer()
     try{
@@ -176,10 +182,12 @@ object DevboxTests extends TestSuite{
                         inMemoryAgent: Boolean,
                         exitOnError: Boolean,
                         signatureMapping: (os.RelPath, Signature) => Signature,
-                        healthCheckInterval: Int = 10,
-                        retryInterval: Int = 20) = {
+                        healthCheckInterval: Int = 1,
+                        retryInterval: Int = 5,
+                        randomKillConnection: Boolean = false) = {
     new Syncer(
       if (inMemoryAgent) new InMemoryAgent(dest, skipper, exitOnError = exitOnError)
+      else if (randomKillConnection) new InMemoryAgent(dest, skipper, exitOnError = exitOnError, randomKillConnection)
       else os.proc(
         System.getenv("AGENT_EXECUTABLE"),
         "--ignore-strategy", ignoreStrategy,

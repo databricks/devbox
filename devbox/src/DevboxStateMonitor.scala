@@ -4,6 +4,8 @@ import java.util.concurrent.{ScheduledThreadPoolExecutor, TimeUnit}
 
 import devbox.common.{Logger, RpcClient}
 
+import scala.util.control.NonFatal
+
 class DevboxStateMonitor(logger: Logger,
                          agent: AgentApi,
                          healthCheckInterval: Int,
@@ -46,36 +48,41 @@ class DevboxStateMonitor(logger: Logger,
   def initHealthChecker(): Unit = {
     ex = new ScheduledThreadPoolExecutor(1)
     task = () => {
-      val timestamp = System.currentTimeMillis()
-      val timeElapsed = (1.0 * (timestamp - startTime) / 1000).round
-      if (!connectionAlive && retryAttempted) {
-        print(s"${Console.RESET}${Console.BOLD}Next retry in ${getNextRetry(timestamp)} seconds ⌛️${Console.RESET}\r")
-      }
-      if (timeElapsed % healthCheckInterval == 0) {
-        if (!connectionAlive && getSecondsSinceLastRetry(timestamp) >= retryInterval) {
-          logger.info("Connection drop detected", "Retry on connection and flush buffer", Some(Console.YELLOW))
-          logger("CONNECTION", "RETRY CONNECT")
-          lastRetryTime = timestamp
-          connectionAlive = false
-          retryAttempted = true
-
-          // Re-establish connection
-          agent.destroy()
-          agent.start()
-          client.resetIn(agent.stdout)
-          client.resetOut(agent.stdin)
-
-          // Send Ping and flush buffer
-          client.ping()
-          client.setShouldFlush()
-          logger("CONNECTION", "SET SHOULD FLUSH")
-        } else if (!connectionAlive && retryAttempted) {
-          logger("CONNECTION", "TIMEOUT")
-        } else {
-          logger("CONNECTION", "PING")
-          connectionAlive = false
-          client.ping()
+      try {
+        logger("CONNECT", "MONITOR 1s")
+        val timestamp = System.currentTimeMillis()
+        val timeElapsed = (1.0 * (timestamp - startTime) / 1000).round
+        if (!connectionAlive && retryAttempted) {
+          print(s"${Console.RESET}${Console.BOLD}Next retry in ${getNextRetry(timestamp)} seconds ⌛️${Console.RESET}\r")
         }
+        if (timeElapsed % healthCheckInterval == 0) {
+          if (!connectionAlive && getSecondsSinceLastRetry(timestamp) >= retryInterval) {
+            logger.info("Connection drop detected", "Retry on connection and flush buffer", Some(Console.YELLOW))
+            logger("CONNECTION", "RETRY CONNECT")
+            lastRetryTime = timestamp
+            connectionAlive = false
+            retryAttempted = true
+
+            // Re-establish connection
+            agent.destroy()
+            agent.start()
+            client.resetIn(agent.stdout)
+            client.resetOut(agent.stdin)
+
+            // Send Ping and flush buffer
+            client.ping()
+            client.setShouldFlush()
+            logger("CONNECTION", "SET SHOULD FLUSH")
+          } else if (!connectionAlive && retryAttempted) {
+            logger("CONNECTION", "TIMEOUT")
+          } else {
+            logger("CONNECTION", "PING")
+            connectionAlive = false
+            client.ping()
+          }
+        }
+      } catch {
+        case NonFatal(ex) => logger.info("ERROR", s"Exception in DevboxStateMonitor $ex")
       }
     }
   }
