@@ -32,11 +32,5 @@ object Rpc{
   case class Ack(hash: Int) extends Rpc with Action
   object Ack{ implicit  val rw: ReadWriter[Ack] = macroRW }
 
-  case class Ping() extends Rpc with Action
-  object Ping{ implicit  val rw: ReadWriter[Ping] = macroRW }
-
-  case class Pong() extends Rpc with Action
-  object Pong{ implicit  val rw: ReadWriter[Pong] = macroRW }
-
   implicit val rw: ReadWriter[Rpc] = macroRW
 }

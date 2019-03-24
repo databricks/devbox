@@ -30,8 +30,7 @@ class Syncer(agent: AgentApi,
              onComplete: () => Unit,
              logger: Logger,
              signatureTransformer: (os.RelPath, Signature) => Signature,
-             healthCheckInterval: Int,
-             retryInterval: Int) extends AutoCloseable{
+             healthCheckInterval: Int) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(
@@ -91,8 +90,7 @@ class Syncer(agent: AgentApi,
         () => running,
         logger,
         signatureTransformer,
-        healthCheckInterval,
-        retryInterval
+        healthCheckInterval
       )
     }
 
@@ -135,20 +133,21 @@ object Syncer{
                    continue: () => Boolean,
                    logger: Logger,
                    signatureTransformer: (os.RelPath, Signature) => Signature,
-                   healthCheckInterval: Int,
-                   retryInterval: Int) = {
+                   healthCheckInterval: Int) = {
+
+    if (healthCheckInterval != 0) {
+      assert(healthCheckInterval >= 3, "Health check interval must >= 3 seconds")
+    }
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val skipArr = for ((src, dest) <- mapping.toArray) yield skipper.initialize(src)
 
     val buffer = new Array[Byte](Util.blockSize)
 
-    val devboxStateMonitor = new DevboxStateMonitor(logger, agent, healthCheckInterval, retryInterval)
     val client = new RpcClient(
             agent.stdin,
             agent.stdout,
-            (tag, t) => logger("SYNC " + tag, t),
-            Some(devboxStateMonitor.setConnectionAlive))
+            (tag, t) => logger("SYNC " + tag, t))
 
 
     logger("SYNC SCAN")
@@ -158,8 +157,6 @@ object Syncer{
       initialRemoteScan(logger, vfsArr, client, dest, i)
       initialLocalScan(src, eventQueue, logger, skipArr(i))
     }
-
-    devboxStateMonitor.start(client)
 
     var messagedSync = true
     val allChangedPaths = mutable.Buffer.empty[os.Path]
@@ -188,8 +185,8 @@ object Syncer{
               signatureTransformer, skipArr(i) = _
             )
             res <- synchronizeRepo(
-              logger, vfsArr(i), skipArr(i), src, dest,
-              client, buffer, srcEventDirs, signatureTransformer, devboxStateMonitor.setDraining)
+              agent, logger, vfsArr(i), skipArr(i), src, dest,
+              client, buffer, srcEventDirs, signatureTransformer, healthCheckInterval)
           } yield res
 
           exitCode match {
@@ -315,7 +312,8 @@ object Syncer{
     */
   case object NoOp extends ExitCode
 
-  def synchronizeRepo(logger: Logger,
+  def synchronizeRepo(agent: AgentApi,
+                      logger: Logger,
                       vfs: Vfs[Signature],
                       skip: (os.Path, Boolean) => Boolean,
                       src: os.Path,
@@ -324,7 +322,7 @@ object Syncer{
                       buffer: Array[Byte],
                       srcEventDirs: mutable.Buffer[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
-                      setDraining: Boolean => Unit): Either[ExitCode, (Long, Seq[os.Path])] = {
+                      healthCheckInterval: Int): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
         computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
@@ -342,10 +340,10 @@ object Syncer{
 
       vfsRpcClient = new VfsRpcClient(client, vfs)
 
-      _ = Syncer.syncMetadata(vfsRpcClient, filteredSignatures, src, dest, vfs, logger, buffer, setDraining)
+      _ = Syncer.syncMetadata(agent, vfsRpcClient, filteredSignatures, src, dest, vfs, logger, buffer, healthCheckInterval)
 
       streamedByteCount <- restartOnFailure(
-        streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures, setDraining)
+        streamAllFileContents(agent, logger, vfs, vfsRpcClient, src, dest, filteredSignatures, healthCheckInterval)
       )
     } yield (streamedByteCount, filteredSignatures.map(_._1))
   }
@@ -376,16 +374,17 @@ object Syncer{
     }
   }
 
-  def streamAllFileContents(logger: Logger,
+  def streamAllFileContents(agent: AgentApi,
+                            logger: Logger,
                             stateVfs: Vfs[Signature],
                             client: VfsRpcClient,
                             src: Path,
                             dest: os.RelPath,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])],
-                            setDraining: Boolean => Unit) = {
+                            healthCheckInterval: Int) = {
     val total = signatureMapping.length
     var byteCount = 0L
-    draining(client, logger, setDraining) {
+    draining(agent, client, healthCheckInterval, logger) {
       for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
         val segments = p.relativeTo(src)
         val (otherHashes, otherSize) = otherSig match {
@@ -445,22 +444,24 @@ object Syncer{
     }
   }
 
-  def draining[T](client: VfsRpcClient, logger: Logger, setDraining: Boolean => Unit)(t: => T): T = {
+  def draining[T](agent: AgentApi,
+                  client: VfsRpcClient,
+                  healthCheckInterval: Int,
+                  logger: Logger)(t: => T): T = {
     @volatile var running = true
-    setDraining(running)
+    val devboxState = new DevboxState(logger, agent, client.client, healthCheckInterval)
+    devboxState.start()
     val drainer = new Thread(
       () => {
         while(running || client.client.getOutstandingMsgs > 0) {
-          logger("OUTSTANDING", client.client.getOutstandingMsgs)
-          if (client.client.shouldFlush()) {
-            try {
-              client.flushOutstandingMsgs()
-            } catch {
-              case NonFatal(ex) => logger("FLUSH RECONNECTION", s"FAILED")
+          if (client.client.getOutstandingMsgs > 0) {
+            val isAck = client.drainOutstandingMsgs()
+            if (isAck) {
+              devboxState.updateState()
             }
+          } else {
+            Thread.sleep(10)
           }
-          if (client.client.getOutstandingMsgs > 0) client.drainOutstandingMsgs()
-          else Thread.sleep(5)
         }
       },
       "DevboxDrainerThread"
@@ -471,22 +472,22 @@ object Syncer{
       finally {
         running = false
         drainer.join()
+        devboxState.join()
       }
-
-    setDraining(running)
     res
   }
 
-  def syncMetadata(client: VfsRpcClient,
+  def syncMetadata(agent: AgentApi,
+                   client: VfsRpcClient,
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
                    dest: os.RelPath,
                    stateVfs: Vfs[Signature],
                    logger: Logger,
                    buffer: Array[Byte],
-                   setDraining: Boolean => Unit): Unit = {
+                   healthCheckInterval: Int): Unit = {
     val total = signatureMapping.length
-    draining(client, logger, setDraining) {
+    draining(agent, client, healthCheckInterval, logger) {
       for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
         val segments = p.relativeTo(src)
         logger.progress(s"Syncing path [$i/$total]", segments.toString())

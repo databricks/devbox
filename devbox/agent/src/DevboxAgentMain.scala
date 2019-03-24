@@ -120,9 +120,6 @@ object DevboxAgentMain {
         os.perms.set.apply(wd / root / path, perms)
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
-      case rpc: Rpc.Ping =>
-        client.pong()
-
     }catch{
       case e: EOFException => throw e // master process has closed up, exit
       case e: Throwable if !exitOnError =>

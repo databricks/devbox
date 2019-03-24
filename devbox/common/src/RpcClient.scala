@@ -2,12 +2,13 @@ package devbox.common
 import java.io._
 import java.util.concurrent.LinkedBlockingQueue
 
+import devbox.common.Rpc.Ack
+
 import scala.util.control.NonFatal
 
 class RpcClient(var out: OutputStream with DataOutput,
                 var in: InputStream with DataInput,
-                logger: (String, Any) => Unit,
-                ackPing: Option[() => Unit] = None) {
+                logger: (String, Any) => Unit) {
   private[this] val pendingQueue = new LinkedBlockingQueue[Rpc]()
   private[this] var flushing = false
 
@@ -18,12 +19,13 @@ class RpcClient(var out: OutputStream with DataOutput,
   def getOutstandingMsgs = pendingQueue.size()
   def shouldFlush(): Boolean = flushing
 
-  def drainOutstandingMsgs() = {
-    try {
+  def drainOutstandingMsgs(): Boolean = {
+    val msg = try {
       readMsg[Rpc]()
     } catch {
       case NonFatal(ex) => logger("ERROR", ex)
     }
+    msg.isInstanceOf[Ack]
   }
 
   def setShouldFlush() = {
@@ -50,8 +52,6 @@ class RpcClient(var out: OutputStream with DataOutput,
   def writeMsg[T: upickle.default.Writer](t: T, success: Boolean = true): Unit = {
     t match {
       case rpc: Rpc if !rpc.isInstanceOf[Rpc.Ack] && !rpc.isInstanceOf[Rpc.FullScan] =>
-        logger("KEY", rpc.hashCode())
-        logger("VALUE", rpc)
         pendingQueue.offer(rpc)
       case _ =>
     }
@@ -83,25 +83,9 @@ class RpcClient(var out: OutputStream with DataOutput,
       case Rpc.Ack(hash) =>
         val rpc = pendingQueue.take()
         assert(rpc.hashCode() == hash)
-      case Rpc.Pong() =>
-        ackPing.get()
       case _ =>
     }
 
     res
-  }
-
-  def ping(): Unit = {
-    try {
-      val ping = Rpc.Ping()
-      writeMsg0(ping)
-    } catch {
-      case NonFatal(ex) => logger("CONNECTION", s"CANNOT SEND PING $ex")
-    }
-  }
-
-  def pong(): Unit = {
-    val pong = Rpc.Pong()
-    writeMsg0(pong)
   }
 }

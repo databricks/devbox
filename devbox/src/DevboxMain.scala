@@ -113,8 +113,7 @@ object DevboxMain {
                 case (path, sig) => sig
               }
             },
-            healthCheckInterval = config.healthCheckInterval,
-            retryInterval = config.retryInterval
+            healthCheckInterval = config.healthCheckInterval
           )){syncer =>
             syncer.start()
             Thread.sleep(Long.MaxValue)
