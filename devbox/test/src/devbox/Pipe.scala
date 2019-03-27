@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong
   * without the weird "read end dead"/"write end dead" errors that turn up
   * when trying to use [[java.io.PipedInputStream]]/[[java.io.PipedOutputStream]]
   */
-class Pipe(bufferSize: Int = 1048576) {
+class Pipe(bufferSize: Int = 1024) {
   private[this] val buffer = new Array[Byte](bufferSize)
   private[this] val availableWrite = new Semaphore(bufferSize)
   private[this] val availableRead = new Semaphore(0)

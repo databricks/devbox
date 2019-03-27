@@ -4,6 +4,13 @@ import java.util.concurrent.{ScheduledThreadPoolExecutor, TimeUnit}
 
 import devbox.common.{Logger, RpcClient}
 
+import scala.util.control.NonFatal
+
+/**
+  * Devbox state maintains a simple state machine of the underlying connection status
+  * Health check is performed every [[healthCheckInterval]] seconds which checks if
+  * the connection is healthy or not
+  */
 class DevboxState(logger: Logger,
                   agent: AgentApi,
                   client: RpcClient,
@@ -17,22 +24,26 @@ class DevboxState(logger: Logger,
   private val ex: ScheduledThreadPoolExecutor = new ScheduledThreadPoolExecutor(1)
 
   private val task: Runnable = () => {
-    val timestamp = System.currentTimeMillis()
-    val timeElapsed = (1.0 * (timestamp - startTime) / 1000).round
-    if (!connectionAlive) {
-      print(s"${Console.RESET}${Console.BOLD}Next retry in ${nextCheck - timeElapsed} seconds ⌛️${Console.RESET}\r")
-    }
-    if (timeElapsed >= nextCheck) {
-      nextCheck += healthCheckInterval
-      if (timestamp - lastAck > healthCheckInterval) {
-        connectionAlive = false
-        logger.info("CONNECTION", "Health check failed, reconnect and flush")
-        agent.destroy()
-        agent.start()
-        client.resetIn(agent.stdout)
-        client.resetOut(agent.stdin)
-        client.flushOutstandingMsgs()
+    try {
+      val timestamp = System.currentTimeMillis()
+      val timeElapsed = (1.0 * (timestamp - startTime) / 1000).round
+      if (!connectionAlive) {
+        print(s"${Console.RESET}${Console.BOLD}Next retry in ${nextCheck - timeElapsed} seconds ⌛️${Console.RESET}\r")
       }
+      if (timeElapsed >= nextCheck) {
+        nextCheck += healthCheckInterval
+        if (timestamp - lastAck > healthCheckInterval) {
+          connectionAlive = false
+          logger.info("CONNECTION", "Health check failed, reconnect and flush")
+          agent.destroy()
+          agent.start()
+          client.resetIn(agent.stdout)
+          client.resetOut(agent.stdin)
+          client.flushOutstandingMsgs()
+        }
+      }
+    } catch {
+      case NonFatal(ex) => logger.info("Error in Devbox state monitor thread", ex.getMessage)
     }
   }
 

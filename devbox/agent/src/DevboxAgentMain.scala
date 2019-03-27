@@ -55,14 +55,15 @@ object DevboxAgentMain {
           new DataOutputStream(System.out),
           new DataInputStream(System.in),
           (tag, t) => logger("AGNT " + tag, t))
-        mainLoop(logger, skipper, client, os.Path(config.workingDir, os.pwd), config.exitOnError)
+        mainLoop(logger, skipper, client, os.Path(config.workingDir, os.pwd), config.exitOnError, idempotent = true)
     }
   }
   def mainLoop(logger: Logger,
                skipper: Skipper,
                client: RpcClient,
                wd: os.Path,
-               exitOnError: Boolean) = {
+               exitOnError: Boolean,
+               idempotent: Boolean) = {
 
 
     val buffer = new Array[Byte](Util.blockSize)
@@ -91,15 +92,24 @@ object DevboxAgentMain {
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutFile(root, path, perms) =>
-        os.write(wd / root / path, "", perms)
+        val targetPath = wd / root / path
+        withIdempotentExecute(idempotent, os.exists(targetPath)) {
+          os.write(targetPath, "", perms)
+        }
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutDir(root, path, perms) =>
-        os.makeDir(wd / root / path, perms)
+        val targetPath = wd / root / path
+        withIdempotentExecute(idempotent, os.exists(targetPath)) {
+          os.makeDir(targetPath, perms)
+        }
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutLink(root, path, dest) =>
-        os.symlink(wd / root / path, os.FilePath(dest))
+        val targetPath = wd / root / path
+        withIdempotentExecute(idempotent, os.exists(targetPath)) {
+          os.symlink(targetPath, os.FilePath(dest))
+        }
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.WriteChunk(root, path, offset, data, hash) =>
@@ -136,6 +146,16 @@ object DevboxAgentMain {
       val res = t
       os.perms.set(p, perms)
       res
+    }
+  }
+
+  def withIdempotentExecute[T](idempodent: Boolean, condition: Boolean)(t: => T): Unit = {
+    if (idempodent) {
+      if (!condition) {
+        t
+      }
+    } else {
+      t
     }
   }
 }

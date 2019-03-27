@@ -48,7 +48,8 @@ class InMemoryAgent(dest: os.Path,
         skipper,
         new RpcClient(stdout0.out, stdin0.in, (tag, t) => logger("AGNT " + tag, t)),
         dest,
-        exitOnError
+        exitOnError,
+        idempotent = false
       ) catch{
         case e: java.lang.InterruptedException => () // do nothing
       },
