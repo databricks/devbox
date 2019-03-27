@@ -16,9 +16,9 @@ class InMemoryAgent(dest: os.Path,
   var thread: Thread = _
   val startTime: Long = System.currentTimeMillis()
 
-  var stderr0: Pipe = new Pipe()
-  var stdin0: Pipe = new Pipe()
-  var stdout0: Pipe = new Pipe()
+  var stderr0: Pipe = new Pipe(2048)
+  var stdin0: Pipe = new Pipe(2048)
+  var stdout0: Pipe = new Pipe(2048)
 
   var stderr: InputStream with DataInput = stderr0.in
   var stdin: OutputStream with DataOutput = stdin0.out

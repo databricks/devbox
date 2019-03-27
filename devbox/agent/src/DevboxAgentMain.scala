@@ -93,21 +93,21 @@ object DevboxAgentMain {
 
       case rpc @ Rpc.PutFile(root, path, perms) =>
         val targetPath = wd / root / path
-        withIdempotentExecute(idempotent, os.exists(targetPath)) {
+        if (!idempotent || !os.exists(targetPath)) {
           os.write(targetPath, "", perms)
         }
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutDir(root, path, perms) =>
         val targetPath = wd / root / path
-        withIdempotentExecute(idempotent, os.exists(targetPath)) {
+        if (!idempotent || !os.exists(targetPath)) {
           os.makeDir(targetPath, perms)
         }
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutLink(root, path, dest) =>
         val targetPath = wd / root / path
-        withIdempotentExecute(idempotent, os.exists(targetPath)) {
+        if (!idempotent || !os.exists(targetPath)) {
           os.symlink(targetPath, os.FilePath(dest))
         }
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
@@ -146,16 +146,6 @@ object DevboxAgentMain {
       val res = t
       os.perms.set(p, perms)
       res
-    }
-  }
-
-  def withIdempotentExecute[T](idempodent: Boolean, condition: Boolean)(t: => T): Unit = {
-    if (idempodent) {
-      if (!condition) {
-        t
-      }
-    } else {
-      t
     }
   }
 }
