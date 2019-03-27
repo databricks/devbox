@@ -136,8 +136,10 @@ object Syncer{
                    healthCheckInterval: Int) = {
 
     if (healthCheckInterval != 0) {
-      assert(healthCheckInterval >= 3, "Health check interval must >= 3 seconds")
+      assert(healthCheckInterval >= 5, "Health check interval must >= 3 seconds")
     }
+
+    logger.info("Connection", s"Health check every $healthCheckInterval seconds")
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val skipArr = for ((src, dest) <- mapping.toArray) yield skipper.initialize(src)

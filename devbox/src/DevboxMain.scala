@@ -56,14 +56,9 @@ object DevboxMain {
         (c, v) => c.copy(readOnlyRemote = v)
       ),
       Arg[Config, Int](
-        "healthcheck-interval", None,
+        "health-check-interval", None,
         "Interval between health check, health check should succeed before the next health check (in seconds)",
         (c, v) => c.copy(healthCheckInterval = v)
-      ),
-      Arg[Config, Int](
-        "retry-interval", None,
-        "Interval between retries when health check failed (in seconds)",
-        (c, v) => c.copy(retryInterval = v)
       )
     )
 

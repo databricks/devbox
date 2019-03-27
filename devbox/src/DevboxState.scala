@@ -34,7 +34,7 @@ class DevboxState(logger: Logger,
         nextCheck += healthCheckInterval
         if (timestamp - lastAck > healthCheckInterval) {
           connectionAlive = false
-          logger.info("CONNECTION", "Health check failed, reconnect and flush")
+          logger.info("Connection", "Health check failed, reconnect and flush")
           agent.destroy()
           agent.start()
           client.resetIn(agent.stdout)
