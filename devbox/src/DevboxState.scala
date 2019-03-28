@@ -51,7 +51,7 @@ class DevboxState(logger: Logger,
     if (healthCheckInterval != 0) {
       lastAck = System.currentTimeMillis()
       if (!connectionAlive) {
-        logger.info("Connection re-established", "Devbox is back alive", Some(Console.GREEN))
+        logger.info("Connection", "Reconnected - Devbox is back alive", Some(Console.GREEN))
       }
       connectionAlive = true
     }

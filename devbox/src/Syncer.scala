@@ -67,7 +67,10 @@ class Syncer(agent: AgentApi,
         if (agent.isAlive()) {
           try {
             val str = agent.stderr.readLine()
-            if (str != null) logger.write(ujson.read(str).str)
+            if (str != null) {
+              logger.write(ujson.read(str).str)
+              logger.info("Connection", "To reconnect, make some file changes")
+            }
           } catch {
             case e: InterruptedIOException => //do nothing
             case e: InterruptedException => //do nothing
