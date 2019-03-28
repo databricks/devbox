@@ -67,13 +67,10 @@ class Syncer(agent: AgentApi,
         if (agent.isAlive()) {
           try {
             val str = agent.stderr.readLine()
-            if (str != null) {
-              logger.write(ujson.read(str).str)
-              logger.info("Connection", "To reconnect, make some file changes")
-            }
+            if (str != null) logger.write(ujson.read(str).str)
           } catch {
-            case e: InterruptedIOException => //do nothing
-            case e: InterruptedException => //do nothing
+            case NonFatal(ex) =>
+              logger.info("Connection", "Connection dropped - to reconnect, make some file changes", Some(Console.YELLOW))
           }
         }
       }
@@ -218,7 +215,6 @@ object Syncer{
               s"${allChangedPaths.head}" +
                 (if (allChangedPaths.length == 1) "" else s" and ${allChangedPaths.length - 1} others")
             )
-            logger.info("Connection", s"To reconnect when connection drops, make some file changes", Some(Console.YELLOW))
             allSyncedBytes = 0
             allChangedPaths.clear()
           } else if (messagedSync) {
