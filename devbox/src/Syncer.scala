@@ -1,17 +1,14 @@
 package devbox
-import java.io._
+import java.io.{InterruptedIOException, PrintWriter, StringWriter}
 import java.nio.ByteBuffer
 import java.nio.file.{Files, LinkOption}
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent._
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong}
 
 import devbox.common._
 import os.Path
 import upickle.default
 import Util.relpathRw
-import devbox.Syncer.draining
-import geny.Generator
 
 import scala.annotation.tailrec
 import scala.collection.{immutable, mutable}
@@ -113,14 +110,18 @@ class Syncer(agent: AgentApi,
 }
 
 object Syncer{
-  class VfsRpcClient(val client: RpcClient, stateVfs: Vfs[Signature]){
+  class VfsRpcClient(val client: RpcClient, stateVfs: Vfs[Signature], logger: Logger){
     def clearOutstandingMsgs() = client.clearOutstandingMsgs()
     def drainOutstandingMsgs() = client.drainOutstandingMsgs()
     def flushOutstandingMsgs() = client.flushOutstandingMsgs()
 
     def apply[T <: Action: default.Writer](p: T) = {
-      client.writeMsg(p)
-      Vfs.updateVfs(p, stateVfs)
+      try {
+        client.writeMsg(p)
+        Vfs.updateVfs(p, stateVfs)
+      } catch {
+        case NonFatal(ex) => logger.info("Connection", s"Message cannot be sent $ex")
+      }
     }
   }
 
@@ -214,6 +215,7 @@ object Syncer{
               s"${allChangedPaths.head}" +
                 (if (allChangedPaths.length == 1) "" else s" and ${allChangedPaths.length - 1} others")
             )
+            logger.info("Connection", s"To reconnect when connection drops, make some file changes", Some(Console.YELLOW))
             allSyncedBytes = 0
             allChangedPaths.clear()
           } else if (messagedSync) {
@@ -340,7 +342,7 @@ object Syncer{
 
       _ = logger.info(s"${filteredSignatures.length} paths changed", s"$src")
 
-      vfsRpcClient = new VfsRpcClient(client, vfs)
+      vfsRpcClient = new VfsRpcClient(client, vfs, logger)
 
       _ = Syncer.syncMetadata(agent, vfsRpcClient, filteredSignatures, src, dest, vfs, logger, buffer, healthCheckInterval)
 
