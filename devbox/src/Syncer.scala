@@ -137,7 +137,7 @@ object Syncer{
                    healthCheckInterval: Int) = {
 
     if (healthCheckInterval != 0) {
-      assert(healthCheckInterval >= 5, "Health check interval must >= 3 seconds")
+      assert(healthCheckInterval >= 10, "Health check interval must >= 10 seconds")
     }
 
     logger.info("Connection", s"Health check every $healthCheckInterval seconds")
