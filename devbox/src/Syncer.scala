@@ -70,7 +70,11 @@ class Syncer(agent: AgentApi,
             if (str != null) logger.write(ujson.read(str).str)
           } catch {
             case NonFatal(ex) =>
-              logger.info("Connection", "Connection dropped - to reconnect, make some file changes", Some(Console.YELLOW))
+              if (healthCheckInterval == 0) {
+                logger.info("Connection", s"Connection dropped ${ex.getMessage}")
+              } else {
+                logger.info("Connection", "Connection dropped - to reconnect, make some file changes", Some(Console.YELLOW))
+              }
           }
         }
       }
