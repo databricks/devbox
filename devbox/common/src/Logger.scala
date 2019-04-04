@@ -4,7 +4,7 @@ import java.nio.file.StandardOpenOption.{CREATE, WRITE, TRUNCATE_EXISTING}
 
 trait Logger extends AutoCloseable{
   def write(s: String): Unit
-  def info(title: => String, body: => String): Unit
+  def info(title: => String, body: => String, color: => Option[String] = None): Unit
   def progress(title: => String, body: => String): Unit
 
   def apply(tag: String, x: => Any = Logger.NoOp): Unit = {
@@ -31,10 +31,13 @@ object Logger{
     }
     def close() = output.close()
     var lastProgressTimestamp = 0L
-    override def info(title: => String, body: => String): Unit = {
+    override def info(title: => String, body: => String, color: => Option[String]): Unit = {
       val title0 = title
       val body0 = body
-      println(s"$title0: $body")
+      color match {
+        case Some(c) => println(s"${Console.RESET}$c$title0: $body${Console.RESET}")
+        case None => println(s"$title0: $body")
+      }
       lastProgressTimestamp = System.currentTimeMillis()
       if (toast) os.proc("osascript", "-e", s"""display notification "$body0" with title "$title0" """).call()
     }
@@ -58,7 +61,7 @@ object Logger{
       output.write('\n')
     }
     def close() = output.close()
-    def info(title: => String, body: => String): Unit = ???
+    def info(title: => String, body: => String, color: => Option[String]): Unit = ???
     def progress(title: => String, body: => String): Unit = ???
   }
 }
