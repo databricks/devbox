@@ -14,7 +14,7 @@ import scala.util.control.NonFatal
 class DevboxState(logger: Logger,
                   agent: AgentApi,
                   client: RpcClient,
-                  healthCheckInterval: Int) {
+                  healthCheckInterval: Option[Int]) {
 
   private var connectionAlive: Boolean = true
   private var lastAck: Long = System.currentTimeMillis()
@@ -23,7 +23,7 @@ class DevboxState(logger: Logger,
 
   private val ex: ScheduledThreadPoolExecutor = new ScheduledThreadPoolExecutor(1)
 
-  private val task: Runnable = () => {
+  private def buildTaskRunnable(checkInterval: Int): Runnable = () => {
     try {
       val timestamp = System.currentTimeMillis()
       val timeElapsed = (1.0 * (timestamp - startTime) / 1000).round
@@ -31,8 +31,8 @@ class DevboxState(logger: Logger,
         print(s"${Console.RESET}${Console.BOLD}Next retry in ${nextCheck - timeElapsed} seconds ⌛️${Console.RESET}\r")
       }
       if (timeElapsed >= nextCheck) {
-        nextCheck += healthCheckInterval
-        if (timestamp - lastAck > healthCheckInterval) {
+        nextCheck += checkInterval
+        if (timestamp - lastAck > checkInterval) {
           connectionAlive = false
           logger.info("Connection", "Health check failed, reconnect and flush")
           agent.destroy()
@@ -48,7 +48,7 @@ class DevboxState(logger: Logger,
   }
 
   def updateState() = {
-    if (healthCheckInterval != 0) {
+    if (healthCheckInterval.isDefined) {
       lastAck = System.currentTimeMillis()
       if (!connectionAlive) {
         logger.info("Connection", "Reconnected - Devbox is back alive", Some(Console.GREEN))
@@ -58,13 +58,14 @@ class DevboxState(logger: Logger,
   }
 
   def start() = {
-    if (healthCheckInterval != 0) {
-      ex.scheduleAtFixedRate(task, 0, 1, TimeUnit.SECONDS)
+    if (healthCheckInterval.isDefined) {
+      val taskRunnable = buildTaskRunnable(healthCheckInterval.get)
+      ex.scheduleAtFixedRate(taskRunnable, 0, 1, TimeUnit.SECONDS)
     }
   }
 
   def join() = {
-    if (healthCheckInterval != 0) {
+    if (healthCheckInterval.isDefined) {
       ex.shutdown()
     }
   }

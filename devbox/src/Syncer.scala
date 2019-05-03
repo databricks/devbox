@@ -27,7 +27,7 @@ class Syncer(agent: AgentApi,
              onComplete: () => Unit,
              logger: Logger,
              signatureTransformer: (os.RelPath, Signature) => Signature,
-             healthCheckInterval: Int) extends AutoCloseable{
+             healthCheckInterval: Option[Int]) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
   private[this] val watcher = new FSEventsWatcher(
@@ -70,12 +70,16 @@ class Syncer(agent: AgentApi,
             if (str != null) logger.write(ujson.read(str).str)
           } catch {
             case NonFatal(ex) =>
-              if (healthCheckInterval == 0) {
+              if (healthCheckInterval.isEmpty) {
                 logger.info("Connection", s"Connection dropped ${ex.getMessage}")
               } else {
                 logger.info("Connection", "Connection dropped - to reconnect, make some file changes", Some(Console.YELLOW))
               }
           }
+        } else if (healthCheckInterval.isDefined) {
+          logger.info("Connection", s"Connection dropped - cannot reach agent - retrying in ${healthCheckInterval.get}", Some(Console.YELLOW))
+        } else {
+          logger.info("Connection", s"Connection dropped - cannot reach agent", Some(Console.RED))
         }
       }
     }
@@ -138,13 +142,12 @@ object Syncer{
                    continue: () => Boolean,
                    logger: Logger,
                    signatureTransformer: (os.RelPath, Signature) => Signature,
-                   healthCheckInterval: Int) = {
+                   healthCheckInterval: Option[Int]) = {
 
-    if (healthCheckInterval != 0) {
-      assert(healthCheckInterval >= 10, "Health check interval must >= 10 seconds")
+    if (healthCheckInterval.isDefined && healthCheckInterval.get != 0) {
+      assert(healthCheckInterval.get >= 10, "Health check interval must >= 10 seconds")
+      logger.info("Connection", s"Health check every ${healthCheckInterval.get} seconds")
     }
-
-    logger.info("Connection", s"Health check every $healthCheckInterval seconds")
 
     val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
     val skipArr = for ((src, dest) <- mapping.toArray) yield skipper.initialize(src)
@@ -329,7 +332,7 @@ object Syncer{
                       buffer: Array[Byte],
                       srcEventDirs: mutable.Buffer[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
-                      healthCheckInterval: Int): Either[ExitCode, (Long, Seq[os.Path])] = {
+                      healthCheckInterval: Option[Int]): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
         computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
@@ -388,7 +391,7 @@ object Syncer{
                             src: Path,
                             dest: os.RelPath,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])],
-                            healthCheckInterval: Int) = {
+                            healthCheckInterval: Option[Int]) = {
     val total = signatureMapping.length
     var byteCount = 0L
     draining(agent, client, healthCheckInterval, logger) {
@@ -453,7 +456,7 @@ object Syncer{
 
   def draining[T](agent: AgentApi,
                   client: VfsRpcClient,
-                  healthCheckInterval: Int,
+                  healthCheckInterval: Option[Int],
                   logger: Logger)(t: => T): T = {
     @volatile var running = true
     val devboxState = new DevboxState(logger, agent, client.client, healthCheckInterval)
@@ -492,7 +495,7 @@ object Syncer{
                    stateVfs: Vfs[Signature],
                    logger: Logger,
                    buffer: Array[Byte],
-                   healthCheckInterval: Int): Unit = {
+                   healthCheckInterval: Option[Int]): Unit = {
     val total = signatureMapping.length
     draining(agent, client, healthCheckInterval, logger) {
       for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {

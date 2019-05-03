@@ -14,7 +14,7 @@ object DevboxMain {
                     logFile: Option[os.Path] = None,
                     ignoreStrategy: String = "",
                     readOnlyRemote: String = null,
-                    healthCheckInterval: Int = 0,
+                    healthCheckInterval: Option[Int] = None,
                     retryInterval: Int = 0)
 
   def main(args: Array[String]): Unit = {
@@ -58,7 +58,7 @@ object DevboxMain {
       Arg[Config, Int](
         "health-check-interval", None,
         "Interval between health check, health check should succeed before the next health check (in seconds)",
-        (c, v) => c.copy(healthCheckInterval = v)
+        (c, v) => c.copy(healthCheckInterval = Some(v))
       )
     )
 
