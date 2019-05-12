@@ -180,7 +180,7 @@ object DevboxTests extends TestSuite{
                         inMemoryAgent: Boolean,
                         exitOnError: Boolean,
                         signatureMapping: (os.RelPath, Signature) => Signature,
-                        healthCheckInterval: Int = 3,
+                        healthCheckInterval: Int = 10,
                         randomKillConnection: Boolean = false) = {
     new Syncer(
       if (inMemoryAgent) new InMemoryAgent(dest, skipper, exitOnError = exitOnError)

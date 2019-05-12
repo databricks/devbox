@@ -5,6 +5,7 @@ import java.nio.file.{Files, LinkOption}
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent._
 
+import scala.concurrent.ExecutionContext.Implicits.global
 import devbox.common._
 import os.Path
 import upickle.default
@@ -12,6 +13,9 @@ import Util.relpathRw
 
 import scala.annotation.tailrec
 import scala.collection.{immutable, mutable}
+import scala.concurrent.duration._
+import scala.concurrent.{Await, Future, TimeoutException}
+import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 
 /**
@@ -30,6 +34,7 @@ class Syncer(agent: AgentApi,
              healthCheckInterval: Int) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
+  // xy: any event happens, the file path is added to the eventQueue
   private[this] val watcher = new FSEventsWatcher(
     mapping.map(_._1),
     eventQueue.add,
@@ -40,6 +45,10 @@ class Syncer(agent: AgentApi,
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
   private[this] var agentLoggerThread: Thread = null
+
+  // xy: threads for initialization
+  private[this] val numWorkers = 5
+  private[this] var initWorkers: Array[Thread] = new Array[Thread](numWorkers)
 
   @volatile private[this] var running: Boolean = false
 
@@ -114,6 +123,7 @@ class Syncer(agent: AgentApi,
 }
 
 object Syncer{
+  /////////////////////////////////////////////////////////////////////////////////////////////////////
   class VfsRpcClient(val client: RpcClient, stateVfs: Vfs[Signature], logger: Logger){
     def clearOutstandingMsgs() = client.clearOutstandingMsgs()
     def drainOutstandingMsgs() = client.drainOutstandingMsgs()
@@ -161,13 +171,20 @@ object Syncer{
     logger.info(s"Performing initial scan on ${mapping.length} repos", mapping.map(_._1).mkString("\n"))
 
     for (((src, dest), i) <- mapping.zipWithIndex) {
+      // this makes a remote RPC call
       initialRemoteScan(logger, vfsArr, client, dest, i)
+      // xy: this step is fast, after this, the eventQueue has all the file/dir paths
       initialLocalScan(src, eventQueue, logger, skipArr(i))
     }
 
     var messagedSync = true
     val allChangedPaths = mutable.Buffer.empty[os.Path]
     var allSyncedBytes = 0L
+
+    var isInit = false
+    // TODO: change the following to be a function
+    // Split the initial eventQueue to multiple sub queues, assign a thread to each sub queue
+    // after those threads are finished, run the following loop. At this time, the eventQueue is small
     while (continue()) {
       logger("SYNC LOOP")
 
@@ -175,9 +192,10 @@ object Syncer{
         // We need to .distinct after we convert the strings to paths, in order
         // to ensure the inputs are canonicalized and don't have meaningless
         // differences such as trailing slashes
-        val allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
+        val allSrcEventDirs: mutable.Buffer[Path] = interestingBases.flatten.sorted.map(os.Path(_)).distinct
         logger("SYNC EVENTS", allSrcEventDirs)
 
+        // TODO: use more thread to do this
         for (((src, dest), i) <- mapping.zipWithIndex) {
           val srcEventDirs = allSrcEventDirs.filter(p =>
             p.startsWith(src) && !skipArr(i)(p, true)
@@ -191,10 +209,14 @@ object Syncer{
               srcEventDirs, skipper, vfsArr(i), src, buffer, logger,
               signatureTransformer, skipArr(i) = _
             )
+            // xy: the synchronizeRepo takes time
             res <- synchronizeRepo(
               agent, logger, vfsArr(i), skipArr(i), src, dest,
-              client, buffer, srcEventDirs, signatureTransformer, healthCheckInterval)
+              client, buffer, srcEventDirs, signatureTransformer, healthCheckInterval,
+              isInit)
           } yield res
+
+          isInit = false
 
           exitCode match {
             case Right((streamedByteCount, changedPaths)) =>
@@ -206,6 +228,7 @@ object Syncer{
               val x = new StringWriter()
               val p = new PrintWriter(x)
               value.printStackTrace(p)
+              isInit = true
               logger("SYNC FAILED", x.toString)
           }
         }
@@ -329,10 +352,12 @@ object Syncer{
                       buffer: Array[Byte],
                       srcEventDirs: mutable.Buffer[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
-                      healthCheckInterval: Int): Either[ExitCode, (Long, Seq[os.Path])] = {
+                      healthCheckInterval: Int,
+                     isInit: Boolean = false): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
-        computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
+        // xy: this takes time
+        computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer, isInit)
       )
 
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
@@ -589,7 +614,7 @@ object Syncer{
     byteCount
   }
 
-  def computeSignatures(interestingBases: Seq[Path],
+  def singleThreadCompute(interestingBases: Seq[Path],
                         buffer: Array[Byte],
                         stateVfs: Vfs[Signature],
                         skip: (os.Path, Boolean) => Boolean,
@@ -639,16 +664,118 @@ object Syncer{
       // listed from the VFS, because they often have overlaps, and use
       // `listedNames` to check for previously-present-but-now-deleted files
       for(k <- allKeys.distinct.sorted)
-      yield {
-        (
-          p / k,
-          for{
-            fileType <- listedFiletypeLookup.get(k)
-            signature <- Signature.compute(p / k, buffer, fileType)
-          } yield signatureTransformer((p / k).relativeTo(src), signature),
-          virtual.get(k).map(_.value)
-        )
+        yield {
+          (
+            p / k,
+            for{
+              fileType <- listedFiletypeLookup.get(k)
+              signature <- Signature.compute(p / k, buffer, fileType)
+            } yield signatureTransformer((p / k).relativeTo(src), signature),
+            virtual.get(k).map(_.value)
+          )
+        }
+    }
+  }
+
+  def createFuture(bases: Seq[Path],
+                   buffer: Array[Byte],
+                   stateVfs: Vfs[Signature],
+                   skip: (os.Path, Boolean) => Boolean,
+                   src: os.Path,
+                   logger: Logger,
+                   signatureTransformer: (os.RelPath, Signature) => Signature
+                   ): Future[Seq[(os.Path, Option[Signature], Option[Signature])]] = Future {
+    singleThreadCompute(
+      bases,
+      buffer,
+      stateVfs,
+      skip,
+      src,
+      logger,
+      signatureTransformer)
+  }
+
+  def waitUntilCompleted(futures: Seq[Future[Seq[(os.Path, Option[Signature], Option[Signature])]]],
+                         atMost: Duration
+                        ): Seq[Try[Seq[(os.Path, Option[Signature], Option[Signature])]]] = {
+
+    val startTime = System.currentTimeMillis()
+
+    def getUncompletedFutures: Seq[Future[Seq[(os.Path, Option[Signature], Option[Signature])]]] =
+      futures.filterNot(_.isCompleted)
+    def timeLeft = atMost.toMillis + startTime - System.currentTimeMillis()
+
+    while (getUncompletedFutures.nonEmpty && timeLeft > 0) {
+      try {
+        getUncompletedFutures.foreach { fut =>
+          Await.ready(fut, atMost)
+        }
+      } catch {
+        case e: TimeoutException =>
+        // just pass here
       }
+    }
+
+    futures.map(_.value).map {
+      case Some(completed) =>
+        completed
+      case None =>
+        Failure(new TimeoutException(s"Timed out after $atMost"))
+    }
+  }
+
+  def computeSignatures(interestingBases: Seq[Path],
+                        buffer: Array[Byte],
+                        stateVfs: Vfs[Signature],
+                        skip: (os.Path, Boolean) => Boolean,
+                        src: os.Path,
+                        logger: Logger,
+                        signatureTransformer: (os.RelPath, Signature) => Signature,
+                        isInit: Boolean = false): Seq[(os.Path, Option[Signature], Option[Signature])] = {
+    // TODO: for initialization sync, use multiple threads to do this
+    // if the file bases are small, don't need to use multiple threads
+    if (isInit && (interestingBases.length > 100)) {
+      val numChunks = 5
+      val chunkSize = interestingBases.length / numChunks
+      val tmpChunks = for (i <- 0 until (numChunks - 1))
+        yield {
+          interestingBases.slice(chunkSize * i, chunkSize * (i + 1))
+        }
+
+      val allChunks = tmpChunks ++ Seq(interestingBases.slice(chunkSize * (numChunks - 1), interestingBases.length))
+
+      val futures: Seq[Future[Seq[(os.Path, Option[Signature], Option[Signature])]]] =
+        allChunks.zipWithIndex.map { case (p, i) =>
+          val buf = new Array[Byte](Util.blockSize)
+          createFuture(
+            p,
+            buf,
+            stateVfs,
+            skip,
+            src,
+            logger,
+            signatureTransformer)
+      }
+
+      val waitSeconds = 600.seconds
+      val futureTries: Seq[Try[Seq[(Path, Option[Signature], Option[Signature])]]] =
+        waitUntilCompleted(futures, waitSeconds)
+
+      val results: Seq[Seq[(os.Path, Option[Signature], Option[Signature])]] = futureTries.map {
+        case Success(value) => value
+        case Failure(ex) => throw new TimeoutException(s"Didn't finish after ${waitSeconds.toSeconds} seconds")
+      }
+      results.flatten
+
+    } else {
+      singleThreadCompute(
+        interestingBases,
+        buffer,
+        stateVfs,
+        skip,
+        src,
+        logger,
+        signatureTransformer)
     }
   }
 }
