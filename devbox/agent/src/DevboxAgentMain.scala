@@ -9,6 +9,7 @@ import devbox.common.Cli.Arg
 import devbox.common._
 import Cli.pathScoptRead
 import Util.relpathRw
+import devbox.common.Rpc.GitCheckout
 object DevboxAgentMain {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
@@ -64,7 +65,6 @@ object DevboxAgentMain {
                wd: os.Path,
                exitOnError: Boolean,
                idempotent: Boolean) = {
-
 
     val buffer = new Array[Byte](Util.blockSize)
     while (true) try client.readMsg[Rpc]() match {
@@ -129,6 +129,9 @@ object DevboxAgentMain {
       case rpc @ Rpc.SetPerms(root, path, perms) =>
         os.perms.set.apply(wd / root / path, perms)
         client.writeMsg(Rpc.Ack(rpc.hashCode()))
+
+      case GitCheckout(url) =>
+        println(s"$url")
 
     }catch{
       case e: EOFException => throw e // master process has closed up, exit

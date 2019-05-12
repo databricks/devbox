@@ -32,5 +32,8 @@ object Rpc{
   case class Ack(hash: Int) extends Rpc with Action
   object Ack{ implicit  val rw: ReadWriter[Ack] = macroRW }
 
+  case class GitCheckout(url: String) extends Rpc
+  object GitCheckout{ implicit val rw: ReadWriter[GitCheckout] = macroRW }
+
   implicit val rw: ReadWriter[Rpc] = macroRW
 }
