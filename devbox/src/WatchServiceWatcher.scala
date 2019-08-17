@@ -15,9 +15,7 @@ import collection.JavaConverters._
 
 class WatchServiceWatcher(root: os.Path,
                           onEvent: Array[String] => Unit,
-                          ignorePaths: (os.Path, Boolean) => Boolean,
-                          logger: Logger,
-                          settleDelay: Double) extends AutoCloseable{
+                          logger: Logger) extends AutoCloseable{
 
   val nioWatchService = FileSystems.getDefault.newWatchService()
   val currentlyWatchedPaths = mutable.Map.empty[os.Path, WatchKey]
@@ -94,7 +92,7 @@ class WatchServiceWatcher(root: os.Path,
         })()
 
         recursiveWatches()
-        debouncedTriggerListener()
+        triggerListener()
 
         // cleanup stale watches
         for(p <- currentlyWatchedPaths.keySet if !os.isDir(p, followLinks = false)){
@@ -122,14 +120,14 @@ class WatchServiceWatcher(root: os.Path,
     }
   }
 
-  private def debouncedTriggerListener(): Unit = {
+  private def triggerListener(): Unit = {
     logger("bufferedEvents", bufferedEvents)
     val strings = bufferedEvents.iterator
       .map{p => if (os.isDir(p, followLinks = false)) p else p / os.up}
       .map(_.toString)
       .toArray
       .distinct
-    logger("DTL strings", strings)
+    logger("triggered strings", strings)
     onEvent(strings)
     bufferedEvents.clear()
   }
