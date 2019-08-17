@@ -5,7 +5,7 @@ import devbox.common.Logger
 class FSEventsWatcher(srcs: Seq[os.Path],
                       onEvent: Array[String] => Unit,
                       logger: Logger,
-                      latency: Double) {
+                      latency: Double) extends AutoCloseable{
   val callback = new FSEventStreamCallback{
     def invoke(streamRef: FSEventStreamRef,
                clientCallBackInfo: Pointer,
@@ -50,7 +50,7 @@ class FSEventsWatcher(srcs: Seq[os.Path],
     logger("SYNC FSLOOP END")
   }
 
-  def stop() = {
+  def close() = {
     logger("SYNC FSLOOP STOP")
     CarbonApi.INSTANCE.CFRunLoopStop(current)
     CarbonApi.INSTANCE.FSEventStreamStop(streamRef)

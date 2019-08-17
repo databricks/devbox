@@ -29,12 +29,23 @@ class Syncer(agent: AgentApi,
              signatureTransformer: (os.RelPath, Signature) => Signature) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
-  private[this] val watcher = new FSEventsWatcher(
-    mapping.map(_._1),
-    eventQueue.add,
-    logger,
-    0.05
-  )
+
+
+  private[this] val watcher = System.getProperty("os.name") match{
+    case "Linux" =>
+      new WatchServiceWatcher(
+        mapping(0)._1,
+        eventQueue.add,
+        logger
+      )
+    case "Mac OS X" =>
+      new FSEventsWatcher(
+        mapping.map(_._1),
+        eventQueue.add,
+        logger,
+        0.05
+      )
+  }
 
   private[this] var watcherThread: Thread = null
   private[this] var syncThread: Thread = null
@@ -65,8 +76,14 @@ class Syncer(agent: AgentApi,
       while (running && agent.isAlive()) {
         try {
           val str = agent.stderr.readLine()
-          if (str != null) logger.write(ujson.read(str).str)
+          if (str != null) {
+            val logged =
+              try ujson.read(str).str
+              catch{case e: ujson.ParseException => str}
+            logger.write(logged)
+          }
         }catch{
+          case e: IOException => //do nothing
           case e: InterruptedIOException => //do nothing
           case e: InterruptedException => //do nothing
         }
@@ -94,7 +111,7 @@ class Syncer(agent: AgentApi,
 
   def close() = {
     running = false
-    watcher.stop()
+    watcher.close()
     watcherThread.join()
     syncThread.interrupt()
     syncThread.join()
@@ -557,6 +574,7 @@ object Syncer{
                         src: os.Path,
                         logger: Logger,
                         signatureTransformer: (os.RelPath, Signature) => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
+
     interestingBases.zipWithIndex.flatMap { case (p, i) =>
       logger.progress(
         s"Scanning local folder [$i/${interestingBases.length}]",

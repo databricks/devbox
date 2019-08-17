@@ -31,14 +31,14 @@ object DevboxTests extends TestSuite{
     }
 
     'oslib - {
-      * - walkValidate("oslib", cases("oslib"), 1, 50, 0)
-      'git - walkValidate("oslib-git", cases("oslib"), 2, 50, 0, ignoreStrategy = "")
-      'restart - walkValidate("oslib-restart", cases("oslib"), 2, 50, 0, restartSyncer = true)
+      * - walkValidate("oslib", cases("oslib"), 1, 100, 0)
+      'git - walkValidate("oslib-git", cases("oslib"), 1, 100, 0, ignoreStrategy = "")
+      'restart - walkValidate("oslib-restart", cases("oslib"), 1, 50, 0, restartSyncer = true)
     }
 
     'scalatags - {
-      * - walkValidate("scalatags", cases("scalatags"), 3, 100, 0)
-      'restart - walkValidate("scalatags-restart", cases("scalatags"), 3, 100, 0, restartSyncer = true)
+      * - walkValidate("scalatags", cases("scalatags"), 1, 250, 0)
+      'restart - walkValidate("scalatags-restart", cases("scalatags"), 1, 250, 0, restartSyncer = true)
     }
     'mill - {
       * - walkValidate("mill", cases("mill"), 4, 100, 0)

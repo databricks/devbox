@@ -13,23 +13,23 @@ import scala.collection.mutable
 final class Vfs[T](rootMetadata: T) {
   val root = Vfs.Dir[T](rootMetadata, mutable.LinkedHashMap.empty)
 
-  def walk(preOrder: Boolean = true) = new geny.Generator[(List[String], Vfs.Node[T])]{
-    def generate(handleItem: ((List[String], Vfs.Node[T])) => Generator.Action): Generator.Action = {
+  def walk(preOrder: Boolean = true) = new geny.Generator[(List[String], Vfs.Node[T], Option[Vfs.Dir[T]])]{
+    def generate(handleItem: ((List[String], Vfs.Node[T], Option[Vfs.Dir[T]])) => Generator.Action): Generator.Action = {
       var currentAction: Generator.Action = Generator.Continue
-      def rec(reversePath: List[String], current: Vfs.Node[T]): Unit = current match{
-        case Vfs.File(value) => currentAction = handleItem((reversePath, current))
-        case Vfs.Dir(value, children) =>
+      def rec(reversePath: List[String], current: Vfs.Node[T], parent: Option[Vfs.Dir[T]]): Unit = current match{
+        case Vfs.File(value) => currentAction = handleItem((reversePath, current, parent))
+        case dir @ Vfs.Dir(value, children) =>
           if (preOrder){
-            if (preOrder) currentAction = handleItem((reversePath, current))
+            if (preOrder) currentAction = handleItem((reversePath, current, parent))
 
             for((k, v) <- children if currentAction == Generator.Continue) {
-              rec(k :: reversePath, v)
+              rec(k :: reversePath, v, Some(dir))
             }
 
-            if (!preOrder) currentAction = handleItem((reversePath, current))
+            if (!preOrder) currentAction = handleItem((reversePath, current, parent))
           }
       }
-      rec(Nil, root)
+      rec(Nil, root, None)
       currentAction
     }
   }
@@ -52,8 +52,9 @@ final class Vfs[T](rootMetadata: T) {
 }
 
 object Vfs{
-  sealed trait Node[+T]{
+  sealed trait Node[T]{
     def value: T
+    def value_=(v: T): Unit
   }
   case class File[T](var value: T) extends Node[T]
   case class Dir[T](var value: T,
@@ -70,7 +71,7 @@ object Vfs{
 
   def updateVfs(a: Action, stateVfs: Vfs[Signature]) = a match{
     case Rpc.PutFile(_, path, perms) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path.toString))
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception("Parent path not found " + path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.File(perms, Nil, 0))
 
@@ -80,7 +81,7 @@ object Vfs{
       }
 
     case Rpc.PutDir(_, path, perms) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path.toString))
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception("Parent path not found " + path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.Dir(
         Signature.Dir(perms),
@@ -88,14 +89,14 @@ object Vfs{
       )
 
     case Rpc.PutLink(_, path, dest) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception(path.toString))
+      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception("Parent path not found " + path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.Symlink(dest))
 
     case Rpc.WriteChunk(_, path, offset, bytes, hash) =>
       assert(offset % Util.blockSize == 0)
       val index = offset / Util.blockSize
-      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception(path.toString)).asInstanceOf[Vfs.File[Signature.File]]
+      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception("File not found " + path.toString)).asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         blockHashes =
           if (index < currentFile.value.blockHashes.length) currentFile.value.blockHashes.updated(index.toInt, hash)
@@ -104,7 +105,7 @@ object Vfs{
       )
 
     case Rpc.SetSize(_, path, offset) =>
-      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception(path.toString)).asInstanceOf[Vfs.File[Signature.File]]
+      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception("File not found " + path.toString)).asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         size = offset,
         blockHashes = currentFile.value.blockHashes.take(
