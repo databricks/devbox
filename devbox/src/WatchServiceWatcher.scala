@@ -13,7 +13,7 @@ import devbox.common.Logger
 import scala.collection.mutable
 import collection.JavaConverters._
 
-class WatchServiceWatcher(root: os.Path,
+class WatchServiceWatcher(roots: Seq[os.Path],
                           onEvent: Array[String] => Unit,
                           logger: Logger) extends Watcher{
 
@@ -25,7 +25,7 @@ class WatchServiceWatcher(root: os.Path,
 
   isRunning.set(true)
 
-  watchSinglePath(root)
+  roots.foreach(watchSinglePath)
   recursiveWatches()
 
   def watchSinglePath(p: os.Path) = {

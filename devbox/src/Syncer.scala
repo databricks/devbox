@@ -35,7 +35,7 @@ class Syncer(agent: AgentApi,
   private[this] val watcher = System.getProperty("os.name") match{
     case "Linux" =>
       new WatchServiceWatcher(
-        mapping(0)._1,
+        mapping.map(_._1),
         eventQueue.add,
         logger
       )
