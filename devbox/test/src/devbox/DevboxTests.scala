@@ -37,8 +37,8 @@ object DevboxTests extends TestSuite{
     }
 
     'scalatags - {
-      * - walkValidate("scalatags", cases("scalatags"), 1, 150, 0)
-      'restart - walkValidate("scalatags-restart", cases("scalatags"), 1, 150, 0, restartSyncer = true)
+      * - walkValidate("scalatags", cases("scalatags"), 1, 250, 0)
+      'restart - walkValidate("scalatags-restart", cases("scalatags"), 1, 250, 0, restartSyncer = true)
     }
     'mill - {
       * - walkValidate("mill", cases("mill"), 4, 100, 0)
