@@ -27,6 +27,7 @@ object DevboxTests extends TestSuite{
     'edge - {
       * - walkValidate("edge", cases("edge"), 1, 50, 0)
       'git - walkValidate("edge-git", cases("edge"), 1, 50, 0, ignoreStrategy = "")
+      'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 50, 0, ignoreStrategy = "", randomKillConnection = true)
       'restart - walkValidate("edge-restart", cases("edge"), 1, 50, 0, restartSyncer = true)
     }
 
@@ -46,6 +47,7 @@ object DevboxTests extends TestSuite{
     }
     'ammonite - {
       * - walkValidate("ammonite", cases("ammonite"), 5, 200, 0)
+      'reconnect - walkValidate("ammonite-reconnect", cases("ammonite"), 1, 500, 0, randomKillConnection = true)
       'restart - walkValidate("ammonite-restart", cases("ammonite"), 5, 200, 0, restartSyncer = true)
     }
   }
@@ -58,7 +60,8 @@ object DevboxTests extends TestSuite{
                    initialCommit: Int,
                    commitIndicesToCheck0: Seq[Int] = Nil,
                    ignoreStrategy: String = "dotgit",
-                   restartSyncer: Boolean = false) = {
+                   restartSyncer: Boolean = false,
+                   randomKillConnection: Boolean = false) = {
 
     val (src, dest, log, commits, workCount, skipper, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
@@ -69,7 +72,8 @@ object DevboxTests extends TestSuite{
       src, dest, skipper, debounceMillis, () => workCount.release(),
       logger, ignoreStrategy, restartSyncer,
       exitOnError = true,
-      signatureMapping = (_, sig) => sig
+      signatureMapping = (_, sig) => sig,
+      randomKillConnection = randomKillConnection
     )
     var syncer = createSyncer()
     try{
@@ -175,9 +179,12 @@ object DevboxTests extends TestSuite{
                         ignoreStrategy: String,
                         inMemoryAgent: Boolean,
                         exitOnError: Boolean,
-                        signatureMapping: (os.RelPath, Signature) => Signature) = {
+                        signatureMapping: (os.RelPath, Signature) => Signature,
+                        healthCheckInterval: Int = 3,
+                        randomKillConnection: Boolean = false) = {
     new Syncer(
       if (inMemoryAgent) new InMemoryAgent(dest, skipper, exitOnError = exitOnError)
+      else if (randomKillConnection) new InMemoryAgent(dest, skipper, exitOnError = exitOnError, randomKillConnection)
       else os.proc(
         System.getenv("AGENT_EXECUTABLE"),
         "--ignore-strategy", ignoreStrategy,
@@ -189,7 +196,8 @@ object DevboxTests extends TestSuite{
       debounceMillis,
       onComplete,
       logger,
-      signatureMapping
+      signatureMapping,
+      healthCheckInterval
     )
   }
 

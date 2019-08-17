@@ -29,5 +29,8 @@ object Rpc{
   case class SetPerms(root: os.RelPath, path: os.RelPath, perms: os.PermSet) extends Rpc with Action
   object SetPerms{ implicit val rw: ReadWriter[SetPerms] = macroRW }
 
+  case class Ack(hash: Int) extends Rpc with Action
+  object Ack{ implicit  val rw: ReadWriter[Ack] = macroRW }
+
   implicit val rw: ReadWriter[Rpc] = macroRW
 }

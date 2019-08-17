@@ -13,7 +13,9 @@ object DevboxMain {
                     toast: Boolean = false,
                     logFile: Option[os.Path] = None,
                     ignoreStrategy: String = "",
-                    readOnlyRemote: String = null)
+                    readOnlyRemote: String = null,
+                    healthCheckInterval: Int = 0,
+                    retryInterval: Int = 0)
 
   def main(args: Array[String]): Unit = {
 
@@ -52,6 +54,11 @@ object DevboxMain {
         "readonly-remote", None,
         "",
         (c, v) => c.copy(readOnlyRemote = v)
+      ),
+      Arg[Config, Int](
+        "health-check-interval", None,
+        "Interval between health check, health check should succeed before the next health check (in seconds)",
+        (c, v) => c.copy(healthCheckInterval = v)
       )
     )
 
@@ -70,13 +77,7 @@ object DevboxMain {
               .command(remaining:_*)
               .start()
           Util.autoclose(new Syncer(
-            new AgentApi {
-              def isAlive() = agent.isAlive
-              def destroy() = agent.destroy()
-              def stderr = new DataInputStream(agent.getErrorStream)
-              def stdout = new DataInputStream(agent.getInputStream)
-              def stdin = new DataOutputStream(agent.getOutputStream)
-            },
+            new ReliableAgent(remaining),
             for(s <- config.repo)
             yield s.split(':') match{
               case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
@@ -106,7 +107,8 @@ object DevboxMain {
                   )
                 case (path, sig) => sig
               }
-            }
+            },
+            healthCheckInterval = config.healthCheckInterval
           )){syncer =>
             syncer.start()
             Thread.sleep(Long.MaxValue)
