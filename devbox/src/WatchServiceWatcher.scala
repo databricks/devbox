@@ -15,7 +15,7 @@ import collection.JavaConverters._
 
 class WatchServiceWatcher(root: os.Path,
                           onEvent: Array[String] => Unit,
-                          logger: Logger) extends AutoCloseable{
+                          logger: Logger) extends Watcher{
 
   val nioWatchService = FileSystems.getDefault.newWatchService()
   val currentlyWatchedPaths = mutable.Map.empty[os.Path, WatchKey]

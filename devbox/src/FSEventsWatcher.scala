@@ -5,7 +5,7 @@ import devbox.common.Logger
 class FSEventsWatcher(srcs: Seq[os.Path],
                       onEvent: Array[String] => Unit,
                       logger: Logger,
-                      latency: Double) extends AutoCloseable{
+                      latency: Double) extends Watcher{
   val callback = new FSEventStreamCallback{
     def invoke(streamRef: FSEventStreamRef,
                clientCallBackInfo: Pointer,
