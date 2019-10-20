@@ -182,29 +182,29 @@ object Syncer{
     while (continue()) {
       logger("SYNC LOOP")
 
-      for (interestingBases <- Syncer.drainUntilStable(eventQueue, debounceTime)) {
+      for (changedPaths <- Syncer.drainUntilStable(eventQueue, debounceTime)) {
         // We need to .distinct after we convert the strings to paths, in order
         // to ensure the inputs are canonicalized and don't have meaningless
         // differences such as trailing slashes
-        val allSrcEventDirs = interestingBases.flatten.sorted.map(os.Path(_)).distinct
-        logger("SYNC EVENTS", allSrcEventDirs)
+        val allEventPaths = changedPaths.flatten.sorted.map(os.Path(_)).distinct
+        logger("SYNC EVENTS", allEventPaths)
 
         for (((src, dest), i) <- mapping.zipWithIndex) {
-          val srcEventDirs = allSrcEventDirs.filter(p =>
+          val eventPaths = allEventPaths.filter(p =>
             p.startsWith(src) && !skipArr(i)(p, true)
           )
 
-          logger("SYNC BASE", srcEventDirs.map(_.relativeTo(src).toString()))
+          logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
 
           val exitCode = for {
-            _ <- if (srcEventDirs.isEmpty) Left(NoOp: ExitCode) else Right(())
+            _ <- if (eventPaths.isEmpty) Left(NoOp: ExitCode) else Right(())
             _ <- updateSkipPredicate(
-              srcEventDirs, skipper, vfsArr(i), src, buffer, logger,
+              eventPaths, skipper, vfsArr(i), src, buffer, logger,
               signatureTransformer, skipArr(i) = _
             )
             res <- synchronizeRepo(
               agent, logger, vfsArr(i), skipArr(i), src, dest,
-              client, buffer, srcEventDirs, signatureTransformer, healthCheckInterval)
+              client, buffer, eventPaths, signatureTransformer, healthCheckInterval)
           } yield res
 
           exitCode match {
@@ -213,7 +213,7 @@ object Syncer{
               allSyncedBytes += streamedByteCount
             case Left(NoOp) => // do nothing
             case Left(SyncFail(value)) =>
-              eventQueue.add(srcEventDirs.map(_.toString).toArray)
+              eventQueue.add(eventPaths.map(_.toString).toArray)
               val x = new StringWriter()
               val p = new PrintWriter(x)
               value.printStackTrace(p)
@@ -248,7 +248,7 @@ object Syncer{
     }
   }
 
-  def updateSkipPredicate(srcEventDirs: Seq[os.Path],
+  def updateSkipPredicate(eventPaths: Seq[os.Path],
                           skipper: Skipper,
                           vfs: Vfs[Signature],
                           src: os.Path,
@@ -257,7 +257,7 @@ object Syncer{
                           signatureTransformer: (os.RelPath, Signature) => Signature,
                           setSkip: ((os.Path, Boolean) => Boolean) => Unit) = {
     val allModifiedSkipFiles = for{
-      p <- srcEventDirs
+      p <- eventPaths
       pathToCheck <- skipper.checkReset(p)
       newSig =
         if (!os.exists(pathToCheck)) None
@@ -307,7 +307,7 @@ object Syncer{
       os.walk
         .stream.attrs(
           src,
-          (p, attrs) => skip(p, attrs.isDir) || !attrs.isDir,
+          (p, attrs) => skip(p, attrs.isDir),
           includeTarget = true
         )
         .map(_._1.toString())
@@ -338,12 +338,12 @@ object Syncer{
                       dest: os.RelPath,
                       client: RpcClient,
                       buffer: Array[Byte],
-                      srcEventDirs: mutable.Buffer[Path],
+                      eventPaths: mutable.Buffer[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
                       healthCheckInterval: Int): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
-        computeSignatures(srcEventDirs, buffer, vfs, skip, src, logger, signatureTransformer)
+        computeSignatures(eventPaths, buffer, vfs, skip, src, logger, signatureTransformer)
       )
 
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
@@ -613,54 +613,28 @@ object Syncer{
         s"Scanning local folder [$i/${interestingBases.length}]",
         p.relativeTo(src).toString()
       )
-      val listedGen =
-        if (!os.isDir(p, followLinks = false)) os.Generator.apply()
-        else for{
-          p <- os.list.stream(p)
-          // avoid using os.stat to avoid making two filesystem calls
-          attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
-          if !skip(p, attrs.isDirectory)
-        } yield (
-          p.last,
-          if (attrs.isRegularFile) os.FileType.File
-          else if (attrs.isDirectory) os.FileType.Dir
-          else if (attrs.isSymbolicLink) os.FileType.SymLink
-          else if (attrs.isOther) os.FileType.Other
-          else ???
-        )
 
-      val listed = listedGen.toArray
+      Some(Tuple3(
+        p,
+        if (!os.exists(p, followLinks = false) ||
+            // Existing under a differently-cased name counts as not existing
+            p.last != p.wrapped.toRealPath().getFileName.toString) None
+        else {
+          val attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
+          val fileType =
+            if (attrs.isRegularFile) os.FileType.File
+            else if (attrs.isDirectory) os.FileType.Dir
+            else if (attrs.isSymbolicLink) os.FileType.SymLink
+            else if (attrs.isOther) os.FileType.Other
+            else ???
 
-      val virtual = stateVfs.resolve(p.relativeTo(src)) match {
-        // We only care about the case where the there interesting path
-        // points to a folder within the Vfs.
-        case Some(f: Vfs.Dir[Signature]) => f.children
-        // If it points to a non-folder, or a non-existent path, we assume
-        // that previously there must have been a folder at that path that
-        // got replaced by a non-folder or deleted. In which case the
-        // enclosing folder should have it's own interestingBase
-        case Some(_) => Map.empty[String, Vfs.Node[Signature]]
-        case None => Map.empty[String, Vfs.Node[Signature]]
-      }
-
-      val virtualWithFileType = virtual.keys
-
-      val allKeys = listed.map(_._1) ++ virtualWithFileType
-      val listedFiletypeLookup = listed.toMap
-      // We de-dup the combined list of names listed from the filesystem and
-      // listed from the VFS, because they often have overlaps, and use
-      // `listedNames` to check for previously-present-but-now-deleted files
-      for(k <- allKeys.distinct.sorted)
-      yield {
-        (
-          p / k,
-          for{
-            fileType <- listedFiletypeLookup.get(k)
-            signature <- Signature.compute(p / k, buffer, fileType)
-          } yield signatureTransformer((p / k).relativeTo(src), signature),
-          virtual.get(k).map(_.value)
-        )
-      }
+          Signature
+            .compute(p, buffer, fileType)
+            .map(signatureTransformer(p.relativeTo(src), _))
+        },
+        stateVfs.resolve(p.relativeTo(src)).map(_.value)
+      ))
     }
+
   }
 }

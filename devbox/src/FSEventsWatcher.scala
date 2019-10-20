@@ -32,7 +32,14 @@ class FSEventsWatcher(srcs: Seq[os.Path],
     ),
     -1,
     latency,
-    0
+    // Flags defined at https://developer.apple.com/documentation/coreservices/1455376-fseventstreamcreateflags?language=objc
+    //
+    // File-level notifications https://developer.apple.com/documentation/coreservices/1455376-fseventstreamcreateflags/kfseventstreamcreateflagfileevents?language=objc
+    0x00000010 |
+    //
+    // Don't defer https://developer.apple.com/documentation/coreservices/1455376-fseventstreamcreateflags/kfseventstreamcreateflagnodefer?language=objc
+    //
+    0x00000002
   )
 
   var current: CFRunLoopRef = null

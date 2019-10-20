@@ -75,7 +75,7 @@ object DevboxAgentMain {
 
         val fileStream = os.walk.stream.attrs(
           scanRoot,
-          (p, attrs) => skip(p, attrs.isDir) && !attrs.isDir
+          (p, attrs) => skip(p, attrs.isDir)
         )
         client.writeMsg(fileStream.count())
         for {

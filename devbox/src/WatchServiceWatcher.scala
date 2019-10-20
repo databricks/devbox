@@ -55,8 +55,8 @@ class WatchServiceWatcher(roots: Seq[os.Path],
 
 
     logger("EVENT KINDS", events.map(_.kind()))
-    if (os.isDir(p, followLinks = false)) bufferedEvents.append(p)
-    else bufferedEvents.append(p / os.up)
+
+    bufferedEvents.append(p)
 
     for(e <- events if e.kind() == ENTRY_CREATE){
       watchSinglePath(p / e.context().toString)
@@ -123,7 +123,6 @@ class WatchServiceWatcher(roots: Seq[os.Path],
   private def triggerListener(): Unit = {
     logger("bufferedEvents", bufferedEvents)
     val strings = bufferedEvents.iterator
-      .map{p => if (os.isDir(p, followLinks = false)) p else p / os.up}
       .map(_.toString)
       .toArray
       .distinct
