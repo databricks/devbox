@@ -618,7 +618,7 @@ object Syncer{
         p,
         if (!os.exists(p, followLinks = false) ||
             // Existing under a differently-cased name counts as not existing
-            p.last != p.wrapped.toRealPath().getFileName.toString) None
+            p.last != p.wrapped.toRealPath(LinkOption.NOFOLLOW_LINKS).getFileName.toString) None
         else {
           val attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
           val fileType =

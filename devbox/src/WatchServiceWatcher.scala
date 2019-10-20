@@ -40,9 +40,9 @@ class WatchServiceWatcher(roots: Seq[os.Path],
           SensitivityWatchEventModifier.HIGH
         )
       )
-      bufferedEvents.append(p)
       newlyWatchedPaths.append(p)
     }
+    bufferedEvents.append(p)
   }
 
   def processEvent(watchKey: WatchKey) = {
@@ -56,7 +56,9 @@ class WatchServiceWatcher(roots: Seq[os.Path],
 
     logger("EVENT KINDS", events.map(_.kind()))
 
-    bufferedEvents.append(p)
+    for(e <- events){
+      bufferedEvents.append(p / e.context().toString)
+    }
 
     for(e <- events if e.kind() == ENTRY_CREATE){
       watchSinglePath(p / e.context().toString)
