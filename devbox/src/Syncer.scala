@@ -29,7 +29,7 @@ class Syncer(agent: AgentApi,
              signatureTransformer: (os.RelPath, Signature) => Signature,
              healthCheckInterval: Int) extends AutoCloseable{
 
-  private[this] val eventQueue = new LinkedBlockingQueue[Array[String]]()
+  private[this] val eventQueue = new LinkedBlockingQueue[Array[os.Path]]()
 
 
   private[this] val watcher = System.getProperty("os.name") match{
@@ -143,7 +143,7 @@ object Syncer{
   def syncAllRepos(agent: AgentApi,
                    mapping: Seq[(os.Path, os.RelPath)],
                    onComplete: () => Unit,
-                   eventQueue: BlockingQueue[Array[String]],
+                   eventQueue: BlockingQueue[Array[os.Path]],
                    skipper: Skipper,
                    debounceTime: Int,
                    continue: () => Boolean,
@@ -186,7 +186,7 @@ object Syncer{
         // We need to .distinct after we convert the strings to paths, in order
         // to ensure the inputs are canonicalized and don't have meaningless
         // differences such as trailing slashes
-        val allEventPaths = changedPaths.flatten.sorted.map(os.Path(_)).distinct
+        val allEventPaths = changedPaths.flatten.distinct.sortBy(_.toString)
         logger("SYNC EVENTS", allEventPaths)
 
         for (((src, dest), i) <- mapping.zipWithIndex) {
@@ -213,7 +213,7 @@ object Syncer{
               allSyncedBytes += streamedByteCount
             case Left(NoOp) => // do nothing
             case Left(SyncFail(value)) =>
-              eventQueue.add(eventPaths.map(_.toString).toArray)
+              eventQueue.add(eventPaths.toArray)
               val x = new StringWriter()
               val p = new PrintWriter(x)
               value.printStackTrace(p)
@@ -239,7 +239,7 @@ object Syncer{
         } else {
           logger.info(
             "Ongoing changes detected",
-            eventQueue.peek().head
+            eventQueue.peek().head.toString()
           )
           logger("SYNC PARTIAL")
           messagedSync = true
@@ -300,7 +300,7 @@ object Syncer{
   }
 
   def initialLocalScan(src: os.Path,
-                       eventQueue: BlockingQueue[Array[String]],
+                       eventQueue: BlockingQueue[Array[os.Path]],
                        logger: Logger,
                        skip: (os.Path, Boolean) => Boolean) = {
     eventQueue.add(
@@ -310,7 +310,7 @@ object Syncer{
           (p, attrs) => skip(p, attrs.isDir),
           includeTarget = true
         )
-        .map(_._1.toString())
+        .map(_._1)
         .toArray
     )
   }

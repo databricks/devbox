@@ -14,7 +14,7 @@ import scala.collection.mutable
 import collection.JavaConverters._
 
 class WatchServiceWatcher(roots: Seq[os.Path],
-                          onEvent: Array[String] => Unit,
+                          onEvent: Array[os.Path] => Unit,
                           logger: Logger) extends Watcher{
 
   val nioWatchService = FileSystems.getDefault.newWatchService()
@@ -124,8 +124,7 @@ class WatchServiceWatcher(roots: Seq[os.Path],
 
   private def triggerListener(): Unit = {
     logger("bufferedEvents", bufferedEvents)
-    val strings = bufferedEvents.iterator
-      .map(_.toString)
+    val strings = bufferedEvents
       .toArray
       .distinct
     logger("triggered strings", strings)

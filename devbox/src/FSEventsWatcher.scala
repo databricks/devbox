@@ -3,7 +3,7 @@ import com.sun.jna.{NativeLong, Pointer}
 import devbox.common.Logger
 
 class FSEventsWatcher(srcs: Seq[os.Path],
-                      onEvent: Array[String] => Unit,
+                      onEvent: Array[os.Path] => Unit,
                       logger: Logger,
                       latency: Double) extends Watcher{
   val callback = new FSEventStreamCallback{
@@ -16,7 +16,7 @@ class FSEventsWatcher(srcs: Seq[os.Path],
       val length = numEvents.intValue
       val p = eventPaths.getStringArray(0, length)
       logger("SYNC FSEVENT", p)
-      onEvent(p)
+      onEvent(p.map(os.Path(_)))
     }
   }
 
