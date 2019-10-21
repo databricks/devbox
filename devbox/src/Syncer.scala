@@ -199,7 +199,7 @@ object Syncer{
           val exitCode = for {
             _ <- if (eventPaths.isEmpty) Left(NoOp: ExitCode) else Right(())
             _ <- updateSkipPredicate(
-              eventPaths, skipper, vfsArr(i), src, buffer, logger,
+              eventPaths.toSeq, skipper, vfsArr(i), src, buffer, logger,
               signatureTransformer, skipArr(i) = _
             )
             res <- synchronizeRepo(
@@ -343,7 +343,7 @@ object Syncer{
                       healthCheckInterval: Int): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
-        computeSignatures(eventPaths, buffer, vfs, skip, src, logger, signatureTransformer)
+        computeSignatures(eventPaths.toSeq, buffer, vfs, skip, src, logger, signatureTransformer)
       )
 
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})

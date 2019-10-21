@@ -28,7 +28,7 @@ object DevboxTests extends TestSuite{
       * - walkValidate("edge", cases("edge"), 1, 50, 0)
       'git - walkValidate("edge-git", cases("edge"), 1, 50, 0, ignoreStrategy = "")
       'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 50, 0, ignoreStrategy = "", randomKillConnection = true)
-//      'restart - walkValidate("edge-restart", cases("edge"), 1, 50, 0, restartSyncer = true)
+      'restart - walkValidate("edge-restart", cases("edge"), 1, 50, 0, restartSyncer = true)
     }
 
     'oslib - {
@@ -112,7 +112,10 @@ object DevboxTests extends TestSuite{
         }
       }
     }finally{
-      if (syncer != null) syncer.close()
+      if (syncer != null) {
+        syncer.close()
+        syncer = null
+      }
     }
   }
 

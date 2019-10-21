@@ -33,7 +33,7 @@ object Signature{
 
           chunks.append(new Bytes(digest.digest()))
         }
-        Some(File(os.perms(p).toInt, chunks, size))
+        Some(File(os.perms(p).toInt, chunks.toSeq, size))
     }
   }
 

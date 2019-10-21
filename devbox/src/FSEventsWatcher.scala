@@ -6,6 +6,7 @@ class FSEventsWatcher(srcs: Seq[os.Path],
                       onEvent: Array[os.Path] => Unit,
                       logger: Logger,
                       latency: Double) extends Watcher{
+  private[this] var closed = false
   val callback = new FSEventStreamCallback{
     def invoke(streamRef: FSEventStreamRef,
                clientCallBackInfo: Pointer,
@@ -45,6 +46,7 @@ class FSEventsWatcher(srcs: Seq[os.Path],
   var current: CFRunLoopRef = null
 
   def start() = {
+    assert(!closed)
     CarbonApi.INSTANCE.FSEventStreamScheduleWithRunLoop(
       streamRef,
       CarbonApi.INSTANCE.CFRunLoopGetCurrent(),
@@ -58,13 +60,15 @@ class FSEventsWatcher(srcs: Seq[os.Path],
   }
 
   def close() = {
+    assert(!closed)
+    closed = true
     logger("SYNC FSLOOP STOP")
     CarbonApi.INSTANCE.CFRunLoopStop(current)
     CarbonApi.INSTANCE.FSEventStreamStop(streamRef)
     CarbonApi.INSTANCE.FSEventStreamUnscheduleFromRunLoop(
-      streamRef,
-      current,
-      CFStringRef.toCFString("kCFRunLoopDefaultMode")
+        streamRef,
+        current,
+        CFStringRef.toCFString("kCFRunLoopDefaultMode")
     )
     CarbonApi.INSTANCE.FSEventStreamInvalidate(streamRef)
     CarbonApi.INSTANCE.FSEventStreamRelease(streamRef)
