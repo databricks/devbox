@@ -7,14 +7,16 @@ trait ActorContext extends ExecutionContext {
   def executionContext: ExecutionContext
   def reportFailure(t: Throwable): Unit
 
-  def onSchedule(): Unit
-  def onComplete(): Unit
+  def reportSchedule(): Unit
+  def reportSchedule(a: Actor[_], msg: Any): Unit
+  def reportComplete(): Unit
+  def reportComplete(a: Actor[_], msg: Any): Unit
   def execute(runnable: Runnable): Unit = {
-    onSchedule()
+    reportSchedule()
     executionContext.execute(new Runnable {
       def run(): Unit = {
         try runnable.run()
-        finally onComplete()
+        finally reportComplete()
       }
     })
   }
@@ -23,15 +25,19 @@ object ActorContext{
   class Simple(ec: ExecutionContext, logEx: Throwable => Unit) extends ActorContext{
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
-    def onSchedule() = ()
-    def onComplete() = ()
+    def reportSchedule() = ()
+    def reportSchedule(a: Actor[_], msg: Any) = ()
+    def reportComplete() = ()
+    def reportComplete(a: Actor[_], msg: Any) = ()
   }
   class Test(ec: ExecutionContext, logEx: Throwable => Unit) extends ActorContext{
     val active = new java.util.concurrent.atomic.AtomicLong(0)
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
-    def onSchedule() = active.incrementAndGet()
-    def onComplete() = active.decrementAndGet()
+    def reportSchedule() = active.incrementAndGet()
+    def reportSchedule(a: Actor[_], msg: Any) = active.incrementAndGet()
+    def reportComplete() = active.decrementAndGet()
+    def reportComplete(a: Actor[_], msg: Any) = active.decrementAndGet()
   }
 }
 
@@ -45,7 +51,7 @@ abstract class BatchActor[T]()(implicit ac: ActorContext) extends Actor[T]{
   private var scheduled = false
 
   def send(t: T): Unit = synchronized{
-    ac.onSchedule()
+    ac.reportSchedule(this, t)
     queue.enqueue(t)
     if (!scheduled){
       scheduled = true
@@ -57,7 +63,7 @@ abstract class BatchActor[T]()(implicit ac: ActorContext) extends Actor[T]{
     val msgs = synchronized(queue.dequeueAll(_ => true))
     try runBatch(msgs)
     catch{case e: Throwable => ac.reportFailure(e)}
-    finally msgs.foreach(_ => ac.onComplete())
+    finally msgs.foreach(m => ac.reportComplete(this, m))
     synchronized{
       if (queue.nonEmpty) ac.execute(() => runWithItems())
       else{

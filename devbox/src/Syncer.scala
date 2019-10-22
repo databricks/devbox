@@ -37,7 +37,7 @@ class AgentReadWriteActor(agent: AgentApi,
   var sending = true
   def run(item: AgentReadWriteActor.Msg): Unit = item match{
     case AgentReadWriteActor.Send(msg) =>
-      ac.onSchedule()
+      ac.reportSchedule()
       buffer.append(msg)
       if (sending) sendMessages(Seq(msg))
 
@@ -60,7 +60,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
     case AgentReadWriteActor.Receive(data) =>
       syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
-      ac.onComplete()
+      ac.reportComplete()
       buffer.dropInPlace(1)
   }
 
