@@ -47,7 +47,7 @@ object DevboxAgentMain {
 
       case Right((config, remaining)) =>
         os.makeDir.all(os.home / ".devbox")
-        val logger = Logger.Stderr()
+        val logger = Logger.JsonStderr(os.home / ".devbox" / "log.txt")
         logger("AGNT START", config.workingDir)
 
         val skipper = Skipper.fromString(config.ignoreStrategy)

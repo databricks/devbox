@@ -95,15 +95,15 @@ object DevboxTests extends TestSuite{
           syncer.start()
         }
 
-        val field = classOf[cask.util.BatchActor[_]].getDeclaredField("scheduled")
-        field.setAccessible(true)
-        Thread.sleep(100)
-        while({
-          val syncerLive = field.get(syncer.syncer).asInstanceOf[Boolean]
-          val agentLive = field.get(syncer.agentReadWriter).asInstanceOf[Boolean]
+
+        while( {
+          Thread.sleep(100)
+          val syncerLive = syncer.syncer.isScheduled
+          val agentLive = syncer.agentReadWriter.isScheduled
           val unresponded = syncer.agentReadWriter.unresponded.get() != 0
+          pprint.log((syncerLive, agentLive, unresponded))
           syncerLive || agentLive || unresponded
-        }) Thread.sleep(1000)
+        }) ()
 
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
@@ -202,7 +202,7 @@ object DevboxTests extends TestSuite{
         "--ignore-strategy", ignoreStrategy,
         "--working-dir", dest,
         if (exitOnError) Seq("--exit-on-error") else Nil
-      ).spawn(cwd = dest, stderr = os.Inherit),
+      ).spawn(cwd = dest),
       Seq(src -> Nil),
       skipper,
       debounceMillis,

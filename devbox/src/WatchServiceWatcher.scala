@@ -14,13 +14,13 @@ import scala.collection.mutable
 import collection.JavaConverters._
 
 class WatchServiceWatcher(roots: Seq[os.Path],
-                          onEvent: Array[os.Path] => Unit,
+                          onEvent: Set[os.Path] => Unit,
                           logger: Logger) extends Watcher{
 
   val nioWatchService = FileSystems.getDefault.newWatchService()
   val currentlyWatchedPaths = mutable.Map.empty[os.Path, WatchKey]
   val newlyWatchedPaths = mutable.Buffer.empty[os.Path]
-  val bufferedEvents = mutable.Buffer.empty[os.Path]
+  val bufferedEvents = mutable.Set.empty[os.Path]
   val isRunning = new AtomicBoolean(false)
 
   isRunning.set(true)
@@ -42,7 +42,7 @@ class WatchServiceWatcher(roots: Seq[os.Path],
       )
       newlyWatchedPaths.append(p)
     }
-    bufferedEvents.append(p)
+    bufferedEvents.add(p)
   }
 
   def processEvent(watchKey: WatchKey) = {
@@ -57,7 +57,7 @@ class WatchServiceWatcher(roots: Seq[os.Path],
     logger("EVENT KINDS", events.map(_.kind()))
 
     for(e <- events){
-      bufferedEvents.append(p / e.context().toString)
+      bufferedEvents.add(p / e.context().toString)
     }
 
     for(e <- events if e.kind() == ENTRY_CREATE){
@@ -72,7 +72,7 @@ class WatchServiceWatcher(roots: Seq[os.Path],
       val top = newlyWatchedPaths.remove(newlyWatchedPaths.length - 1)
       val listing = try os.list(top) catch {case e: java.nio.file.NotDirectoryException => Nil }
       for(p <- listing) watchSinglePath(p)
-      bufferedEvents.append(top)
+      bufferedEvents.add(top)
     }
   }
 
@@ -124,11 +124,7 @@ class WatchServiceWatcher(roots: Seq[os.Path],
 
   private def triggerListener(): Unit = {
     logger("bufferedEvents", bufferedEvents)
-    val strings = bufferedEvents
-      .toArray
-      .distinct
-    logger("triggered strings", strings)
-    onEvent(strings)
+    onEvent(bufferedEvents.toSet)
     bufferedEvents.clear()
   }
 }

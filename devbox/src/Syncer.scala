@@ -30,7 +30,7 @@ class AgentReadWriteActor(agent: AgentApi,
                           syncer: => SyncActor)
                          (implicit ec: ExecutionContext,
                           caskLogger: cask.util.Logger)
-  extends cask.util.BatchActor[AgentReadWriteActor.Msg](){
+  extends BatchActor[AgentReadWriteActor.Msg](){
   private val buffer = mutable.ArrayDeque.empty[Rpc]
 
   val unresponded = new AtomicInteger(0)
@@ -46,8 +46,8 @@ class AgentReadWriteActor(agent: AgentApi,
       agent.stdin.flush()
 
     case AgentReadWriteActor.Receive(data) =>
-      unresponded.decrementAndGet()
       syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
+      unresponded.decrementAndGet()
       buffer.dropInPlace(1)
   }
 }
@@ -55,9 +55,11 @@ class AgentReadWriteActor(agent: AgentApi,
 object SyncActor{
   sealed trait Msg
   case class Scan() extends Msg
-  case class Events(paths: Seq[os.Path]) extends Msg
+
+  case class Events(paths: Set[os.Path]) extends Msg
   case class Debounced(debounceId: Object) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
+  case class Retry() extends Msg
 }
 class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
                 agentReadWriter: => AgentReadWriteActor,
@@ -69,7 +71,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
                 scheduledExecutorService: ScheduledExecutorService)
                (implicit ec: ExecutionContext,
                 caskLogger: cask.util.Logger)
-  extends cask.util.StateMachineActor[SyncActor.Msg]() {
+  extends StateMachineActor[SyncActor.Msg]() {
 
   def initialState = Initializing(Set())
 
@@ -90,39 +92,17 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 
   case class RemoteScanning(changedPaths: Set[os.Path]) extends State({
     case SyncActor.Events(paths) => RemoteScanning(changedPaths ++ paths)
-    case SyncActor.Receive(Response.VfsRoots(trees)) =>
-      handleIncomingEvents(changedPaths, trees.map(new Vfs(_)))
-  })
-
-  case class Debouncing(changedPaths: Set[os.Path],
-                        vfsArr: Seq[Vfs[Signature]],
-                        debounceToken: Object) extends State({
-    case SyncActor.Events(paths) => Debouncing(changedPaths ++ paths, vfsArr, debounceToken)
-    case SyncActor.Debounced(debounceToken2) =>
-      if (debounceToken ne debounceToken2) Debouncing(changedPaths, vfsArr, debounceToken)
-      else executeSync(changedPaths, vfsArr)
-
-    case SyncActor.Receive(Response.Ack(_)) => Waiting(vfsArr) // do nothing
+    case SyncActor.Receive(Response.VfsRoots(trees)) => executeSync(changedPaths, trees.map(new Vfs(_)))
   })
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
-    case SyncActor.Events(paths) => handleIncomingEvents(paths.toSet, vfsArr)
+    case SyncActor.Events(paths) => executeSync(paths.toSet, vfsArr)
     case SyncActor.Receive(Response.Ack(_)) => Waiting(vfsArr) // do nothing
     case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
   })
 
-  def handleIncomingEvents(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]) = {
-    val debounceToken = new Object()
-    scheduledExecutorService.schedule[Unit](
-      () => this.send(SyncActor.Debounced(debounceToken)),
-      debounceTime,
-      TimeUnit.MILLISECONDS
-    )
-    Debouncing(changedPaths, vfsArr, debounceToken)
-  }
 
-
-  def executeSync(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]) = {
+  def executeSync(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]): State = {
     val buffer = new Array[Byte](Util.blockSize)
 
     // We need to .distinct after we convert the strings to paths, in order
@@ -131,6 +111,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
     val allEventPaths = changedPaths.toSeq.sortBy(_.toString)
     logger("SYNC EVENTS", allEventPaths)
 
+    val failed = mutable.Set.empty[os.Path]
     for (((src, dest), i) <- mapping.zipWithIndex) {
       val eventPaths = allEventPaths.filter(p =>
         p.startsWith(src) && !skipArr(i)(p, true)
@@ -161,13 +142,11 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
           val p = new PrintWriter(x)
           value.printStackTrace(p)
           logger("SYNC FAILED", x.toString)
+          failed.addAll(eventPaths)
       }
     }
 
-    if (changedPaths.isEmpty) {
-      logger("SYNC COMPLETE")
-    } else {
-    }
+    if (failed.nonEmpty) this.send(SyncActor.Events(failed.toSet))
     Waiting(vfsArr)
   }
 }
@@ -230,16 +209,20 @@ class Syncer(agent: AgentApi,
   })
 
   val agentLoggerThread = new Thread(() => {
-    while (true) {
-      if (agent.isAlive()) {
+
+    while (
+      if (!agent.isAlive()) false
+      else {
         try {
           val str = agent.stderr.readLine()
           if (str != null) logger.write(ujson.read(str).str)
+          true
         } catch { case NonFatal(ex) =>
-          logger.info("Connection", "Connection dropped - to reconnect, make some file changes", Some(Console.YELLOW))
+          ex.printStackTrace()
+          false
         }
       }
-    }
+    ) ()
   })
 
   val watcherThread = new Thread(() => watcher.start())
@@ -448,6 +431,7 @@ object Syncer{
                    src: os.Path,
                    dest: os.RelPath,
                    logger: Logger): Unit = {
+    logger.apply("SYNC META", signatureMapping)
     val total = signatureMapping.length
     for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
       val segments = p.relativeTo(src)
