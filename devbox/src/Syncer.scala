@@ -526,25 +526,28 @@ object Syncer{
     byteCount
   }
 
-  def computeSignatures(interestingBases: Seq[Path],
+  def computeSignatures(eventPaths: Seq[Path],
                         buffer: Array[Byte],
                         stateVfs: Vfs[Signature],
                         skip: (os.Path, Boolean) => Boolean,
                         src: os.Path,
                         logger: Logger,
-                        signatureTransformer: (os.RelPath, Signature) => Signature): Seq[(os.Path, Option[Signature], Option[Signature])] = {
+                        signatureTransformer: (os.RelPath, Signature) => Signature)
+    : Seq[(os.Path, Option[Signature], Option[Signature])] = {
 
-    interestingBases.zipWithIndex.flatMap { case (p, i) =>
+    eventPaths.zipWithIndex.map { case (p, i) =>
       logger.progress(
-        s"Scanning local folder [$i/${interestingBases.length}]",
+        s"Scanning local folder [$i/${eventPaths.length}]",
         p.relativeTo(src).toString()
       )
 
-      Some(Tuple3(
+      Tuple3(
         p,
         if (!os.exists(p, followLinks = false) ||
-            // Existing under a differently-cased name counts as not existing
-            p.last != p.wrapped.toRealPath(LinkOption.NOFOLLOW_LINKS).getFileName.toString) None
+            // Existing under a differently-cased name counts as not existing.
+            // The only way to reliably check for a mis-cased file on OS-X is
+            // to list the parent folder and compare listed names
+            !os.list(p / os.up).map(_.last).contains(p.last)) None
         else {
           val attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
           val fileType =
@@ -559,7 +562,7 @@ object Syncer{
             .map(signatureTransformer(p.relativeTo(src), _))
         },
         stateVfs.resolve(p.relativeTo(src)).map(_.value)
-      ))
+      )
     }
 
   }
