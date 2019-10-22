@@ -67,14 +67,9 @@ object DevboxAgentMain {
     val agentId = scala.util.Random.nextInt()
 
     val buffer = new Array[Byte](Util.blockSize)
-    while (true) try {
-      logger.apply("AGENT ID", agentId)
-      client.readMsg[Rpc]()
-    } match {
+    while (true) try client.readMsg[Rpc]() match {
       case Rpc.FullScan(paths) =>
-        val vfsRoots = for(path <- paths) yield {
-          val vfs = new Vfs[Signature](Signature.Dir(0))
-
+        val scanned = for(path <- paths) yield {
           val scanRoot = wd / path
           val skip = skipper.initialize(scanRoot)
           if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
@@ -84,17 +79,14 @@ object DevboxAgentMain {
             (p, attrs) => skip(p, attrs.isDir)
           )
 
-          for {
+          val pathSigs = for {
             (p, attrs) <- fileStream
             sig <- Signature.compute(p, buffer, attrs.fileType)
-          } {
-            logger.apply("SCAN PATH", p)
-            Vfs.updateVfs(p.relativeTo(scanRoot), sig, vfs)
-          }
+          } yield (p.relativeTo(scanRoot), sig)
 
-          vfs.root
+          pathSigs.toSeq
         }
-        client.writeMsg(Response.VfsRoots(vfsRoots))
+        client.writeMsg(Response.Scanned(scanned))
 
       case rpc @ Rpc.Remove(root, path) =>
         os.remove.all(wd / root / path)

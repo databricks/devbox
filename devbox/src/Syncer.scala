@@ -36,7 +36,6 @@ class AgentReadWriteActor(agent: AgentApi,
   val unresponded = new AtomicInteger(0)
   def run(items: Seq[AgentReadWriteActor.Msg]): Unit = items.foreach{
     case AgentReadWriteActor.Send(msg) =>
-      pprint.log(msg)
       unresponded.incrementAndGet()
       buffer.append(msg)
       val blob = upickle.default.writeBinary(msg)
@@ -45,7 +44,6 @@ class AgentReadWriteActor(agent: AgentApi,
       agent.stdin.writeInt(blob.length)
       agent.stdin.write(blob)
       agent.stdin.flush()
-      pprint.log(msg)
 
     case AgentReadWriteActor.Receive(data) =>
       syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
@@ -66,7 +64,6 @@ object SyncActor{
 class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
                 agentReadWriter: => AgentReadWriteActor,
                 mapping: Seq[(os.Path, os.RelPath)],
-                debounceTime: Int,
                 logger: Logger,
                 signatureTransformer: (os.RelPath, Signature) => Signature,
                 skipper: Skipper,
@@ -94,15 +91,18 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 
   case class RemoteScanning(changedPaths: Set[os.Path]) extends State({
     case SyncActor.Events(paths) => RemoteScanning(changedPaths ++ paths)
-    case SyncActor.Receive(Response.VfsRoots(trees)) =>
-      val vfsArr = trees.map(new Vfs[Signature](_))
-      val remotelyPresentPaths = for{
-        (vfs, root) <- geny.Generator.from(vfsArr.zip(mapping.map(_._1)))
-        (p0, _, _) <- vfs.walk()
-      } yield root / p0
-      val allChangedPaths = changedPaths ++ remotelyPresentPaths.toArray
-      pprint.log(allChangedPaths)
-      executeSync(allChangedPaths, vfsArr)
+    case SyncActor.Receive(Response.Scanned(pathLists)) =>
+      val vfsArr = for(pathList <- pathLists) yield {
+        val vfs = new Vfs[Signature](Signature.Dir(0))
+        for((path, sig) <- pathList) Vfs.updateVfs(path, sig, vfs)
+        vfs
+      }
+
+      val scanned = for{
+        (pathList, root) <- pathLists.zip(mapping.map(_._1))
+        (path, sig) <- pathList
+      } yield root / path
+      executeSync(changedPaths ++ scanned, vfsArr)
   })
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
@@ -200,7 +200,6 @@ class Syncer(agent: AgentApi,
     for ((src, dest) <- mapping.toArray) yield skipper.initialize(src),
     agentReadWriter,
     mapping,
-    debounceTime,
     logger,
     signatureTransformer,
     skipper,

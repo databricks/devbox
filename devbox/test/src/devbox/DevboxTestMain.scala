@@ -95,7 +95,6 @@ object DevboxTestMain {
               config.debounceMillis,
               logger,
               config.ignoreStrategy,
-              inMemoryAgent = config.inMemoryAgent,
               exitOnError = false,
               if (!config.readOnlyRemote) {(p, sig) => sig}
               else {

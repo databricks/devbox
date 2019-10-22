@@ -25,29 +25,29 @@ object DevboxTests extends TestSuite{
     // can function on every change of commit. Ordered by increasing levels of
     // complexity
     'edge - {
-      * - walkValidate("edge", cases("edge"), 1, 50, 0)
-      'git - walkValidate("edge-git", cases("edge"), 1, 50, 0, ignoreStrategy = "")
-      'restart - walkValidate("edge-restart", cases("edge"), 1, 50, 0, restartSyncer = true)
-      'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 50, 0, ignoreStrategy = "", randomKillConnection = true)
+      * - walkValidate("edge", cases("edge"), 1, 0)
+      'git - walkValidate("edge-git", cases("edge"), 1, 0, ignoreStrategy = "")
+      'restart - walkValidate("edge-restart", cases("edge"), 1, 0, restartSyncerEvery = Some(1))
+//      'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 50, 0, ignoreStrategy = "", randomKillConnection = true)
     }
 
     'oslib - {
-      * - walkValidate("oslib", cases("oslib"), 1, 100, 0)
-      'git - walkValidate("oslib-git", cases("oslib"), 1, 100, 0, ignoreStrategy = "")
-      'restart - walkValidate("oslib-restart", cases("oslib"), 1, 50, 0, restartSyncer = true)
+      * - walkValidate("oslib", cases("oslib"), 1, 0)
+      'git - walkValidate("oslib-git", cases("oslib"), 1, 0, ignoreStrategy = "")
+      'restart - walkValidate("oslib-restart", cases("oslib"), 1, 0, restartSyncerEvery = Some(4))
     }
 
     'scalatags - {
-      * - walkValidate("scalatags", cases("scalatags"), 1, 300, 0)
-//      'restart - walkValidate("scalatags-restart", cases("scalatags"), 1, 250, 0, restartSyncer = true)
+      * - walkValidate("scalatags", cases("scalatags"), 1, 0)
+      'restart - walkValidate("scalatags-restart", cases("scalatags"), 1, 0, restartSyncerEvery = Some(16))
     }
     'mill - {
-      * - walkValidate("mill", cases("mill"), 4, 150, 0)
-//      'restart - walkValidate("mill-restart", cases("mill"), 4, 100, 0, restartSyncer = true)
+      * - walkValidate("mill", cases("mill"), 4, 0)
+      'restart - walkValidate("mill-restart", cases("mill"), 4, 0, restartSyncerEvery = Some(64))
     }
     'ammonite - {
-      * - walkValidate("ammonite", cases("ammonite"), 5, 200, 0)
-      'reconnect - walkValidate("ammonite-reconnect", cases("ammonite"), 1, 500, 0, randomKillConnection = true)
+//      * - walkValidate("ammonite", cases("ammonite"), 5, 200, 0)
+//      'reconnect - walkValidate("ammonite-reconnect", cases("ammonite"), 1, 500, 0, randomKillConnection = true)
 //      'restart - walkValidate("ammonite-restart", cases("ammonite"), 5, 200, 0, restartSyncer = true)
     }
   }
@@ -56,11 +56,10 @@ object DevboxTests extends TestSuite{
   def walkValidate(label: String,
                    uri: String,
                    stride: Int,
-                   debounceMillis: Int,
                    initialCommit: Int,
                    commitIndicesToCheck0: Seq[Int] = Nil,
                    ignoreStrategy: String = "dotgit",
-                   restartSyncer: Boolean = false,
+                   restartSyncerEvery: Option[Int] = None,
                    randomKillConnection: Boolean = false) = {
 
     val (src, dest, log, commits, skipper, commitsIndicesToCheck, repo) =
@@ -69,8 +68,8 @@ object DevboxTests extends TestSuite{
     val logger = Logger.File(log, toast = false)
 
     def createSyncer() = instantiateSyncer(
-      src, dest, skipper, debounceMillis,
-      logger, ignoreStrategy, restartSyncer,
+      src, dest, skipper, 100,
+      logger, ignoreStrategy,
       exitOnError = true,
       signatureMapping = (_, sig) => sig,
       randomKillConnection = randomKillConnection
@@ -89,7 +88,7 @@ object DevboxTests extends TestSuite{
 
         logger("TEST CHECKOUT DONE", commit.getShortMessage)
 
-        if (restartSyncer && syncer == null) {
+        if (syncer == null) {
           logger("TEST RESTART SYNCER")
           syncer = createSyncer()
           syncer.start()
@@ -104,16 +103,16 @@ object DevboxTests extends TestSuite{
           syncerLive || agentLive || unresponded
         }) ()
 
+        if (restartSyncerEvery.exists(count % _ == 0)) {
+          logger("TEST STOP SYNCER")
+          syncer.close()
+          syncer = null
+        }
+
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
         // validation anyway.
         if (count % stride == 0) {
-          if (restartSyncer) {
-            logger("TEST STOP SYNCER")
-            syncer.close()
-            syncer = null
-          }
-
           logger("TEST VALIDATE")
           validate(src, dest, skipper)
         }
@@ -188,7 +187,6 @@ object DevboxTests extends TestSuite{
                         debounceMillis: Int,
                         logger: Logger,
                         ignoreStrategy: String,
-                        inMemoryAgent: Boolean,
                         exitOnError: Boolean,
                         signatureMapping: (os.RelPath, Signature) => Signature,
                         healthCheckInterval: Int = 0,

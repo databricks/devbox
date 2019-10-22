@@ -37,8 +37,8 @@ object Rpc{
 }
 sealed trait Response
 object Response{
-  case class VfsRoots(trees: Seq[Vfs.Dir[Signature]]) extends Response
-  object VfsRoots{ implicit val rw: ReadWriter[VfsRoots] = macroRW }
+  case class Scanned(trees: Seq[Seq[(os.RelPath, Signature)]]) extends Response
+  object Scanned{ implicit val rw: ReadWriter[Scanned] = macroRW }
 
   case class Ack(hash: Int) extends Response
   object Ack{ implicit  val rw: ReadWriter[Ack] = macroRW }
