@@ -161,7 +161,31 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
   }
 }
 
+object DebounceActor{
+  sealed trait Msg[T]
+  case class Wrapped[T](value: T) extends Msg[T]
+  case class Fire[T](items: Seq[T]) extends Msg[T]
+}
+class DebounceActor[T]
+                   (handle: Seq[T] => Unit,
+                    debounceMillis: Int)
+                   (implicit ec: ExecutionContext,
+                    caskLogger: cask.util.Logger) extends BatchActor[DebounceActor.Msg[T]]{
+  def run(items: Seq[DebounceActor.Msg[T]]) = {
+    val values = items
+      .flatMap{
+        case DebounceActor.Wrapped(v) => Seq(v)
+        case DebounceActor.Fire(vs) => vs
+      }
 
+    if (items.exists(_.isInstanceOf[DebounceActor.Fire[T]])){
+      handle(values)
+    }else{
+      Thread.sleep(debounceMillis)
+      this.send(DebounceActor.Fire(values))
+    }
+  }
+}
 /**
   * The Syncer class instances contain all the stateful, close-able parts of
   * the syncing logic: event queues, threads, filesystem watchers, etc. All the
@@ -171,7 +195,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 class Syncer(agent: AgentApi,
              mapping: Seq[(os.Path, os.RelPath)],
              skipper: Skipper,
-             debounceTime: Int,
+             debounceMillis: Int,
              logger: Logger,
              signatureTransformer: (os.RelPath, Signature) => Signature) extends AutoCloseable{
 
@@ -179,13 +203,13 @@ class Syncer(agent: AgentApi,
     case "Linux" =>
       new WatchServiceWatcher(
         mapping.map(_._1),
-        events => syncer.send(SyncActor.Events(events)),
+        events => debouncer.send(DebounceActor.Wrapped(SyncActor.Events(events))),
         logger
       )
     case "Mac OS X" =>
       new FSEventsWatcher(
         mapping.map(_._1),
-        events => syncer.send(SyncActor.Events(events)),
+        events => debouncer.send(DebounceActor.Wrapped(SyncActor.Events(events))),
         logger,
         0.05
       )
@@ -207,6 +231,10 @@ class Syncer(agent: AgentApi,
   )
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(agent, syncer)
 
+  val debouncer = new DebounceActor[SyncActor.Events](
+    eventLists => syncer.send(SyncActor.Events(eventLists.flatMap(_.paths).toSet)),
+    debounceMillis
+  )
   val readerThread = new Thread(() => {
     while(try{
       val s = agent.stdout.readBoolean()

@@ -121,7 +121,6 @@ object DevboxTestMain {
               config.label,
               DevboxTests.cases(config.label),
               config.stride,
-              config.debounceMillis,
               commits(0),
               commits.drop(1),
               config.ignoreStrategy

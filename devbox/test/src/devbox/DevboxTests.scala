@@ -68,7 +68,7 @@ object DevboxTests extends TestSuite{
     val logger = Logger.File(log, toast = false)
 
     def createSyncer() = instantiateSyncer(
-      src, dest, skipper, 100,
+      src, dest, skipper, 50,
       logger, ignoreStrategy,
       exitOnError = true,
       signatureMapping = (_, sig) => sig,
@@ -99,8 +99,9 @@ object DevboxTests extends TestSuite{
           Thread.sleep(100)
           val syncerLive = syncer.syncer.isScheduled
           val agentLive = syncer.agentReadWriter.isScheduled
+          val debounceLive = syncer.debouncer.isScheduled
           val unresponded = syncer.agentReadWriter.unresponded.get() != 0
-          syncerLive || agentLive || unresponded
+          syncerLive || agentLive || debounceLive || unresponded
         }) ()
 
         if (restartSyncerEvery.exists(count % _ == 0)) {
