@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.file.{Files, LinkOption}
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent._
+import java.util.concurrent.atomic.AtomicInteger
 
 import devbox.common._
 import os.Path
@@ -12,7 +13,6 @@ import Util.relpathRw
 import cask.util
 import devbox.Syncer.{ExitCode, NoOp, SyncFail, synchronizeRepo, updateSkipPredicate}
 import sourcecode.{File, Line, Text}
-
 
 import scala.annotation.tailrec
 import scala.collection.{immutable, mutable}
@@ -32,15 +32,21 @@ class AgentReadWriteActor(agent: AgentApi,
                           caskLogger: cask.util.Logger)
   extends cask.util.BatchActor[AgentReadWriteActor.Msg](){
   private val buffer = mutable.ArrayDeque.empty[Rpc]
+
+  val unresponded = new AtomicInteger(0)
   def run(items: Seq[AgentReadWriteActor.Msg]): Unit = items.foreach{
     case AgentReadWriteActor.Send(msg) =>
+      unresponded.incrementAndGet()
       buffer.append(msg)
       val blob = upickle.default.writeBinary(msg)
-      agent.stdin.write(blob.length)
+
+      agent.stdin.writeBoolean(true)
+      agent.stdin.writeInt(blob.length)
       agent.stdin.write(blob)
       agent.stdin.flush()
 
     case AgentReadWriteActor.Receive(data) =>
+      unresponded.decrementAndGet()
       syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
       buffer.dropInPlace(1)
   }
@@ -49,7 +55,6 @@ class AgentReadWriteActor(agent: AgentApi,
 object SyncActor{
   sealed trait Msg
   case class Scan() extends Msg
-  case class RemoteScanResults(trees: Seq[Vfs.Dir[Signature]]) extends Msg
   case class Events(paths: Seq[os.Path]) extends Msg
   case class Debounced(debounceId: Object) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
@@ -61,7 +66,6 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
                 logger: Logger,
                 signatureTransformer: (os.RelPath, Signature) => Signature,
                 skipper: Skipper,
-                onComplete: () => Unit,
                 scheduledExecutorService: ScheduledExecutorService)
                (implicit ec: ExecutionContext,
                 caskLogger: cask.util.Logger)
@@ -70,6 +74,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
   def initialState = Initializing(Set())
 
   case class Initializing(changedPaths: Set[os.Path]) extends State({
+    case SyncActor.Events(paths) => Initializing(changedPaths ++ paths)
     case SyncActor.Scan() =>
       agentReadWriter.send(AgentReadWriteActor.Send(Rpc.FullScan(mapping.map(_._2))))
       val pathStream = for {
@@ -84,22 +89,26 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
   })
 
   case class RemoteScanning(changedPaths: Set[os.Path]) extends State({
-    case SyncActor.RemoteScanResults(trees) =>
+    case SyncActor.Events(paths) => RemoteScanning(changedPaths ++ paths)
+    case SyncActor.Receive(Response.VfsRoots(trees)) =>
       handleIncomingEvents(changedPaths, trees.map(new Vfs(_)))
   })
 
   case class Debouncing(changedPaths: Set[os.Path],
                         vfsArr: Seq[Vfs[Signature]],
                         debounceToken: Object) extends State({
-    case SyncActor.Events(paths) =>
-      Debouncing(changedPaths ++ paths, vfsArr, debounceToken)
+    case SyncActor.Events(paths) => Debouncing(changedPaths ++ paths, vfsArr, debounceToken)
     case SyncActor.Debounced(debounceToken2) =>
       if (debounceToken ne debounceToken2) Debouncing(changedPaths, vfsArr, debounceToken)
       else executeSync(changedPaths, vfsArr)
+
+    case SyncActor.Receive(Response.Ack(_)) => Waiting(vfsArr) // do nothing
   })
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
     case SyncActor.Events(paths) => handleIncomingEvents(paths.toSet, vfsArr)
+    case SyncActor.Receive(Response.Ack(_)) => Waiting(vfsArr) // do nothing
+    case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
   })
 
   def handleIncomingEvents(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]) = {
@@ -136,7 +145,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
           signatureTransformer, skipArr(i) = _
         )
         res <- synchronizeRepo(
-          ???, logger, vfsArr(i), skipArr(i), src, dest,
+          logger, vfsArr(i), skipArr(i), src, dest,
           agentReadWriter, buffer, eventPaths, signatureTransformer
         )
       } yield res
@@ -157,7 +166,6 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 
     if (changedPaths.isEmpty) {
       logger("SYNC COMPLETE")
-      onComplete()
     } else {
     }
     Waiting(vfsArr)
@@ -175,24 +183,20 @@ class Syncer(agent: AgentApi,
              mapping: Seq[(os.Path, os.RelPath)],
              skipper: Skipper,
              debounceTime: Int,
-             onComplete: () => Unit,
              logger: Logger,
              signatureTransformer: (os.RelPath, Signature) => Signature) extends AutoCloseable{
-
-  private[this] val eventQueue = new LinkedBlockingQueue[Array[os.Path]]()
-
 
   private[this] val watcher = System.getProperty("os.name") match{
     case "Linux" =>
       new WatchServiceWatcher(
         mapping.map(_._1),
-        eventQueue.add,
+        events => syncer.send(SyncActor.Events(events)),
         logger
       )
     case "Mac OS X" =>
       new FSEventsWatcher(
         mapping.map(_._1),
-        eventQueue.add,
+        events => syncer.send(SyncActor.Events(events)),
         logger,
         0.05
       )
@@ -211,13 +215,13 @@ class Syncer(agent: AgentApi,
     logger,
     signatureTransformer,
     skipper,
-    onComplete,
     Executors.newSingleThreadScheduledExecutor()
   )
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(agent, syncer)
 
   val readerThread = new Thread(() => {
     while(true) {
+      val s = agent.stdout.readBoolean()
       val n = agent.stdout.readInt()
       val buf = new Array[Byte](n)
       agent.stdout.readFully(buf)
@@ -238,11 +242,16 @@ class Syncer(agent: AgentApi,
     }
   })
 
+  val watcherThread = new Thread(() => watcher.start())
+
   var running = false
   def start() = {
     running = true
     readerThread.start()
     agentLoggerThread.start()
+    watcherThread.start()
+    syncer.send(SyncActor.Scan())
+    agent.start()
   }
 
   def close() = {
@@ -308,8 +317,7 @@ object Syncer{
     */
   case object NoOp extends ExitCode
 
-  def synchronizeRepo(agent: AgentApi,
-                      logger: Logger,
+  def synchronizeRepo(logger: Logger,
                       vfs: Vfs[Signature],
                       skip: (os.Path, Boolean) => Boolean,
                       src: os.Path,

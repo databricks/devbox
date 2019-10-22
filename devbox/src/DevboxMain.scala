@@ -85,7 +85,6 @@ object DevboxMain {
             },
             skipper,
             config.debounceMillis,
-            () => (),
             Logger.File(config.logFile.get, config.toast),
             if (config.readOnlyRemote == null) (_, sig) => sig
             else {

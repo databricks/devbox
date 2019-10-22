@@ -64,4 +64,11 @@ object Logger{
     def info(title: => String, body: => String, color: => Option[String]): Unit = ???
     def progress(title: => String, body: => String): Unit = ???
   }
+
+  case class Stderr() extends Logger{
+    def write(s: String) = System.err.println(s)
+    def close() = ()
+    def info(title: => String, body: => String, color: => Option[String]): Unit = ???
+    def progress(title: => String, body: => String): Unit = ???
+  }
 }

@@ -47,7 +47,7 @@ object DevboxAgentMain {
 
       case Right((config, remaining)) =>
         os.makeDir.all(os.home / ".devbox")
-        val logger = Logger.JsonStderr(os.home / ".devbox" / "log.txt")
+        val logger = Logger.Stderr()
         logger("AGNT START", config.workingDir)
 
         val skipper = Skipper.fromString(config.ignoreStrategy)
@@ -90,7 +90,7 @@ object DevboxAgentMain {
 
           vfs.root
         }
-        client.writeMsg(vfsRoots)
+        client.writeMsg(Response.VfsRoots(vfsRoots))
 
       case rpc @ Rpc.Remove(root, path) =>
         os.remove.all(wd / root / path)

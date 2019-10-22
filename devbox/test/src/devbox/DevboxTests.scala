@@ -63,13 +63,13 @@ object DevboxTests extends TestSuite{
                    restartSyncer: Boolean = false,
                    randomKillConnection: Boolean = false) = {
 
-    val (src, dest, log, commits, workCount, skipper, commitsIndicesToCheck, repo) =
+    val (src, dest, log, commits, skipper, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
 
     val logger = Logger.File(log, toast = false)
 
     def createSyncer() = instantiateSyncer(
-      src, dest, skipper, debounceMillis, () => workCount.release(),
+      src, dest, skipper, debounceMillis,
       logger, ignoreStrategy, restartSyncer,
       exitOnError = true,
       signatureMapping = (_, sig) => sig,
@@ -95,7 +95,15 @@ object DevboxTests extends TestSuite{
           syncer.start()
         }
 
-        workCount.acquire()
+        val field = classOf[cask.util.BatchActor[_]].getDeclaredField("scheduled")
+        field.setAccessible(true)
+        Thread.sleep(100)
+        while({
+          val syncerLive = field.get(syncer.syncer).asInstanceOf[Boolean]
+          val agentLive = field.get(syncer.agentReadWriter).asInstanceOf[Boolean]
+          val unresponded = syncer.agentReadWriter.unresponded.get() != 0
+          syncerLive || agentLive || unresponded
+        }) Thread.sleep(1000)
 
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
@@ -137,7 +145,6 @@ object DevboxTests extends TestSuite{
 
     repo.checkout().setName(commits.head.getName).call()
 
-    val workCount = new Semaphore(0)
 
     // Fixed random to make the random jumps deterministic
     val random = new scala.util.Random(31337)
@@ -152,7 +159,7 @@ object DevboxTests extends TestSuite{
         (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
     val skipper = Skipper.fromString(ignoreStrategy)
-    (src, dest, log, commits, workCount, skipper, commitsIndicesToCheck, repo)
+    (src, dest, log, commits, skipper, commitsIndicesToCheck, repo)
   }
 
   def prepareFolders(label: String, preserve: Boolean = false) = {
@@ -180,7 +187,6 @@ object DevboxTests extends TestSuite{
                         dest: os.Path,
                         skipper: Skipper,
                         debounceMillis: Int,
-                        onComplete: () => Unit,
                         logger: Logger,
                         ignoreStrategy: String,
                         inMemoryAgent: Boolean,
@@ -196,11 +202,10 @@ object DevboxTests extends TestSuite{
         "--ignore-strategy", ignoreStrategy,
         "--working-dir", dest,
         if (exitOnError) Seq("--exit-on-error") else Nil
-      ).spawn(cwd = dest),
+      ).spawn(cwd = dest, stderr = os.Inherit),
       Seq(src -> Nil),
       skipper,
       debounceMillis,
-      onComplete,
       logger,
       signatureMapping
     )

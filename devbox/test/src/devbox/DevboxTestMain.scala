@@ -93,7 +93,6 @@ object DevboxTestMain {
               src, dest,
               skip,
               config.debounceMillis,
-              () => (),
               logger,
               config.ignoreStrategy,
               inMemoryAgent = config.inMemoryAgent,
