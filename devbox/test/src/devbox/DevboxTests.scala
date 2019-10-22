@@ -28,13 +28,14 @@ object DevboxTests extends TestSuite{
       * - walkValidate("edge", cases("edge"), 1, 0)
       'git - walkValidate("edge-git", cases("edge"), 1, 0, ignoreStrategy = "")
       'restart - walkValidate("edge-restart", cases("edge"), 1, 0, restartSyncerEvery = Some(1))
-//      'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 50, 0, ignoreStrategy = "", randomKillConnection = true)
+      'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 0, randomKill = Some(20))
     }
 
     'oslib - {
       * - walkValidate("oslib", cases("oslib"), 1, 0)
       'git - walkValidate("oslib-git", cases("oslib"), 1, 0, ignoreStrategy = "")
       'restart - walkValidate("oslib-restart", cases("oslib"), 1, 0, restartSyncerEvery = Some(4))
+      'reconnect - walkValidate("oslib", cases("oslib"), 1, 0, randomKill = Some(50))
     }
 
     'scalatags - {
@@ -60,7 +61,7 @@ object DevboxTests extends TestSuite{
                    commitIndicesToCheck0: Seq[Int] = Nil,
                    ignoreStrategy: String = "dotgit",
                    restartSyncerEvery: Option[Int] = None,
-                   randomKillConnection: Boolean = false) = {
+                   randomKill: Option[Int] = None) = {
 
     val (src, dest, log, commits, skipper, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
@@ -72,7 +73,7 @@ object DevboxTests extends TestSuite{
       logger, ignoreStrategy,
       exitOnError = true,
       signatureMapping = (_, sig) => sig,
-      randomKillConnection = randomKillConnection
+      randomKill = randomKill
     )
     var syncer = createSyncer()
     try {
@@ -191,14 +192,21 @@ object DevboxTests extends TestSuite{
                         exitOnError: Boolean,
                         signatureMapping: (os.RelPath, Signature) => Signature,
                         healthCheckInterval: Int = 0,
-                        randomKillConnection: Boolean = false) = {
+                        randomKill: Option[Int] = None) = {
     new Syncer(
-      os.proc(
-        System.getenv("AGENT_EXECUTABLE"),
-        "--ignore-strategy", ignoreStrategy,
-        "--working-dir", dest,
-        if (exitOnError) Seq("--exit-on-error") else Nil
-      ).spawn(cwd = dest),
+      new ReliableAgent(
+        Seq(
+          System.getenv("AGENT_EXECUTABLE"),
+          "--ignore-strategy", ignoreStrategy,
+          "--working-dir", dest.toString
+        ) ++
+        (if (exitOnError) Seq("--exit-on-error") else Nil) ++
+        (randomKill match{
+          case Some(n) => Seq("--random-kill", n.toString)
+          case None => Nil
+        }),
+        dest
+      ),
       Seq(src -> Nil),
       skipper,
       debounceMillis,

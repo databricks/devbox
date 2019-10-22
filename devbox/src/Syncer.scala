@@ -24,6 +24,7 @@ import scala.util.control.NonFatal
 object AgentReadWriteActor{
   sealed trait Msg
   case class Send(value: Rpc) extends Msg
+  case class Restarted() extends Msg
   case class Receive(data: Array[Byte]) extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
@@ -34,21 +35,56 @@ class AgentReadWriteActor(agent: AgentApi,
   private val buffer = mutable.ArrayDeque.empty[Rpc]
 
   val unresponded = new AtomicInteger(0)
+  var sending = true
   def run(items: Seq[AgentReadWriteActor.Msg]): Unit = items.foreach{
     case AgentReadWriteActor.Send(msg) =>
       unresponded.incrementAndGet()
       buffer.append(msg)
-      val blob = upickle.default.writeBinary(msg)
+      if (sending) sendMessages(Seq(msg))
 
-      agent.stdin.writeBoolean(true)
-      agent.stdin.writeInt(blob.length)
-      agent.stdin.write(blob)
-      agent.stdin.flush()
+    case AgentReadWriteActor.Restarted() =>
+      if (sending){
+        restart()
+      }else{
+
+        sending = true
+        Syncer.spawnReaderThread(
+          agent,
+          buf => this.send(AgentReadWriteActor.Receive(buf)),
+          () => restart()
+        )
+        sendMessages(buffer.toSeq)
+      }
+
 
     case AgentReadWriteActor.Receive(data) =>
       syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
       unresponded.decrementAndGet()
       buffer.dropInPlace(1)
+  }
+
+  def sendMessages(msgs: Seq[Rpc]) = {
+    try {
+      for(msg <- msgs){
+        val blob = upickle.default.writeBinary(msg)
+        agent.stdin.writeBoolean(true)
+        agent.stdin.writeInt(blob.length)
+        agent.stdin.write(blob)
+        agent.stdin.flush()
+      }
+    }catch{ case e: java.io.IOException =>
+      restart()
+    }
+  }
+
+  def restart() = {
+    println("DESTROY AGENT")
+    agent.destroy()
+    println("START AGENT")
+    agent.start()
+    println("REQUEUE")
+    sending = false
+    this.send(AgentReadWriteActor.Restarted())
   }
 }
 
@@ -107,7 +143,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
     case SyncActor.Events(paths) => executeSync(paths.toSet, vfsArr)
-    case SyncActor.Receive(Response.Ack(_)) => Waiting(vfsArr) // do nothing
+    case SyncActor.Receive(Response.Ack()) => Waiting(vfsArr) // do nothing
     case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
   })
 
@@ -235,19 +271,7 @@ class Syncer(agent: AgentApi,
     eventLists => syncer.send(SyncActor.Events(eventLists.flatMap(_.paths).toSet)),
     debounceMillis
   )
-  val readerThread = new Thread(() => {
-    while(try{
-      val s = agent.stdout.readBoolean()
-      val n = agent.stdout.readInt()
-      val buf = new Array[Byte](n)
-      agent.stdout.readFully(buf)
-      agentReadWriter.send(AgentReadWriteActor.Receive(buf))
-      true
-    }catch{
-      case e: java.io.EOFException => false
-      case e: java.io.IOException => false
-    })()
-  })
+
 
   val agentLoggerThread = new Thread(() => {
     while (try {
@@ -265,11 +289,16 @@ class Syncer(agent: AgentApi,
   var running = false
   def start() = {
     running = true
-    readerThread.start()
+    agent.start()
+    Syncer.spawnReaderThread(
+      agent,
+      buf => agentReadWriter.send(AgentReadWriteActor.Receive(buf)),
+      () => agentReadWriter.send(AgentReadWriteActor.Restarted())
+    )
     agentLoggerThread.start()
     watcherThread.start()
     syncer.send(SyncActor.Scan())
-    agent.start()
+
   }
 
   def close() = {
@@ -280,6 +309,22 @@ class Syncer(agent: AgentApi,
 }
 
 object Syncer{
+  def spawnReaderThread(agent: AgentApi, out: Array[Byte] => Unit, restart: () => Unit) = {
+    new Thread(() => {
+      while(try{
+        val s = agent.stdout.readBoolean()
+        val n = agent.stdout.readInt()
+        val buf = new Array[Byte](n)
+        agent.stdout.readFully(buf)
+        out(buf)
+        true
+      }catch{
+        case e: java.io.EOFException =>
+          restart()
+          false
+      })()
+    }).start()
+  }
   class VfsRpcClient(client: AgentReadWriteActor, stateVfs: Vfs[Signature], logger: Logger){
     def apply[T <: Action with Rpc: default.Writer](p: T) = {
       try {

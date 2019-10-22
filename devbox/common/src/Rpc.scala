@@ -40,7 +40,7 @@ object Response{
   case class Scanned(trees: Seq[Seq[(os.RelPath, Signature)]]) extends Response
   object Scanned{ implicit val rw: ReadWriter[Scanned] = macroRW }
 
-  case class Ack(hash: Int) extends Response
+  case class Ack() extends Response
   object Ack{ implicit  val rw: ReadWriter[Ack] = macroRW }
 
   implicit val rw: ReadWriter[Response] = macroRW

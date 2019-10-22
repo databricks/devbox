@@ -11,15 +11,17 @@ trait AgentApi {
   def start(): Unit
 }
 
-class ReliableAgent(cmd: Seq[String]) extends AgentApi {
-  var process: Process = _
-  start()
-  override def start(): Unit = {process = new java.lang.ProcessBuilder().command(cmd: _*).start()}
+class ReliableAgent(cmd: Seq[String], cwd: os.Path) extends AgentApi {
+  var process: os.SubProcess = _
+
+  override def start(): Unit = {
+    process = os.proc(cmd).spawn(cwd = cwd)
+  }
   override def isAlive(): Boolean = process.isAlive
   override def destroy(): Unit = process.destroy()
-  override def stderr: InputStream with DataInput = new DataInputStream(process.getErrorStream)
-  override def stdout: InputStream with DataInput = new DataInputStream(process.getInputStream)
-  override def stdin: OutputStream with DataOutput = new DataOutputStream(process.getOutputStream)
+  override def stderr: InputStream with DataInput = new DataInputStream(process.stderr)
+  override def stdout: InputStream with DataInput = new DataInputStream(process.stdout)
+  override def stdin: OutputStream with DataOutput = new DataOutputStream(process.stdin)
 }
 
 object AgentApi{

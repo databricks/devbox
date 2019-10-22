@@ -14,7 +14,8 @@ object DevboxAgentMain {
                     help: Boolean = false,
                     ignoreStrategy: String = "",
                     workingDir: String = "",
-                    exitOnError: Boolean = false)
+                    exitOnError: Boolean = false,
+                    randomKill: Option[Int] = None)
 
   def main(args: Array[String]): Unit = {
     val signature = Seq(
@@ -37,6 +38,11 @@ object DevboxAgentMain {
         "exit-on-error", None,
         "",
         (c, v) => c.copy(exitOnError = true)
+      ),
+      Arg[Config, Int](
+        "random-kill", None,
+        "",
+        (c, v) => c.copy(randomKill = Some(v))
       )
     )
 
@@ -55,7 +61,14 @@ object DevboxAgentMain {
           new DataOutputStream(System.out),
           new DataInputStream(System.in),
           (tag, t) => logger("AGNT " + tag, t))
-        mainLoop(logger, skipper, client, os.Path(config.workingDir, os.pwd), config.exitOnError, idempotent = true)
+        mainLoop(
+          logger,
+          skipper,
+          client,
+          os.Path(config.workingDir, os.pwd),
+          config.exitOnError,
+          config.randomKill
+        )
     }
   }
   def mainLoop(logger: Logger,
@@ -63,84 +76,92 @@ object DevboxAgentMain {
                client: RpcClient,
                wd: os.Path,
                exitOnError: Boolean,
-               idempotent: Boolean) = {
-    val agentId = scala.util.Random.nextInt()
+               randomKill: Option[Int]) = {
 
     val buffer = new Array[Byte](Util.blockSize)
-    while (true) try client.readMsg[Rpc]() match {
-      case Rpc.FullScan(paths) =>
-        val scanned = for(path <- paths) yield {
-          val scanRoot = wd / path
-          val skip = skipper.initialize(scanRoot)
-          if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
+    var count = 0
+    while (randomKill match{
+      case Some(n) if count == n =>
+        logger("AGENT EXIT", n)
+        false
+      case _ => true
+    }) {
+      count += 1
+      try client.readMsg[Rpc]() match {
+        case Rpc.FullScan(paths) =>
+          val scanned = for(path <- paths) yield {
+            val scanRoot = wd / path
+            val skip = skipper.initialize(scanRoot)
+            if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
 
-          val fileStream = os.walk.stream.attrs(
-            scanRoot,
-            (p, attrs) => skip(p, attrs.isDir)
-          )
+            val fileStream = os.walk.stream.attrs(
+              scanRoot,
+              (p, attrs) => skip(p, attrs.isDir)
+            )
 
-          val pathSigs = for {
-            (p, attrs) <- fileStream
-            sig <- Signature.compute(p, buffer, attrs.fileType)
-          } yield (p.relativeTo(scanRoot), sig)
+            val pathSigs = for {
+              (p, attrs) <- fileStream
+              sig <- Signature.compute(p, buffer, attrs.fileType)
+            } yield (p.relativeTo(scanRoot), sig)
 
-          pathSigs.toSeq
-        }
-        client.writeMsg(Response.Scanned(scanned))
+            pathSigs.toSeq
+          }
+          client.writeMsg(Response.Scanned(scanned))
 
-      case rpc @ Rpc.Remove(root, path) =>
-        os.remove.all(wd / root / path)
-        client.writeMsg(Response.Ack(rpc.hashCode()))
+        case Rpc.Remove(root, path) =>
+          os.remove.all(wd / root / path)
+          client.writeMsg(Response.Ack())
 
-      case rpc @ Rpc.PutFile(root, path, perms) =>
-        val targetPath = wd / root / path
+        case Rpc.PutFile(root, path, perms) =>
+          val targetPath = wd / root / path
 
-        if (!idempotent || !os.exists(targetPath)) {
-          logger.apply("PUT FILE", targetPath)
-          logger.apply("PUT FILE", os.exists(targetPath / os.up))
-          os.write(targetPath, "", perms)
-        }
-        client.writeMsg(Response.Ack(rpc.hashCode()))
+          if (!os.exists(targetPath)) {
+            logger.apply("PUT FILE", targetPath)
+            logger.apply("PUT FILE", os.exists(targetPath / os.up))
+            os.write(targetPath, "", perms)
+          }
+          client.writeMsg(Response.Ack())
 
-      case rpc @ Rpc.PutDir(root, path, perms) =>
-        val targetPath = wd / root / path
-        logger.apply("PUT DIR", targetPath)
-        logger.apply("PUT DIR", os.exists(targetPath))
-        if (!idempotent || !os.exists(targetPath)) {
-          os.makeDir(targetPath, perms)
-        }
-        client.writeMsg(Response.Ack(rpc.hashCode()))
+        case Rpc.PutDir(root, path, perms) =>
+          val targetPath = wd / root / path
+          logger.apply("PUT DIR", targetPath)
+          logger.apply("PUT DIR", os.exists(targetPath))
+          if (!os.exists(targetPath)) {
+            os.makeDir(targetPath, perms)
+          }
+          client.writeMsg(Response.Ack())
 
-      case rpc @ Rpc.PutLink(root, path, dest) =>
-        val targetPath = wd / root / path
-        if (!idempotent || !os.exists(targetPath)) {
-          os.symlink(targetPath, os.FilePath(dest))
-        }
-        client.writeMsg(Response.Ack(rpc.hashCode()))
+        case Rpc.PutLink(root, path, dest) =>
+          val targetPath = wd / root / path
+          if (!os.exists(targetPath)) {
+            os.symlink(targetPath, os.FilePath(dest))
+          }
+          client.writeMsg(Response.Ack())
 
-      case rpc @ Rpc.WriteChunk(root, path, offset, data, hash) =>
-        val p = wd / root / path
-        withWritable(p){
-          os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
-        }
-        client.writeMsg(Response.Ack(rpc.hashCode()))
+        case Rpc.WriteChunk(root, path, offset, data, hash) =>
+          val p = wd / root / path
+          withWritable(p){
+            os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
+          }
+          client.writeMsg(Response.Ack())
 
-      case rpc @ Rpc.SetSize(root, path, offset) =>
-        val p = wd / root / path
-        withWritable(p) {
-          os.truncate(p, offset)
-        }
-        client.writeMsg(Response.Ack(rpc.hashCode()))
+        case Rpc.SetSize(root, path, offset) =>
+          val p = wd / root / path
+          withWritable(p) {
+            os.truncate(p, offset)
+          }
+          client.writeMsg(Response.Ack())
 
-      case rpc @ Rpc.SetPerms(root, path, perms) =>
-        os.perms.set.apply(wd / root / path, perms)
-        client.writeMsg(Response.Ack(rpc.hashCode()))
+        case Rpc.SetPerms(root, path, perms) =>
+          os.perms.set.apply(wd / root / path, perms)
+          client.writeMsg(Response.Ack())
 
-    }catch{
-      case e: EOFException => throw e // master process has closed up, exit
-      case e: Throwable if !exitOnError =>
-        logger("AGNT ERROR", e)
-        client.writeMsg(RemoteException.create(e), false)
+      }catch{
+        case e: EOFException => throw e // master process has closed up, exit
+        case e: Throwable if !exitOnError =>
+          logger("AGNT ERROR", e)
+          client.writeMsg(RemoteException.create(e), false)
+      }
     }
   }
   def withWritable[T](p: os.Path)(t: => T) = {

@@ -77,7 +77,7 @@ object DevboxMain {
               .command(remaining:_*)
               .start()
           Util.autoclose(new Syncer(
-            new ReliableAgent(remaining),
+            new ReliableAgent(remaining, os.pwd),
             for(s <- config.repo)
             yield s.split(':') match{
               case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
