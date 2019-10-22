@@ -2,7 +2,7 @@ package devbox.common
 import java.io._
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.Rpc.Ack
+import devbox.common.Response.Ack
 
 import scala.util.control.NonFatal
 
@@ -51,7 +51,7 @@ class RpcClient(var out: OutputStream with DataOutput,
 
   def writeMsg[T: upickle.default.Writer](t: T, success: Boolean = true): Unit = {
     t match {
-      case rpc: Rpc if !rpc.isInstanceOf[Rpc.Ack] && !rpc.isInstanceOf[Rpc.FullScan] =>
+      case rpc: Rpc if !rpc.isInstanceOf[Ack] && !rpc.isInstanceOf[Rpc.FullScan] =>
         pendingQueue.offer(rpc)
       case _ =>
     }
@@ -80,7 +80,7 @@ class RpcClient(var out: OutputStream with DataOutput,
     logger("MSG READ", res)
 
     res match {
-      case Rpc.Ack(hash) =>
+      case Ack(hash) =>
         val rpc = pendingQueue.take()
         assert(rpc.hashCode() == hash)
       case _ =>

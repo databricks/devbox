@@ -5,8 +5,10 @@ sealed trait Rpc
 sealed trait Action
 
 object Rpc{
-  case class FullScan(root: os.RelPath) extends Rpc
+  case class FullScan(roots: Seq[os.RelPath]) extends Rpc
   object FullScan{ implicit val rw: ReadWriter[FullScan] = macroRW }
+
+
 
   case class PutFile(root: os.RelPath, path: os.RelPath, perms: os.PermSet) extends Rpc with Action
   object PutFile{ implicit val rw: ReadWriter[PutFile] = macroRW }
@@ -29,8 +31,17 @@ object Rpc{
   case class SetPerms(root: os.RelPath, path: os.RelPath, perms: os.PermSet) extends Rpc with Action
   object SetPerms{ implicit val rw: ReadWriter[SetPerms] = macroRW }
 
-  case class Ack(hash: Int) extends Rpc with Action
-  object Ack{ implicit  val rw: ReadWriter[Ack] = macroRW }
+
 
   implicit val rw: ReadWriter[Rpc] = macroRW
+}
+sealed trait Response
+object Response{
+  case class VfsRoots(trees: Seq[Vfs.Dir[Signature]]) extends Response
+  object VfsRoots{ implicit val rw: ReadWriter[VfsRoots] = macroRW }
+
+  case class Ack(hash: Int) extends Response
+  object Ack{ implicit  val rw: ReadWriter[Ack] = macroRW }
+
+  implicit val rw: ReadWriter[Response] = macroRW
 }

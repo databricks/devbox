@@ -76,20 +76,20 @@ object DevboxTests extends TestSuite{
       randomKillConnection = randomKillConnection
     )
     var syncer = createSyncer()
-    try{
+    try {
       printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
       syncer.start()
 
 
       for ((i, count) <- commitsIndicesToCheck.zipWithIndex) {
         val commit = commits(i)
-        printBanner(i, commits.length, count+1, commitsIndicesToCheck.length, commit)
+        printBanner(i, commits.length, count + 1, commitsIndicesToCheck.length, commit)
         logger("TEST CHECKOUT", commit.getShortMessage)
         repo.checkout().setName(commit.getName).call()
 
         logger("TEST CHECKOUT DONE", commit.getShortMessage)
 
-        if (restartSyncer && syncer == null){
+        if (restartSyncer && syncer == null) {
           logger("TEST RESTART SYNCER")
           syncer = createSyncer()
           syncer.start()
@@ -101,7 +101,7 @@ object DevboxTests extends TestSuite{
         // and hopefully if something gets messed up it'll get caught in a later
         // validation anyway.
         if (count % stride == 0) {
-          if (restartSyncer){
+          if (restartSyncer) {
             logger("TEST STOP SYNCER")
             syncer.close()
             syncer = null
@@ -111,6 +111,9 @@ object DevboxTests extends TestSuite{
           validate(src, dest, skipper)
         }
       }
+    }catch{case e =>
+      e.printStackTrace()
+      throw e
     }finally{
       if (syncer != null) {
         syncer.close()
@@ -199,8 +202,7 @@ object DevboxTests extends TestSuite{
       debounceMillis,
       onComplete,
       logger,
-      signatureMapping,
-      healthCheckInterval
+      signatureMapping
     )
   }
 

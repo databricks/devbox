@@ -68,67 +68,72 @@ object DevboxAgentMain {
 
     val buffer = new Array[Byte](Util.blockSize)
     while (true) try client.readMsg[Rpc]() match {
-      case Rpc.FullScan(path) =>
-        val scanRoot = wd / path
-        val skip = skipper.initialize(scanRoot)
-        if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
+      case Rpc.FullScan(paths) =>
+        val vfsRoots = for(path <- paths) yield {
+          val vfs = new Vfs[Signature](Signature.Dir(0))
 
-        val fileStream = os.walk.stream.attrs(
-          scanRoot,
-          (p, attrs) => skip(p, attrs.isDir)
-        )
-        client.writeMsg(fileStream.count())
-        for {
-          (p, attrs) <- fileStream
-          sig <- Signature.compute(p, buffer, attrs.fileType)
-        } {
-          client.writeMsg(Some((p.relativeTo(scanRoot), sig: Signature)))
+          val scanRoot = wd / path
+          val skip = skipper.initialize(scanRoot)
+          if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
+
+          val fileStream = os.walk.stream.attrs(
+            scanRoot,
+            (p, attrs) => skip(p, attrs.isDir)
+          )
+
+          for {
+            (p, attrs) <- fileStream
+            sig <- Signature.compute(p, buffer, attrs.fileType)
+          } {
+            Vfs.updateVfs(path, sig, vfs)
+          }
+
+          vfs.root
         }
-
-        client.writeMsg(None)
+        client.writeMsg(vfsRoots)
 
       case rpc @ Rpc.Remove(root, path) =>
         os.remove.all(wd / root / path)
-        client.writeMsg(Rpc.Ack(rpc.hashCode()))
+        client.writeMsg(Response.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutFile(root, path, perms) =>
         val targetPath = wd / root / path
         if (!idempotent || !os.exists(targetPath)) {
           os.write(targetPath, "", perms)
         }
-        client.writeMsg(Rpc.Ack(rpc.hashCode()))
+        client.writeMsg(Response.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutDir(root, path, perms) =>
         val targetPath = wd / root / path
         if (!idempotent || !os.exists(targetPath)) {
           os.makeDir(targetPath, perms)
         }
-        client.writeMsg(Rpc.Ack(rpc.hashCode()))
+        client.writeMsg(Response.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutLink(root, path, dest) =>
         val targetPath = wd / root / path
         if (!idempotent || !os.exists(targetPath)) {
           os.symlink(targetPath, os.FilePath(dest))
         }
-        client.writeMsg(Rpc.Ack(rpc.hashCode()))
+        client.writeMsg(Response.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.WriteChunk(root, path, offset, data, hash) =>
         val p = wd / root / path
         withWritable(p){
           os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
         }
-        client.writeMsg(Rpc.Ack(rpc.hashCode()))
+        client.writeMsg(Response.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.SetSize(root, path, offset) =>
         val p = wd / root / path
         withWritable(p) {
           os.truncate(p, offset)
         }
-        client.writeMsg(Rpc.Ack(rpc.hashCode()))
+        client.writeMsg(Response.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.SetPerms(root, path, perms) =>
         os.perms.set.apply(wd / root / path, perms)
-        client.writeMsg(Rpc.Ack(rpc.hashCode()))
+        client.writeMsg(Response.Ack(rpc.hashCode()))
 
     }catch{
       case e: EOFException => throw e // master process has closed up, exit

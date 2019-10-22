@@ -9,10 +9,161 @@ import devbox.common._
 import os.Path
 import upickle.default
 import Util.relpathRw
+import cask.util
+import devbox.Syncer.{ExitCode, NoOp, SyncFail, synchronizeRepo, updateSkipPredicate}
+import sourcecode.{File, Line, Text}
+
 
 import scala.annotation.tailrec
 import scala.collection.{immutable, mutable}
+import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
+
+
+
+object AgentReadWriteActor{
+  sealed trait Msg
+  case class Send(value: Rpc) extends Msg
+  case class Receive(data: Array[Byte]) extends Msg
+}
+class AgentReadWriteActor(agent: AgentApi,
+                          syncer: => SyncActor)
+                         (implicit ec: ExecutionContext,
+                          caskLogger: cask.util.Logger)
+  extends cask.util.BatchActor[AgentReadWriteActor.Msg](){
+  private val buffer = mutable.ArrayDeque.empty[Rpc]
+  def run(items: Seq[AgentReadWriteActor.Msg]): Unit = items.foreach{
+    case AgentReadWriteActor.Send(msg) =>
+      buffer.append(msg)
+      val blob = upickle.default.writeBinary(msg)
+      agent.stdin.write(blob.length)
+      agent.stdin.write(blob)
+      agent.stdin.flush()
+
+    case AgentReadWriteActor.Receive(data) =>
+      syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
+      buffer.dropInPlace(1)
+  }
+}
+
+object SyncActor{
+  sealed trait Msg
+  case class Scan() extends Msg
+  case class RemoteScanResults(trees: Seq[Vfs.Dir[Signature]]) extends Msg
+  case class Events(paths: Seq[os.Path]) extends Msg
+  case class Debounced(debounceId: Object) extends Msg
+  case class Receive(value: devbox.common.Response) extends Msg
+}
+class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
+                agentReadWriter: => AgentReadWriteActor,
+                mapping: Seq[(os.Path, os.RelPath)],
+                debounceTime: Int,
+                logger: Logger,
+                signatureTransformer: (os.RelPath, Signature) => Signature,
+                skipper: Skipper,
+                onComplete: () => Unit,
+                scheduledExecutorService: ScheduledExecutorService)
+               (implicit ec: ExecutionContext,
+                caskLogger: cask.util.Logger)
+  extends cask.util.StateMachineActor[SyncActor.Msg]() {
+
+  def initialState = Initializing(Set())
+
+  case class Initializing(changedPaths: Set[os.Path]) extends State({
+    case SyncActor.Scan() =>
+      agentReadWriter.send(AgentReadWriteActor.Send(Rpc.FullScan(mapping.map(_._2))))
+      val pathStream = for {
+        ((src, dest), i) <- geny.Generator.from(mapping.zipWithIndex)
+        (p, attrs) <- os.walk.stream.attrs(
+          src,
+          (p, attrs) => skipArr(i)(p, attrs.isDir),
+          includeTarget = true
+        )
+      } yield p
+      RemoteScanning(pathStream.toSet)
+  })
+
+  case class RemoteScanning(changedPaths: Set[os.Path]) extends State({
+    case SyncActor.RemoteScanResults(trees) =>
+      handleIncomingEvents(changedPaths, trees.map(new Vfs(_)))
+  })
+
+  case class Debouncing(changedPaths: Set[os.Path],
+                        vfsArr: Seq[Vfs[Signature]],
+                        debounceToken: Object) extends State({
+    case SyncActor.Events(paths) =>
+      Debouncing(changedPaths ++ paths, vfsArr, debounceToken)
+    case SyncActor.Debounced(debounceToken2) =>
+      if (debounceToken ne debounceToken2) Debouncing(changedPaths, vfsArr, debounceToken)
+      else executeSync(changedPaths, vfsArr)
+  })
+
+  case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
+    case SyncActor.Events(paths) => handleIncomingEvents(paths.toSet, vfsArr)
+  })
+
+  def handleIncomingEvents(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]) = {
+    val debounceToken = new Object()
+    scheduledExecutorService.schedule[Unit](
+      () => this.send(SyncActor.Debounced(debounceToken)),
+      debounceTime,
+      TimeUnit.MILLISECONDS
+    )
+    Debouncing(changedPaths, vfsArr, debounceToken)
+  }
+
+
+  def executeSync(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]) = {
+    val buffer = new Array[Byte](Util.blockSize)
+
+    // We need to .distinct after we convert the strings to paths, in order
+    // to ensure the inputs are canonicalized and don't have meaningless
+    // differences such as trailing slashes
+    val allEventPaths = changedPaths.toSeq.sortBy(_.toString)
+    logger("SYNC EVENTS", allEventPaths)
+
+    for (((src, dest), i) <- mapping.zipWithIndex) {
+      val eventPaths = allEventPaths.filter(p =>
+        p.startsWith(src) && !skipArr(i)(p, true)
+      )
+
+      logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
+
+      val exitCode = for {
+        _ <- if (eventPaths.isEmpty) Left(NoOp: ExitCode) else Right(())
+        _ <- updateSkipPredicate(
+          eventPaths, skipper, vfsArr(i), src, buffer, logger,
+          signatureTransformer, skipArr(i) = _
+        )
+        res <- synchronizeRepo(
+          ???, logger, vfsArr(i), skipArr(i), src, dest,
+          agentReadWriter, buffer, eventPaths, signatureTransformer
+        )
+      } yield res
+
+      exitCode match {
+        case Right((streamedByteCount, changedPaths)) =>
+        //                  allChangedPaths.appendAll(changedPaths)
+        //                  allSyncedBytes += streamedByteCount
+        case Left(NoOp) => // do nothing
+        case Left(SyncFail(value)) =>
+//          changedPaths.appendAll(eventPaths)
+          val x = new StringWriter()
+          val p = new PrintWriter(x)
+          value.printStackTrace(p)
+          logger("SYNC FAILED", x.toString)
+      }
+    }
+
+    if (changedPaths.isEmpty) {
+      logger("SYNC COMPLETE")
+      onComplete()
+    } else {
+    }
+    Waiting(vfsArr)
+  }
+}
+
 
 /**
   * The Syncer class instances contain all the stateful, close-able parts of
@@ -26,8 +177,7 @@ class Syncer(agent: AgentApi,
              debounceTime: Int,
              onComplete: () => Unit,
              logger: Logger,
-             signatureTransformer: (os.RelPath, Signature) => Signature,
-             healthCheckInterval: Int) extends AutoCloseable{
+             signatureTransformer: (os.RelPath, Signature) => Signature) extends AutoCloseable{
 
   private[this] val eventQueue = new LinkedBlockingQueue[Array[os.Path]]()
 
@@ -47,203 +197,69 @@ class Syncer(agent: AgentApi,
         0.05
       )
   }
+  import concurrent.ExecutionContext.Implicits.global
+  implicit val caskLogger: util.Logger = new util.Logger {
+    def exception(t: Throwable): Unit = t.printStackTrace()
+    def debug(t: Text[Any])(implicit f: File, line: Line): Unit = ()
+  }
 
-  private[this] var watcherThread: Thread = null
-  private[this] var syncThread: Thread = null
-  private[this] var agentLoggerThread: Thread = null
-
-  @volatile private[this] var running: Boolean = false
-
-  @volatile private[this] var asyncException: Throwable = null
-
-
-  def makeLoggedThread(name: String)(t: => Unit) = new Thread(
-    () =>
-      try t
-      catch {case e: Throwable =>
-        e.printStackTrace()
-        asyncException = e
-      },
-    name
+  val syncer: SyncActor = new SyncActor(
+    for ((src, dest) <- mapping.toArray) yield skipper.initialize(src),
+    agentReadWriter,
+    mapping,
+    debounceTime,
+    logger,
+    signatureTransformer,
+    skipper,
+    onComplete,
+    Executors.newSingleThreadScheduledExecutor()
   )
+  val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(agent, syncer)
 
-  def start() = {
-    running = true
-    watcherThread = makeLoggedThread("DevboxWatcherThread") {
-      watcher.start()
+  val readerThread = new Thread(() => {
+    while(true) {
+      val n = agent.stdout.readInt()
+      val buf = new Array[Byte](n)
+      agent.stdout.readFully(buf)
+      agentReadWriter.send(AgentReadWriteActor.Receive(buf))
     }
+  })
 
-    agentLoggerThread = makeLoggedThread("DevboxAgentLoggerThread") {
-      while (running) {
-        if (agent.isAlive()) {
-          try {
-            val str = agent.stderr.readLine()
-            if (str != null) logger.write(ujson.read(str).str)
-          } catch {
-            case NonFatal(ex) =>
-              if (healthCheckInterval == 0) {
-                logger.info("Connection", s"Connection dropped ${ex.getMessage}")
-              } else {
-                logger.info("Connection", "Connection dropped - to reconnect, make some file changes", Some(Console.YELLOW))
-              }
-          }
+  val agentLoggerThread = new Thread(() => {
+    while (true) {
+      if (agent.isAlive()) {
+        try {
+          val str = agent.stderr.readLine()
+          if (str != null) logger.write(ujson.read(str).str)
+        } catch { case NonFatal(ex) =>
+          logger.info("Connection", "Connection dropped - to reconnect, make some file changes", Some(Console.YELLOW))
         }
       }
     }
+  })
 
-    syncThread = makeLoggedThread("DevboxSyncThread") {
-      Syncer.syncAllRepos(
-        agent,
-        mapping,
-        onComplete,
-        eventQueue,
-        skipper,
-        debounceTime,
-        () => running,
-        logger,
-        signatureTransformer,
-        healthCheckInterval
-      )
-    }
-
-    watcherThread.start()
-    syncThread.start()
+  var running = false
+  def start() = {
+    running = true
+    readerThread.start()
     agentLoggerThread.start()
   }
 
   def close() = {
     running = false
     watcher.close()
-    watcherThread.join()
-    syncThread.interrupt()
-    syncThread.join()
     agent.destroy()
-    agentLoggerThread.interrupt()
-    agentLoggerThread.join()
-    if (asyncException != null) throw new Exception("Syncer thread failed", asyncException)
   }
 }
 
 object Syncer{
-  class VfsRpcClient(val client: RpcClient, stateVfs: Vfs[Signature], logger: Logger){
-    def clearOutstandingMsgs() = client.clearOutstandingMsgs()
-    def drainOutstandingMsgs() = client.drainOutstandingMsgs()
-    def flushOutstandingMsgs() = client.flushOutstandingMsgs()
-
-    def apply[T <: Action: default.Writer](p: T) = {
+  class VfsRpcClient(client: AgentReadWriteActor, stateVfs: Vfs[Signature], logger: Logger){
+    def apply[T <: Action with Rpc: default.Writer](p: T) = {
       try {
-        client.writeMsg(p)
+        client.send(AgentReadWriteActor.Send(p))
         Vfs.updateVfs(p, stateVfs)
       } catch {
         case NonFatal(ex) => logger.info("Connection", s"Message cannot be sent $ex")
-      }
-    }
-  }
-
-  def syncAllRepos(agent: AgentApi,
-                   mapping: Seq[(os.Path, os.RelPath)],
-                   onComplete: () => Unit,
-                   eventQueue: BlockingQueue[Array[os.Path]],
-                   skipper: Skipper,
-                   debounceTime: Int,
-                   continue: () => Boolean,
-                   logger: Logger,
-                   signatureTransformer: (os.RelPath, Signature) => Signature,
-                   healthCheckInterval: Int) = {
-
-    if (healthCheckInterval != 0) {
-      assert(healthCheckInterval >= 10, "Health check interval must >= 10 seconds")
-    }
-
-    logger.info("Connection", s"Health check every $healthCheckInterval seconds")
-
-    val vfsArr = for (_ <- mapping.indices) yield new Vfs[Signature](Signature.Dir(0))
-    val skipArr = for ((src, dest) <- mapping.toArray) yield skipper.initialize(src)
-
-    val buffer = new Array[Byte](Util.blockSize)
-
-    val client = new RpcClient(
-            agent.stdin,
-            agent.stdout,
-            (tag, t) => logger("SYNC " + tag, t))
-
-
-    logger("SYNC SCAN")
-    logger.info(s"Performing initial scan on ${mapping.length} repos", mapping.map(_._1).mkString("\n"))
-
-    for (((src, dest), i) <- mapping.zipWithIndex) {
-      initialRemoteScan(logger, vfsArr, client, dest, i)
-      initialLocalScan(src, eventQueue, logger, skipArr(i))
-    }
-
-    var messagedSync = true
-    val allChangedPaths = mutable.Buffer.empty[os.Path]
-    var allSyncedBytes = 0L
-    while (continue()) {
-      logger("SYNC LOOP")
-
-      for (changedPaths <- Syncer.drainUntilStable(eventQueue, debounceTime)) {
-        // We need to .distinct after we convert the strings to paths, in order
-        // to ensure the inputs are canonicalized and don't have meaningless
-        // differences such as trailing slashes
-        val allEventPaths = changedPaths.flatten.distinct.sortBy(_.toString)
-        logger("SYNC EVENTS", allEventPaths)
-
-        for (((src, dest), i) <- mapping.zipWithIndex) {
-          val eventPaths = allEventPaths.filter(p =>
-            p.startsWith(src) && !skipArr(i)(p, true)
-          )
-
-          logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
-
-          val exitCode = for {
-            _ <- if (eventPaths.isEmpty) Left(NoOp: ExitCode) else Right(())
-            _ <- updateSkipPredicate(
-              eventPaths.toSeq, skipper, vfsArr(i), src, buffer, logger,
-              signatureTransformer, skipArr(i) = _
-            )
-            res <- synchronizeRepo(
-              agent, logger, vfsArr(i), skipArr(i), src, dest,
-              client, buffer, eventPaths, signatureTransformer, healthCheckInterval)
-          } yield res
-
-          exitCode match {
-            case Right((streamedByteCount, changedPaths)) =>
-              allChangedPaths.appendAll(changedPaths)
-              allSyncedBytes += streamedByteCount
-            case Left(NoOp) => // do nothing
-            case Left(SyncFail(value)) =>
-              eventQueue.add(eventPaths.toArray)
-              val x = new StringWriter()
-              val p = new PrintWriter(x)
-              value.printStackTrace(p)
-              logger("SYNC FAILED", x.toString)
-          }
-        }
-
-        if (eventQueue.isEmpty) {
-          logger("SYNC COMPLETE")
-          onComplete()
-          if (allChangedPaths.nonEmpty) {
-            logger.info(
-              s"Finished syncing ${allChangedPaths.length} paths, $allSyncedBytes bytes",
-              s"${allChangedPaths.head}" +
-                (if (allChangedPaths.length == 1) "" else s" and ${allChangedPaths.length - 1} others")
-            )
-            allSyncedBytes = 0
-            allChangedPaths.clear()
-          } else if (messagedSync) {
-            logger.info("Nothing to sync", "watching for changes")
-          }
-          messagedSync = false
-        } else {
-          logger.info(
-            "Ongoing changes detected",
-            eventQueue.peek().head.toString()
-          )
-          logger("SYNC PARTIAL")
-          messagedSync = true
-        }
       }
     }
   }
@@ -276,44 +292,6 @@ object Syncer{
       restartOnFailure{setSkip(skipper.initialize(src))}
     }
   }
-  def initialRemoteScan(logger: Logger,
-                        vfsArr: immutable.IndexedSeq[Vfs[Signature]],
-                        client: RpcClient,
-                        dest: os.RelPath,
-                        i: Int): Unit = {
-    client.writeMsg(Rpc.FullScan(dest))
-    val total = client.readMsg[Int]()
-    var n = 0
-    while ( {
-      client.readMsg[Option[(os.RelPath, Signature)]]() match {
-        case None =>
-          logger("SYNC SCAN DONE")
-          false
-        case Some((p, sig)) =>
-          n += 1
-          logger("SYNC SCAN REMOTE", (p, sig))
-          logger.progress(s"Scanning remote file [$n/$total]", p.toString())
-          Vfs.updateVfs(p, sig, vfsArr(i))
-          true
-      }
-    }) ()
-  }
-
-  def initialLocalScan(src: os.Path,
-                       eventQueue: BlockingQueue[Array[os.Path]],
-                       logger: Logger,
-                       skip: (os.Path, Boolean) => Boolean) = {
-    eventQueue.add(
-      os.walk
-        .stream.attrs(
-          src,
-          (p, attrs) => skip(p, attrs.isDir),
-          includeTarget = true
-        )
-        .map(_._1)
-        .toArray
-    )
-  }
 
   /**
     * Represents the various ways a repo synchronization can exit early.
@@ -336,14 +314,13 @@ object Syncer{
                       skip: (os.Path, Boolean) => Boolean,
                       src: os.Path,
                       dest: os.RelPath,
-                      client: RpcClient,
+                      client: AgentReadWriteActor,
                       buffer: Array[Byte],
-                      eventPaths: mutable.Buffer[Path],
-                      signatureTransformer: (os.RelPath, Signature) => Signature,
-                      healthCheckInterval: Int): Either[ExitCode, (Long, Seq[os.Path])] = {
+                      eventPaths: Seq[Path],
+                      signatureTransformer: (os.RelPath, Signature) => Signature): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
-        computeSignatures(eventPaths.toSeq, buffer, vfs, skip, src, logger, signatureTransformer)
+        computeSignatures(eventPaths, buffer, vfs, skip, src, logger, signatureTransformer)
       )
 
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
@@ -358,10 +335,10 @@ object Syncer{
 
       vfsRpcClient = new VfsRpcClient(client, vfs, logger)
 
-      _ = Syncer.syncMetadata(agent, vfsRpcClient, filteredSignatures, src, dest, vfs, logger, buffer, healthCheckInterval)
+      _ = Syncer.syncMetadata(vfsRpcClient, filteredSignatures, src, dest, logger)
 
       streamedByteCount <- restartOnFailure(
-        streamAllFileContents(agent, logger, vfs, vfsRpcClient, src, dest, filteredSignatures, healthCheckInterval)
+        streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
       )
     } yield (streamedByteCount, filteredSignatures.map(_._1))
   }
@@ -392,39 +369,35 @@ object Syncer{
     }
   }
 
-  def streamAllFileContents(agent: AgentApi,
-                            logger: Logger,
+  def streamAllFileContents(logger: Logger,
                             stateVfs: Vfs[Signature],
                             client: VfsRpcClient,
                             src: Path,
                             dest: os.RelPath,
-                            signatureMapping: Seq[(Path, Option[Signature], Option[Signature])],
-                            healthCheckInterval: Int) = {
+                            signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
     val total = signatureMapping.length
     var byteCount = 0L
-    draining(agent, client, healthCheckInterval, logger) {
-      for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
-        val segments = p.relativeTo(src)
-        val (otherHashes, otherSize) = otherSig match {
-          case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
-          case _ => (Nil, 0L)
-        }
-        logger("SYNC CHUNKS", segments)
-        byteCount += streamFileContents(
-          logger,
-          client,
-          stateVfs,
-          dest,
-          p,
-          segments,
-          blockHashes,
-          otherHashes,
-          size,
-          otherSize,
-          n,
-          total
-        )
+    for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
+      val segments = p.relativeTo(src)
+      val (otherHashes, otherSize) = otherSig match {
+        case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
+        case _ => (Nil, 0L)
       }
+      logger("SYNC CHUNKS", segments)
+      byteCount += streamFileContents(
+        logger,
+        client,
+        stateVfs,
+        dest,
+        p,
+        segments,
+        blockHashes,
+        otherHashes,
+        size,
+        otherSize,
+        n,
+        total
+      )
     }
     byteCount
   }
@@ -462,86 +435,47 @@ object Syncer{
     }
   }
 
-  def draining[T](agent: AgentApi,
-                  client: VfsRpcClient,
-                  healthCheckInterval: Int,
-                  logger: Logger)(t: => T): T = {
-    @volatile var running = true
-    val devboxState = new DevboxState(logger, agent, client.client, healthCheckInterval)
-    devboxState.start()
-    val drainer = new Thread(
-      () => {
-        while(running || client.client.getOutstandingMsgs > 0) {
-          if (client.client.getOutstandingMsgs > 0) {
-            val isAck = client.drainOutstandingMsgs()
-            if (isAck) {
-              devboxState.updateState()
-            }
-          } else {
-            Thread.sleep(10)
-          }
-        }
-      },
-      "DevboxDrainerThread"
-    )
-    drainer.start()
-    val res =
-      try t
-      finally {
-        running = false
-        drainer.join()
-        devboxState.join()
-      }
-    res
-  }
-
-  def syncMetadata(agent: AgentApi,
-                   client: VfsRpcClient,
+  def syncMetadata(client: VfsRpcClient,
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
                    dest: os.RelPath,
-                   stateVfs: Vfs[Signature],
-                   logger: Logger,
-                   buffer: Array[Byte],
-                   healthCheckInterval: Int): Unit = {
+                   logger: Logger): Unit = {
     val total = signatureMapping.length
-    draining(agent, client, healthCheckInterval, logger) {
-      for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
-        val segments = p.relativeTo(src)
-        logger.progress(s"Syncing path [$i/$total]", segments.toString())
-        (localSig, remoteSig) match {
-          case (None, _) =>
-            val rpc = Rpc.Remove(dest, segments)
-            client(rpc)
-          case (Some(Signature.Dir(perms)), remote) =>
-            remote match {
-              case None =>
-                client(Rpc.PutDir(dest, segments, perms))
-              case Some(Signature.Dir(remotePerms)) =>
-                client(Rpc.SetPerms(dest, segments, perms))
-              case Some(_) =>
-                client(Rpc.Remove(dest, segments))
-                client(Rpc.PutDir(dest, segments, perms))
-            }
+    for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
+      val segments = p.relativeTo(src)
+      logger.progress(s"Syncing path [$i/$total]", segments.toString())
+      (localSig, remoteSig) match {
+        case (None, _) =>
+          val rpc = Rpc.Remove(dest, segments)
+          client(rpc)
+        case (Some(Signature.Dir(perms)), remote) =>
+          remote match {
+            case None =>
+              client(Rpc.PutDir(dest, segments, perms))
+            case Some(Signature.Dir(remotePerms)) =>
+              client(Rpc.SetPerms(dest, segments, perms))
+            case Some(_) =>
+              client(Rpc.Remove(dest, segments))
+              client(Rpc.PutDir(dest, segments, perms))
+          }
 
-          case (Some(Signature.Symlink(target)), remote) =>
-            remote match {
-              case None =>
-                client(Rpc.PutLink(dest, segments, target))
-              case Some(_) =>
-                client(Rpc.Remove(dest, segments))
-                client(Rpc.PutLink(dest, segments, target))
-            }
-          case (Some(Signature.File(perms, blockHashes, size)), remote) =>
-            if (remote.exists(!_.isInstanceOf[Signature.File])) client(Rpc.Remove(dest, segments))
+        case (Some(Signature.Symlink(target)), remote) =>
+          remote match {
+            case None =>
+              client(Rpc.PutLink(dest, segments, target))
+            case Some(_) =>
+              client(Rpc.Remove(dest, segments))
+              client(Rpc.PutLink(dest, segments, target))
+          }
+        case (Some(Signature.File(perms, blockHashes, size)), remote) =>
+          if (remote.exists(!_.isInstanceOf[Signature.File])) client(Rpc.Remove(dest, segments))
 
-            remote match {
-              case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
-                if (perms != otherPerms) client(Rpc.SetPerms(dest, segments, perms))
+          remote match {
+            case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
+              if (perms != otherPerms) client(Rpc.SetPerms(dest, segments, perms))
 
-              case _ => client(Rpc.PutFile(dest, segments, perms))
-            }
-        }
+            case _ => client(Rpc.PutFile(dest, segments, perms))
+          }
       }
     }
   }

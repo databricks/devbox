@@ -3,15 +3,17 @@ import devbox.common._
 import geny.Generator
 
 import scala.collection.mutable
-
+import upickle.default.{ReadWriter, macroRW}
 /**
   * Represents a simple in-memory filesystem, storing values of type [[T]] on
   * every directory and file. Useful for modelling changes to a real filesystem
   * without the expense of going to disk, or as a compact set of file paths
   * that can conveniently be traversed in pre/post-order.
   */
-final class Vfs[T](rootMetadata: T) {
-  val root = Vfs.Dir[T](rootMetadata, mutable.LinkedHashMap.empty)
+final class Vfs[T](val root: Vfs.Dir[T]) {
+  def this(rootMetadata: T) = {
+    this(Vfs.Dir[T](rootMetadata, mutable.LinkedHashMap.empty))
+  }
 
   def walk(preOrder: Boolean = true) = new geny.Generator[(List[String], Vfs.Node[T], Option[Vfs.Dir[T]])]{
     def generate(handleItem: ((List[String], Vfs.Node[T], Option[Vfs.Dir[T]])) => Generator.Action): Generator.Action = {
@@ -57,8 +59,9 @@ object Vfs{
     def value_=(v: T): Unit
   }
   case class File[T](var value: T) extends Node[T]
+
   case class Dir[T](var value: T,
-                    children: mutable.LinkedHashMap[String, Node[T]]) extends Node[T]
+                    children: mutable.Map[String, Node[T]]) extends Node[T]
 
   // Update stateVfs according to the given action
   def updateVfs(p: os.RelPath, sig: Signature, vfs: Vfs[Signature]) = {
@@ -121,4 +124,8 @@ object Vfs{
         case Some(f @ Vfs.Dir(dir: Signature.Dir, _)) => f.value = dir.copy(perms = perms)
       }
   }
+
+  implicit def fileRw[T: ReadWriter]: ReadWriter[File[T]] = macroRW
+  implicit def dirRw[T: ReadWriter]: ReadWriter[Dir[T]] = macroRW
+  implicit def nodeRw[T: ReadWriter]: ReadWriter[Node[T]] = macroRW
 }
