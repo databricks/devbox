@@ -2,10 +2,18 @@ import mill._
 import mill.define.Ctx
 import scalalib._
 
-object devbox extends ScalaModule{
+trait DevboxModule extends ScalaModule{
   def scalaVersion = "2.13.1"
+  def compileIvyDeps = Agg(ivy"com.lihaoyi::acyclic:0.2.0")
+  def scalacOptions = Seq(
+    "-P:acyclic:force",
+  )
+  def scalacPluginIvyDeps = Agg(ivy"com.lihaoyi::acyclic:0.2.0")
+}
+object devbox extends DevboxModule{
+
   def moduleDeps = Seq(common)
-  object common extends ScalaModule{
+  object common extends DevboxModule{
     def scalaVersion = "2.13.1"
     def ivyDeps = Agg(
       ivy"com.lihaoyi::cask-util:0.3.2-5-12a91e",
@@ -19,7 +27,7 @@ object devbox extends ScalaModule{
     )
   }
 
-  object agent extends ScalaModule{
+  object agent extends DevboxModule{
     def scalaVersion = "2.13.1"
     def moduleDeps = Seq(common)
   }
