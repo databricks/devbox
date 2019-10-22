@@ -393,39 +393,6 @@ object Syncer{
     byteCount
   }
 
-  def drainUntilStable[T](eventQueue: BlockingQueue[T], debounceTime: Int) = {
-    val interestingBases = mutable.Buffer.empty[T]
-
-    /**
-      * Keep pulling stuff out of the [[eventQueue]], until the queue has
-      * stopped changing and is empty twice in a row.
-      */
-    @tailrec def await(first: Boolean, alreadyRetried: Boolean): Unit = {
-      if (first) {
-        interestingBases.append(eventQueue.take())
-        await(false, false)
-      } else eventQueue.poll() match {
-        case null =>
-          if (alreadyRetried) () // terminate
-          else {
-            Thread.sleep(debounceTime)
-            await(false, true)
-          }
-        case arr =>
-          interestingBases.append(arr)
-          await(false, false)
-      }
-    }
-
-    try {
-      await(true, false)
-
-      Some(interestingBases)
-    }catch {
-      case e: InterruptedException => None
-    }
-  }
-
   def syncMetadata(client: VfsRpcClient,
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
