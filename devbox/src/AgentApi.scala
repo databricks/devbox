@@ -15,10 +15,17 @@ class ReliableAgent(cmd: Seq[String], cwd: os.Path) extends AgentApi {
   var process: os.SubProcess = _
 
   override def start(): Unit = {
+    assert(process == null)
     process = os.proc(cmd).spawn(cwd = cwd)
   }
   override def isAlive(): Boolean = process.isAlive
-  override def destroy(): Unit = process.destroy()
+  override def destroy(): Unit = {
+    assert(process != null)
+    process.destroy()
+    process.destroyForcibly()
+    process.waitFor()
+    process = null
+  }
   override def stderr: InputStream with DataInput = new DataInputStream(process.stderr)
   override def stdout: InputStream with DataInput = new DataInputStream(process.stdout)
   override def stdin: OutputStream with DataOutput = new DataOutputStream(process.stdin)

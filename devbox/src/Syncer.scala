@@ -25,6 +25,7 @@ object AgentReadWriteActor{
   sealed trait Msg
   case class Send(value: Rpc) extends Msg
   case class Restarted() extends Msg
+  case class ReadRestarted() extends Msg
   case class Receive(data: Array[Byte]) extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
@@ -42,16 +43,18 @@ class AgentReadWriteActor(agent: AgentApi,
       buffer.append(msg)
       if (sending) sendMessages(Seq(msg))
 
-    case AgentReadWriteActor.Restarted() =>
+    case AgentReadWriteActor.ReadRestarted() =>
       if (sending){
         restart()
-      }else{
+      }
+    case AgentReadWriteActor.Restarted() =>
+      if (!sending){
 
         sending = true
         Syncer.spawnReaderThread(
           agent,
           buf => this.send(AgentReadWriteActor.Receive(buf)),
-          () => restart()
+          () => this.send(AgentReadWriteActor.ReadRestarted())
         )
         sendMessages(buffer.toSeq)
       }
@@ -78,11 +81,8 @@ class AgentReadWriteActor(agent: AgentApi,
   }
 
   def restart() = {
-    println("DESTROY AGENT")
     agent.destroy()
-    println("START AGENT")
     agent.start()
-    println("REQUEUE")
     sending = false
     this.send(AgentReadWriteActor.Restarted())
   }
@@ -293,7 +293,7 @@ class Syncer(agent: AgentApi,
     Syncer.spawnReaderThread(
       agent,
       buf => agentReadWriter.send(AgentReadWriteActor.Receive(buf)),
-      () => agentReadWriter.send(AgentReadWriteActor.Restarted())
+      () => agentReadWriter.send(AgentReadWriteActor.ReadRestarted())
     )
     agentLoggerThread.start()
     watcherThread.start()
