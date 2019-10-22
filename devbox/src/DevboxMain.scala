@@ -5,6 +5,8 @@ import java.nio.file.attribute.PosixFilePermission
 import devbox.common._
 import devbox.common.Cli.{Arg, showArg}
 import Cli.pathScoptRead
+
+import scala.concurrent.ExecutionContext
 object DevboxMain {
   case class Config(repo: List[String] = Nil,
                     stride: Int = 1,
@@ -73,9 +75,8 @@ object DevboxMain {
           System.out.println(Cli.formatBlock(signature, leftMargin).mkString("\n"))
         }else {
           val skipper = Skipper.fromString(config.ignoreStrategy)
-          val agent = new java.lang.ProcessBuilder()
-              .command(remaining:_*)
-              .start()
+
+          implicit val ac = new ActorContext.Simple(ExecutionContext.global, _.printStackTrace())
           Util.autoclose(new Syncer(
             new ReliableAgent(remaining, os.pwd),
             for(s <- config.repo)

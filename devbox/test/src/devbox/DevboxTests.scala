@@ -10,6 +10,8 @@ import os.Path
 import collection.JavaConverters._
 import utest._
 
+import scala.concurrent.ExecutionContext
+
 object DevboxTests extends TestSuite{
 
   val cases = Map(
@@ -75,7 +77,7 @@ object DevboxTests extends TestSuite{
       signatureMapping = (_, sig) => sig,
       randomKill = randomKill
     )
-    var syncer = createSyncer()
+    var (syncer, ac) = createSyncer()
     try {
       printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
       syncer.start()
@@ -91,18 +93,16 @@ object DevboxTests extends TestSuite{
 
         if (syncer == null) {
           logger("TEST RESTART SYNCER")
-          syncer = createSyncer()
+          val (newSyncer, newAc) = createSyncer()
+          syncer = newSyncer
+          ac = newAc
           syncer.start()
         }
 
 
         while( {
           Thread.sleep(100)
-          val syncerLive = syncer.syncer.isScheduled
-          val agentLive = syncer.agentReadWriter.isScheduled
-          val debounceLive = syncer.debouncer.isScheduled
-          val unresponded = syncer.agentReadWriter.unresponded.get() != 0
-          syncerLive || agentLive || debounceLive || unresponded
+          ac.active.get() != 0
         }) ()
 
         if (restartSyncerEvery.exists(count % _ == 0)) {
@@ -193,7 +193,8 @@ object DevboxTests extends TestSuite{
                         signatureMapping: (os.RelPath, Signature) => Signature,
                         healthCheckInterval: Int = 0,
                         randomKill: Option[Int] = None) = {
-    new Syncer(
+    implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
+    val syncer = new Syncer(
       new ReliableAgent(
         Seq(
           System.getenv("AGENT_EXECUTABLE"),
@@ -213,6 +214,7 @@ object DevboxTests extends TestSuite{
       logger,
       signatureMapping
     )
+    (syncer, ac)
   }
 
   def validate(src: os.Path, dest: os.Path, skipper: Skipper) = {

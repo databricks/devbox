@@ -30,16 +30,14 @@ object AgentReadWriteActor{
 }
 class AgentReadWriteActor(agent: AgentApi,
                           syncer: => SyncActor)
-                         (implicit ec: ExecutionContext,
-                          caskLogger: cask.util.Logger)
-  extends BatchActor[AgentReadWriteActor.Msg](){
+                         (implicit ac: ActorContext)
+  extends SimpleActor[AgentReadWriteActor.Msg](){
   private val buffer = mutable.ArrayDeque.empty[Rpc]
 
-  val unresponded = new AtomicInteger(0)
   var sending = true
-  def run(items: Seq[AgentReadWriteActor.Msg]): Unit = items.foreach{
+  def run(item: AgentReadWriteActor.Msg): Unit = item match{
     case AgentReadWriteActor.Send(msg) =>
-      unresponded.incrementAndGet()
+      ac.onSchedule()
       buffer.append(msg)
       if (sending) sendMessages(Seq(msg))
 
@@ -62,7 +60,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
     case AgentReadWriteActor.Receive(data) =>
       syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
-      unresponded.decrementAndGet()
+      ac.onComplete()
       buffer.dropInPlace(1)
   }
 
@@ -104,8 +102,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
                 signatureTransformer: (os.RelPath, Signature) => Signature,
                 skipper: Skipper,
                 scheduledExecutorService: ScheduledExecutorService)
-               (implicit ec: ExecutionContext,
-                caskLogger: cask.util.Logger)
+               (implicit ac: ActorContext)
   extends StateMachineActor[SyncActor.Msg]() {
 
   def initialState = Initializing(Set())
@@ -205,9 +202,8 @@ object DebounceActor{
 class DebounceActor[T]
                    (handle: Seq[T] => Unit,
                     debounceMillis: Int)
-                   (implicit ec: ExecutionContext,
-                    caskLogger: cask.util.Logger) extends BatchActor[DebounceActor.Msg[T]]{
-  def run(items: Seq[DebounceActor.Msg[T]]) = {
+                   (implicit ac: ActorContext) extends BatchActor[DebounceActor.Msg[T]]{
+  def runBatch(items: Seq[DebounceActor.Msg[T]]) = {
     val values = items
       .flatMap{
         case DebounceActor.Wrapped(v) => Seq(v)
@@ -233,7 +229,8 @@ class Syncer(agent: AgentApi,
              skipper: Skipper,
              debounceMillis: Int,
              logger: Logger,
-             signatureTransformer: (os.RelPath, Signature) => Signature) extends AutoCloseable{
+             signatureTransformer: (os.RelPath, Signature) => Signature)
+            (implicit ac: ActorContext) extends AutoCloseable{
 
   private[this] val watcher = System.getProperty("os.name") match{
     case "Linux" =>
@@ -249,11 +246,6 @@ class Syncer(agent: AgentApi,
         logger,
         0.05
       )
-  }
-  import concurrent.ExecutionContext.Implicits.global
-  implicit val caskLogger: util.Logger = new util.Logger {
-    def exception(t: Throwable): Unit = t.printStackTrace()
-    def debug(t: Text[Any])(implicit f: File, line: Line): Unit = ()
   }
 
   val syncer: SyncActor = new SyncActor(

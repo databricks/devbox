@@ -89,7 +89,7 @@ object DevboxTestMain {
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
             val logger = new Logger.File(log, config.toast)
             val skip = Skipper.fromString(config.ignoreStrategy)
-            val syncer = instantiateSyncer(
+            val (syncer, ac) = instantiateSyncer(
               src, dest,
               skip,
               config.debounceMillis,
