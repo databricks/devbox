@@ -64,10 +64,13 @@ object DevboxAgentMain {
                wd: os.Path,
                exitOnError: Boolean,
                idempotent: Boolean) = {
-
+    val agentId = scala.util.Random.nextInt()
 
     val buffer = new Array[Byte](Util.blockSize)
-    while (true) try client.readMsg[Rpc]() match {
+    while (true) try {
+      logger.apply("AGENT ID", agentId)
+      client.readMsg[Rpc]()
+    } match {
       case Rpc.FullScan(paths) =>
         val vfsRoots = for(path <- paths) yield {
           val vfs = new Vfs[Signature](Signature.Dir(0))
@@ -85,7 +88,8 @@ object DevboxAgentMain {
             (p, attrs) <- fileStream
             sig <- Signature.compute(p, buffer, attrs.fileType)
           } {
-            Vfs.updateVfs(path, sig, vfs)
+            logger.apply("SCAN PATH", p)
+            Vfs.updateVfs(p.relativeTo(scanRoot), sig, vfs)
           }
 
           vfs.root
@@ -98,13 +102,18 @@ object DevboxAgentMain {
 
       case rpc @ Rpc.PutFile(root, path, perms) =>
         val targetPath = wd / root / path
+
         if (!idempotent || !os.exists(targetPath)) {
+          logger.apply("PUT FILE", targetPath)
+          logger.apply("PUT FILE", os.exists(targetPath / os.up))
           os.write(targetPath, "", perms)
         }
         client.writeMsg(Response.Ack(rpc.hashCode()))
 
       case rpc @ Rpc.PutDir(root, path, perms) =>
         val targetPath = wd / root / path
+        logger.apply("PUT DIR", targetPath)
+        logger.apply("PUT DIR", os.exists(targetPath))
         if (!idempotent || !os.exists(targetPath)) {
           os.makeDir(targetPath, perms)
         }

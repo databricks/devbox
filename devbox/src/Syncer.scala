@@ -36,6 +36,7 @@ class AgentReadWriteActor(agent: AgentApi,
   val unresponded = new AtomicInteger(0)
   def run(items: Seq[AgentReadWriteActor.Msg]): Unit = items.foreach{
     case AgentReadWriteActor.Send(msg) =>
+      pprint.log(msg)
       unresponded.incrementAndGet()
       buffer.append(msg)
       val blob = upickle.default.writeBinary(msg)
@@ -44,6 +45,7 @@ class AgentReadWriteActor(agent: AgentApi,
       agent.stdin.writeInt(blob.length)
       agent.stdin.write(blob)
       agent.stdin.flush()
+      pprint.log(msg)
 
     case AgentReadWriteActor.Receive(data) =>
       syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
@@ -92,7 +94,15 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 
   case class RemoteScanning(changedPaths: Set[os.Path]) extends State({
     case SyncActor.Events(paths) => RemoteScanning(changedPaths ++ paths)
-    case SyncActor.Receive(Response.VfsRoots(trees)) => executeSync(changedPaths, trees.map(new Vfs(_)))
+    case SyncActor.Receive(Response.VfsRoots(trees)) =>
+      val vfsArr = trees.map(new Vfs[Signature](_))
+      val remotelyPresentPaths = for{
+        (vfs, root) <- geny.Generator.from(vfsArr.zip(mapping.map(_._1)))
+        (p0, _, _) <- vfs.walk()
+      } yield root / p0
+      val allChangedPaths = changedPaths ++ remotelyPresentPaths.toArray
+      pprint.log(allChangedPaths)
+      executeSync(allChangedPaths, vfsArr)
   })
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
@@ -199,30 +209,28 @@ class Syncer(agent: AgentApi,
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(agent, syncer)
 
   val readerThread = new Thread(() => {
-    while(true) {
+    while(try{
       val s = agent.stdout.readBoolean()
       val n = agent.stdout.readInt()
       val buf = new Array[Byte](n)
       agent.stdout.readFully(buf)
       agentReadWriter.send(AgentReadWriteActor.Receive(buf))
-    }
+      true
+    }catch{
+      case e: java.io.EOFException => false
+      case e: java.io.IOException => false
+    })()
   })
 
   val agentLoggerThread = new Thread(() => {
-
-    while (
-      if (!agent.isAlive()) false
-      else {
-        try {
-          val str = agent.stderr.readLine()
-          if (str != null) logger.write(ujson.read(str).str)
-          true
-        } catch { case NonFatal(ex) =>
-          ex.printStackTrace()
-          false
-        }
-      }
-    ) ()
+    while (try {
+      val str = agent.stderr.readLine()
+      if (str != null) logger.write(ujson.read(str).str)
+      true
+    } catch{
+      case e: java.io.EOFException => false
+      case e: java.io.IOException => false
+    }) ()
   })
 
   val watcherThread = new Thread(() => watcher.start())

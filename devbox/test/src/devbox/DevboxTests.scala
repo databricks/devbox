@@ -27,14 +27,14 @@ object DevboxTests extends TestSuite{
     'edge - {
       * - walkValidate("edge", cases("edge"), 1, 50, 0)
       'git - walkValidate("edge-git", cases("edge"), 1, 50, 0, ignoreStrategy = "")
-      'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 50, 0, ignoreStrategy = "", randomKillConnection = true)
       'restart - walkValidate("edge-restart", cases("edge"), 1, 50, 0, restartSyncer = true)
+      'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 50, 0, ignoreStrategy = "", randomKillConnection = true)
     }
 
     'oslib - {
       * - walkValidate("oslib", cases("oslib"), 1, 100, 0)
       'git - walkValidate("oslib-git", cases("oslib"), 1, 100, 0, ignoreStrategy = "")
-//      'restart - walkValidate("oslib-restart", cases("oslib"), 1, 50, 0, restartSyncer = true)
+      'restart - walkValidate("oslib-restart", cases("oslib"), 1, 50, 0, restartSyncer = true)
     }
 
     'scalatags - {
@@ -101,7 +101,6 @@ object DevboxTests extends TestSuite{
           val syncerLive = syncer.syncer.isScheduled
           val agentLive = syncer.agentReadWriter.isScheduled
           val unresponded = syncer.agentReadWriter.unresponded.get() != 0
-          pprint.log((syncerLive, agentLive, unresponded))
           syncerLive || agentLive || unresponded
         }) ()
 
@@ -195,9 +194,7 @@ object DevboxTests extends TestSuite{
                         healthCheckInterval: Int = 0,
                         randomKillConnection: Boolean = false) = {
     new Syncer(
-      if (inMemoryAgent) new InMemoryAgent(dest, skipper, exitOnError = exitOnError)
-      else if (randomKillConnection) new InMemoryAgent(dest, skipper, exitOnError = exitOnError, randomKillConnection)
-      else os.proc(
+      os.proc(
         System.getenv("AGENT_EXECUTABLE"),
         "--ignore-strategy", ignoreStrategy,
         "--working-dir", dest,
