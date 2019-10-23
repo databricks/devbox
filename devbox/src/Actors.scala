@@ -56,7 +56,6 @@ class AgentReadWriteActor(agent: AgentApi,
         sendRpcs(buffer.toSeq)
       }
 
-
     case AgentReadWriteActor.Receive(data) =>
       retryCount = 0
       val deserialized = upickle.default.readBinary[Response](data)
@@ -64,8 +63,12 @@ class AgentReadWriteActor(agent: AgentApi,
 
       if (deserialized.isInstanceOf[Response.Ack]) {
         ac.reportComplete()
-        buffer.dropInPlace(1)
-        if (buffer.isEmpty) statusActor.send(StatusActor.Done())
+
+        val dropped = buffer.removeHead()
+
+        if (buffer.isEmpty && dropped.isInstanceOf[Rpc.Complete]){
+          statusActor.send(StatusActor.Done())
+        }
       }
   }
 
@@ -115,13 +118,12 @@ object SyncActor{
   case class ScanComplete(vfsArr: Seq[Vfs[Signature]]) extends Msg
 
   case class Events(paths: Set[os.Path]) extends Msg
-  case class LocalScanned(paths: os.Path) extends Msg
+  case class LocalScanned(paths: os.Path, index: Int, total: Int) extends Msg
   case class Debounced(debounceId: Object) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
   case class Retry() extends Msg
 }
-class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
-                agentReadWriter: => AgentReadWriteActor,
+class SyncActor(agentReadWriter: => AgentReadWriteActor,
                 mapping: Seq[(os.Path, os.RelPath)],
                 logger: Logger,
                 signatureTransformer: (os.RelPath, Signature) => Signature,
@@ -142,15 +144,18 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
           "Remote Scanning " + mapping.map(_._2).mkString(", ")
         )
       )
-      scala.concurrent.Future {
+      scala.concurrent.Future{
+        val skipArr = mapping.map(t => skipper.initialize(t._1))
         for {
           ((src, dest), i) <- geny.Generator.from(mapping.zipWithIndex)
-          (p, attrs) <- os.walk.stream.attrs(
+          fileStream = os.walk.stream.attrs(
             src,
             (p, attrs) => skipArr(i)(p, attrs.isDir),
             includeTarget = true
           )
-        } this.send(SyncActor.LocalScanned(p))
+          count = fileStream.count()
+          (p, attrs) <- fileStream
+        } this.send(SyncActor.LocalScanned(p, i, count))
       }
       RemoteScanning(
         Set.empty,
@@ -161,13 +166,13 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
   case class RemoteScanning(changedPaths: Set[os.Path],
                             vfsArr: Seq[(os.RelPath, Vfs[Signature])]) extends State({
     case SyncActor.Events(paths) => RemoteScanning(changedPaths ++ paths, vfsArr)
-    case SyncActor.LocalScanned(path) =>
-      logger.progress("Scanned local path", path.toString())
+    case SyncActor.LocalScanned(path, i, total) =>
+      logger.progress(s"Scanned local path [$i/$total]", path.toString())
       RemoteScanning(changedPaths ++ Seq(path), vfsArr)
 
-    case SyncActor.Receive(Response.Scanned(base, p, sig)) =>
+    case SyncActor.Receive(Response.Scanned(base, p, sig, i, total)) =>
       vfsArr.collectFirst{case (b, vfs) if b == base => Vfs.updateVfs(p, sig, vfs)}
-      logger.progress("Scanned remote path", (base / p).toString())
+      logger.progress(s"Scanned remote path [$i/$total]", (base / p).toString())
       RemoteScanning(changedPaths ++ mapping.find(_._2 == base).map(_._1 / p), vfsArr)
 
     case SyncActor.Receive(Response.Ack()) =>
@@ -184,13 +189,11 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
   def executeSync(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]): State = {
     val buffer = new Array[Byte](Util.blockSize)
 
-    // We need to .distinct after we convert the strings to paths, in order
-    // to ensure the inputs are canonicalized and don't have meaningless
-    // differences such as trailing slashes
     val allEventPaths = changedPaths.toSeq.sorted
     logger("SYNC EVENTS", allEventPaths)
 
     val failed = mutable.Set.empty[os.Path]
+    val skipArr = mapping.map(t => skipper.initialize(t._1))
     for (((src, dest), i) <- mapping.zipWithIndex) {
       val eventPaths = allEventPaths.filter(p =>
         p.startsWith(src) && !skipArr(i)(p, true)
@@ -198,29 +201,22 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 
       logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
 
-      val exitCode = for {
-        _ <- if (eventPaths.isEmpty) Left(SyncFiles.NoOp: SyncFiles.ExitCode) else Right(())
-        _ <- SyncFiles.updateSkipPredicate(
-          eventPaths, skipper, vfsArr(i), src, buffer, logger,
-          signatureTransformer, skipArr(i) = _
-        )
-        res <- SyncFiles.synchronizeRepo(
+      if (eventPaths.nonEmpty) {
+        SyncFiles.synchronizeRepo(
           logger, vfsArr(i), skipArr(i), src, dest,
           buffer, eventPaths, signatureTransformer,
           (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged))
-        )
-      } yield res
-
-      exitCode match {
-        case Right((streamedByteCount, changedPaths)) =>
-          statusActor.send(StatusActor.FilesAndBytes(changedPaths.length, streamedByteCount))
-        case Left(SyncFiles.NoOp) => // do nothing
-        case Left(SyncFiles.SyncFail(value)) =>
-          val x = new StringWriter()
-          val p = new PrintWriter(x)
-          value.printStackTrace(p)
-          logger("SYNC FAILED", x.toString)
-          failed.addAll(eventPaths)
+        ) match {
+          case Right((streamedByteCount, changedPaths)) =>
+            statusActor.send(StatusActor.FilesAndBytes(changedPaths.length, streamedByteCount))
+          case Left(SyncFiles.NoOp) => // do nothing
+          case Left(SyncFiles.SyncFail(value)) =>
+            val x = new StringWriter()
+            val p = new PrintWriter(x)
+            value.printStackTrace(p)
+            logger("SYNC FAILED", x.toString)
+            failed.addAll(eventPaths)
+        }
       }
     }
 

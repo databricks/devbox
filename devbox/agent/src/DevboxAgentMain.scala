@@ -99,11 +99,13 @@ object DevboxAgentMain {
               (p, attrs) => skip(p, attrs.isDir) && !attrs.isDir
             )
 
+            val total = fileStream.count()
+
             for {
-              (p, attrs) <- fileStream
+              ((p, attrs), i) <- fileStream.zipWithIndex
               sig <- Signature.compute(p, buffer, attrs.fileType)
             } {
-              client.writeMsg(Response.Scanned(path, p.relativeTo(scanRoot), sig))
+              client.writeMsg(Response.Scanned(path, p.relativeTo(scanRoot), sig, i, total))
             }
           }
 
