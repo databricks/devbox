@@ -56,6 +56,7 @@ class AgentReadWriteActor(agent: AgentApi,
         sendRpcs(buffer.toSeq)
       }
 
+
     case AgentReadWriteActor.Receive(data) =>
       retryCount = 0
       val deserialized = upickle.default.readBinary[Response](data)
@@ -123,7 +124,8 @@ object SyncActor{
   case class Receive(value: devbox.common.Response) extends Msg
   case class Retry() extends Msg
 }
-class SyncActor(agentReadWriter: => AgentReadWriteActor,
+class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
+                agentReadWriter: => AgentReadWriteActor,
                 mapping: Seq[(os.Path, os.RelPath)],
                 logger: Logger,
                 signatureTransformer: (os.RelPath, Signature) => Signature,
@@ -189,11 +191,13 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
   def executeSync(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]): State = {
     val buffer = new Array[Byte](Util.blockSize)
 
+    // We need to .distinct after we convert the strings to paths, in order
+    // to ensure the inputs are canonicalized and don't have meaningless
+    // differences such as trailing slashes
     val allEventPaths = changedPaths.toSeq.sorted
     logger("SYNC EVENTS", allEventPaths)
 
     val failed = mutable.Set.empty[os.Path]
-    val skipArr = mapping.map(t => skipper.initialize(t._1))
     for (((src, dest), i) <- mapping.zipWithIndex) {
       val eventPaths = allEventPaths.filter(p =>
         p.startsWith(src) && !skipArr(i)(p, true)
@@ -201,22 +205,29 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
 
       logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
 
-      if (eventPaths.nonEmpty) {
-        SyncFiles.synchronizeRepo(
+      val exitCode = for {
+        _ <- if (eventPaths.isEmpty) Left(SyncFiles.NoOp: SyncFiles.ExitCode) else Right(())
+        _ <- SyncFiles.updateSkipPredicate(
+          eventPaths, skipper, vfsArr(i), src, buffer, logger,
+          signatureTransformer, skipArr(i) = _
+        )
+        res <- SyncFiles.synchronizeRepo(
           logger, vfsArr(i), skipArr(i), src, dest,
           buffer, eventPaths, signatureTransformer,
           (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged))
-        ) match {
-          case Right((streamedByteCount, changedPaths)) =>
-            statusActor.send(StatusActor.FilesAndBytes(changedPaths.length, streamedByteCount))
-          case Left(SyncFiles.NoOp) => // do nothing
-          case Left(SyncFiles.SyncFail(value)) =>
-            val x = new StringWriter()
-            val p = new PrintWriter(x)
-            value.printStackTrace(p)
-            logger("SYNC FAILED", x.toString)
-            failed.addAll(eventPaths)
-        }
+        )
+      } yield res
+
+      exitCode match {
+        case Right((streamedByteCount, changedPaths)) =>
+          statusActor.send(StatusActor.FilesAndBytes(changedPaths.length, streamedByteCount))
+        case Left(SyncFiles.NoOp) => // do nothing
+        case Left(SyncFiles.SyncFail(value)) =>
+          val x = new StringWriter()
+          val p = new PrintWriter(x)
+          value.printStackTrace(p)
+          logger("SYNC FAILED", x.toString)
+          failed.addAll(eventPaths)
       }
     }
 
@@ -277,7 +288,8 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
 
   val icon = new java.awt.TrayIcon(blueSync)
 
-  java.awt.SystemTray.getSystemTray().add(icon)
+  val tray = java.awt.SystemTray.getSystemTray()
+  tray.add(icon)
 
   icon.addMouseListener(new MouseListener {
     def mouseClicked(e: MouseEvent): Unit = {
@@ -321,7 +333,7 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
           "Unable to connect to devbox, gave up after 5 attempts;\n" +
           "click on this logo to try again"
 
-      case StatusActor.Close() => java.awt.SystemTray.getSystemTray().remove(icon)
+      case StatusActor.Close() => tray.remove(icon)
     }
 
     if (lastImage != image) icon.setImage(image)

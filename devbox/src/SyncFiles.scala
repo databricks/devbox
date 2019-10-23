@@ -23,6 +23,35 @@ object SyncFiles {
     }
   }
 
+  def updateSkipPredicate(eventPaths: Seq[os.Path],
+                          skipper: Skipper,
+                          vfs: Vfs[Signature],
+                          src: os.Path,
+                          buffer: Array[Byte],
+                          logger: Logger,
+                          signatureTransformer: (os.RelPath, Signature) => Signature,
+                          setSkip: ((os.Path, Boolean) => Boolean) => Unit) = {
+    val allModifiedSkipFiles = for{
+      p <- eventPaths
+      pathToCheck <- skipper.checkReset(p)
+      newSig =
+      if (!os.exists(pathToCheck)) None
+      else Signature.compute(pathToCheck, buffer, os.FileType.Dir).map(signatureTransformer(pathToCheck.relativeTo(src), _))
+      oldSig = vfs.resolve(pathToCheck.relativeTo(src)).map(_.value)
+      if newSig != oldSig
+    } yield (pathToCheck, oldSig, newSig)
+
+    if (allModifiedSkipFiles.isEmpty) Right(())
+    else{
+      logger.info(
+        "Gitignore file changed, re-scanning repository",
+        allModifiedSkipFiles.head._1.toString
+      )
+      logger("SYNC GITIGNORE", allModifiedSkipFiles)
+      restartOnFailure(setSkip(skipper.initialize(src)))
+    }
+  }
+
   /**
     * Represents the various ways a repo synchronization can exit early.
     */

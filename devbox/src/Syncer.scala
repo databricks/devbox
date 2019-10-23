@@ -34,6 +34,7 @@ class Syncer(agent: AgentApi,
   }
 
   val syncer: SyncActor = new SyncActor(
+    for ((src, dest) <- mapping.toArray) yield skipper.initialize(src),
     agentReadWriter,
     mapping,
     new Logger {
