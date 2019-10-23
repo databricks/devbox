@@ -188,7 +188,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
     // We need to .distinct after we convert the strings to paths, in order
     // to ensure the inputs are canonicalized and don't have meaningless
     // differences such as trailing slashes
-    val allEventPaths = changedPaths.toSeq.sortBy(_.toString)
+    val allEventPaths = changedPaths.toSeq.sorted
     logger("SYNC EVENTS", allEventPaths)
 
     val failed = mutable.Set.empty[os.Path]
@@ -278,7 +278,7 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
                  (implicit ac: ActorContext) extends SimpleActor[StatusActor.Msg]{
   val Seq(blueSync, greenTick, redCross) =
     for(name <- Seq("blue-sync", "green-tick", "red-cross"))
-    yield java.awt.Toolkit.getDefaultToolkit().getImage(s"devbox/resources/$name.png")
+    yield java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png"))
 
   val icon = new java.awt.TrayIcon(blueSync)
 
@@ -286,7 +286,6 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
 
   icon.addMouseListener(new MouseListener {
     def mouseClicked(e: MouseEvent): Unit = {
-      println("onClick")
       agentReadWriteActor.send(AgentReadWriteActor.ForceRestart())
     }
 
@@ -298,14 +297,20 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
 
     def mouseExited(e: MouseEvent): Unit = ()
   })
+
+  var lastIcon = blueSync
   def run(msg: StatusActor.Msg) = msg match{
     case StatusActor.Syncing(msg) =>
-      icon.setImage(blueSync)
+      if (lastIcon ne blueSync) icon.setImage(blueSync)
+      lastIcon = blueSync
       icon.setToolTip(msg)
     case StatusActor.Done() =>
-      icon.setImage(greenTick)
+      if (lastIcon ne greenTick) icon.setImage(greenTick)
+      lastIcon = greenTick
+      icon.setToolTip("Syncing Complete\n" + java.time.Instant.now())
     case StatusActor.Error() =>
-      icon.setImage(redCross)
+      if (lastIcon ne redCross) icon.setImage(redCross)
+      lastIcon = redCross
       icon.setToolTip(
         "Unable to connect to devbox, gave up after 5 attempts;\n" +
         "click on this logo to try again"

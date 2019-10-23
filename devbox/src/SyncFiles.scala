@@ -48,7 +48,7 @@ object SyncFiles {
         allModifiedSkipFiles.head._1.toString
       )
       logger("SYNC GITIGNORE", allModifiedSkipFiles)
-      restartOnFailure{setSkip(skipper.initialize(src))}
+      restartOnFailure(setSkip(skipper.initialize(src)))
     }
   }
 
@@ -274,19 +274,30 @@ object SyncFiles {
                         signatureTransformer: (os.RelPath, Signature) => Signature)
   : Seq[(os.Path, Option[Signature], Option[Signature])] = {
 
-    eventPaths.zipWithIndex.map { case (p, i) =>
+    val eventPathsLinks = eventPaths.map(p => (p, os.isLink(p)))
+    // Existing under a differently-cased name counts as not existing.
+    // The only way to reliably check for a mis-cased file on OS-X is
+    // to list the parent folder and compare listed names
+    val preListed = eventPathsLinks
+      .filter(_._2)
+      .map(_._1 / os.up)
+      .distinct
+      .map(dir =>
+        (dir, if (!os.isDir(dir, followLinks = false)) Set[String]() else os.list(dir).map(_.last).toSet)
+      )
+      .toMap
+
+    eventPathsLinks.zipWithIndex.map { case ((p, isLink), i) =>
       logger.progress(
         s"Scanning local path [$i/${eventPaths.length}]",
         p.relativeTo(src).toString()
       )
 
+
       Tuple3(
         p,
-        if (!os.exists(p, followLinks = false) ||
-          // Existing under a differently-cased name counts as not existing.
-          // The only way to reliably check for a mis-cased file on OS-X is
-          // to list the parent folder and compare listed names
-          !os.list(p / os.up).map(_.last).contains(p.last)) None
+        if ((isLink && !preListed(p / os.up).contains(p.last)) ||
+            (!isLink && !os.followLink(p).contains(p)) )None
         else {
           val attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
           val fileType =
