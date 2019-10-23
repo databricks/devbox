@@ -1,5 +1,6 @@
 package devbox
 
+import java.awt.event.{ActionEvent, ActionListener, MouseEvent, MouseListener}
 import java.io.{PrintWriter, StringWriter}
 import java.util.concurrent.ScheduledExecutorService
 
@@ -11,6 +12,7 @@ import scala.collection.mutable
 object AgentReadWriteActor{
   sealed trait Msg
   case class Send(value: Rpc, logged: Option[String]) extends Msg
+  case class ForceRestart() extends Msg
   case class Restarted() extends Msg
   case class ReadRestarted() extends Msg
   case class Receive(data: Array[Byte]) extends Msg
@@ -23,6 +25,7 @@ class AgentReadWriteActor(agent: AgentApi,
   private val buffer = mutable.ArrayDeque.empty[(Rpc, Option[String])]
 
   var sending = true
+  var retryCount = 0
 
   def run(item: AgentReadWriteActor.Msg): Unit = item match{
     case AgentReadWriteActor.Send(msg, logged) =>
@@ -35,10 +38,18 @@ class AgentReadWriteActor(agent: AgentApi,
 
       if (sending) sendRpcs(Seq(msg))
 
-    case AgentReadWriteActor.ReadRestarted() =>
+    case AgentReadWriteActor.ForceRestart() =>
       if (sending){
+        retryCount = 0
         restart()
       }
+
+    case AgentReadWriteActor.ReadRestarted() =>
+      if (sending){
+        if (retryCount < 5) restart()
+        else statusActor.send(StatusActor.Error())
+      }
+
     case AgentReadWriteActor.Restarted() =>
       if (!sending){
 
@@ -53,6 +64,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
 
     case AgentReadWriteActor.Receive(data) =>
+      retryCount = 0
       val deserialized = upickle.default.readBinary[Response](data)
       syncer.send(SyncActor.Receive(deserialized))
 
@@ -100,6 +112,7 @@ class AgentReadWriteActor(agent: AgentApi,
   }
 
   def restart() = {
+    retryCount += 1
     agent.destroy()
     agent.start()
     sending = false
@@ -261,7 +274,8 @@ object StatusActor{
   case class Error() extends Msg
   case class Close() extends Msg
 }
-class StatusActor()(implicit ac: ActorContext) extends SimpleActor[StatusActor.Msg]{
+class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
+                 (implicit ac: ActorContext) extends SimpleActor[StatusActor.Msg]{
   val Seq(blueSync, greenTick, redCross) =
     for(name <- Seq("blue-sync", "green-tick", "red-cross"))
     yield java.awt.Toolkit.getDefaultToolkit().getImage(s"devbox/resources/$name.png")
@@ -269,6 +283,21 @@ class StatusActor()(implicit ac: ActorContext) extends SimpleActor[StatusActor.M
   val icon = new java.awt.TrayIcon(blueSync)
 
   java.awt.SystemTray.getSystemTray().add(icon)
+
+  icon.addMouseListener(new MouseListener {
+    def mouseClicked(e: MouseEvent): Unit = {
+      println("onClick")
+      agentReadWriteActor.send(AgentReadWriteActor.ForceRestart())
+    }
+
+    def mousePressed(e: MouseEvent): Unit = ()
+
+    def mouseReleased(e: MouseEvent): Unit = ()
+
+    def mouseEntered(e: MouseEvent): Unit = ()
+
+    def mouseExited(e: MouseEvent): Unit = ()
+  })
   def run(msg: StatusActor.Msg) = msg match{
     case StatusActor.Syncing(msg) =>
       icon.setImage(blueSync)
@@ -277,7 +306,10 @@ class StatusActor()(implicit ac: ActorContext) extends SimpleActor[StatusActor.M
       icon.setImage(greenTick)
     case StatusActor.Error() =>
       icon.setImage(redCross)
-      icon.setToolTip("Red")
+      icon.setToolTip(
+        "Unable to connect to devbox, gave up after 5 attempts;\n" +
+        "click on this logo to try again"
+      )
     case StatusActor.Close() => java.awt.SystemTray.getSystemTray().remove(icon)
   }
 }

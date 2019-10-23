@@ -67,7 +67,7 @@ class Syncer(agent: AgentApi,
     debounceMillis
   )
 
-  val statusActor = new StatusActor()
+  val statusActor = new StatusActor(agentReadWriter)
 
   val agentLoggerThread = new Thread(() => {
     while (try {
