@@ -54,11 +54,7 @@ class AgentReadWriteActor(agent: AgentApi,
       if (!sending){
 
         sending = true
-        spawnReaderThread(
-          agent,
-          buf => this.send(AgentReadWriteActor.Receive(buf)),
-          () => this.send(AgentReadWriteActor.ReadRestarted())
-        )
+        spawnReaderThread()
         sendRpcs(buffer.map(_._1).toSeq)
       }
 
@@ -78,18 +74,17 @@ class AgentReadWriteActor(agent: AgentApi,
       }
   }
 
-  def spawnReaderThread(agent: AgentApi, out: Array[Byte] => Unit, restart: () => Unit) = {
+  def spawnReaderThread() = {
     new Thread(() => {
       while(try{
-        val s = agent.stdout.readBoolean()
         val n = agent.stdout.readInt()
         val buf = new Array[Byte](n)
         agent.stdout.readFully(buf)
-        out(buf)
+        this.send(AgentReadWriteActor.Receive(buf))
         true
       }catch{
-        case e: java.io.EOFException =>
-          restart()
+        case e: java.io.IOException =>
+          this.send(AgentReadWriteActor.ReadRestarted())
           false
       })()
     }).start()
@@ -101,7 +96,6 @@ class AgentReadWriteActor(agent: AgentApi,
     try {
       for(msg <- msgs){
         val blob = upickle.default.writeBinary(msg)
-        agent.stdin.writeBoolean(true)
         agent.stdin.writeInt(blob.length)
         agent.stdin.write(blob)
         agent.stdin.flush()

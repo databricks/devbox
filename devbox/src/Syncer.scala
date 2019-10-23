@@ -87,11 +87,7 @@ class Syncer(agent: AgentApi,
   def start() = {
     running = true
     agent.start()
-    agentReadWriter.spawnReaderThread(
-      agent,
-      buf => agentReadWriter.send(AgentReadWriteActor.Receive(buf)),
-      () => agentReadWriter.send(AgentReadWriteActor.ReadRestarted())
-    )
+    agentReadWriter.spawnReaderThread()
 
     agentLoggerThread.start()
     watcherThread.start()

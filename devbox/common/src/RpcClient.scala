@@ -12,7 +12,6 @@ class RpcClient(var out: OutputStream with DataOutput,
     logger("MSG WRITE", t)
     val blob = upickle.default.writeBinary(t)
     out.synchronized {
-      out.writeBoolean(success)
       out.writeInt(blob.length)
       out.write(blob)
       out.flush()
@@ -21,23 +20,18 @@ class RpcClient(var out: OutputStream with DataOutput,
 
   def readMsg[T: upickle.default.Reader](): T = {
 
-    val (success, blob) = in.synchronized{
-      val success = in.readBoolean()
-
+    val blob = in.synchronized{
       val length = in.readInt()
       val blob = new Array[Byte](length)
       in.readFully(blob)
-      (success, blob)
+      blob
     }
 
     val res =
-      if (success) {
-        try upickle.default.readBinary[T](blob)
-        catch{case e: upickle.core.Abort =>
-          throw new Exception(upickle.default.readBinary[upack.Msg](blob).toString, e)
-        }
+      try upickle.default.readBinary[T](blob)
+      catch{case e: upickle.core.Abort =>
+        throw new Exception(upickle.default.readBinary[upack.Msg](blob).toString, e)
       }
-      else throw RpcException(upickle.default.readBinary[RemoteException](blob))
     logger("MSG READ", res)
 
     res

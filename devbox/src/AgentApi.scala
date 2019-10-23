@@ -12,11 +12,14 @@ trait AgentApi {
 }
 
 class ReliableAgent(cmd: Seq[String], cwd: os.Path) extends AgentApi {
-  var process: os.SubProcess = _
+  var process: java.lang.Process = _
 
   override def start(): Unit = {
     assert(process == null)
-    process = os.proc(cmd).spawn(cwd = cwd)
+    process = new java.lang.ProcessBuilder().command(cmd:_*).directory(cwd.toIO).start()
+    stderr = new DataInputStream(process.getErrorStream)
+    stdout = new DataInputStream(process.getInputStream)
+    stdin = new DataOutputStream(process.getOutputStream)
   }
   override def isAlive(): Boolean = process.isAlive
   override def destroy(): Unit = {
@@ -26,18 +29,10 @@ class ReliableAgent(cmd: Seq[String], cwd: os.Path) extends AgentApi {
     process.waitFor()
     process = null
   }
-  override def stderr: InputStream with DataInput = new DataInputStream(process.stderr)
-  override def stdout: InputStream with DataInput = new DataInputStream(process.stdout)
-  override def stdin: OutputStream with DataOutput = new DataOutputStream(process.stdin)
+  var stderr: InputStream with DataInput = _
+  var stdout: InputStream with DataInput = _
+  var stdin: OutputStream with DataOutput = _
 }
 
 object AgentApi{
-  implicit class SubProcessApi(sub: os.SubProcess) extends AgentApi{
-    def isAlive() = sub.isAlive()
-    def destroy(): Unit = sub.destroy()
-    def stderr = sub.stderr
-    def stdout = sub.stdout
-    def stdin = sub.stdin
-    def start(): Unit = println()
-  }
 }
