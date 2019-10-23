@@ -89,24 +89,25 @@ object DevboxAgentMain {
       count += 1
       try client.readMsg[Rpc]() match {
         case Rpc.FullScan(paths) =>
-          val scanned = for(path <- paths) yield {
+          for(path <- paths) {
             val scanRoot = wd / path
             val skip = skipper.initialize(scanRoot)
             if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
 
             val fileStream = os.walk.stream.attrs(
               scanRoot,
-              (p, attrs) => skip(p, attrs.isDir)
+              (p, attrs) => skip(p, attrs.isDir) && !attrs.isDir
             )
 
-            val pathSigs = for {
+            for {
               (p, attrs) <- fileStream
               sig <- Signature.compute(p, buffer, attrs.fileType)
-            } yield (p.relativeTo(scanRoot), sig)
-
-            pathSigs.toSeq
+            } {
+              client.writeMsg(Response.Scanned(path, p.relativeTo(scanRoot), sig))
+            }
           }
-          client.writeMsg(Response.Scanned(scanned))
+
+          client.writeMsg(Response.Ack())
 
         case Rpc.Remove(root, path) =>
           os.remove.all(wd / root / path)
@@ -116,8 +117,6 @@ object DevboxAgentMain {
           val targetPath = wd / root / path
 
           if (!os.exists(targetPath)) {
-            logger.apply("PUT FILE", targetPath)
-            logger.apply("PUT FILE", os.exists(targetPath / os.up))
             os.write(targetPath, "", perms)
           }
           client.writeMsg(Response.Ack())

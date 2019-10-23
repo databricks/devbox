@@ -23,6 +23,7 @@ class AgentReadWriteActor(agent: AgentApi,
   private val buffer = mutable.ArrayDeque.empty[(Rpc, Option[String])]
 
   var sending = true
+
   def run(item: AgentReadWriteActor.Msg): Unit = item match{
     case AgentReadWriteActor.Send(msg, logged) =>
       ac.reportSchedule()
@@ -52,14 +53,17 @@ class AgentReadWriteActor(agent: AgentApi,
 
 
     case AgentReadWriteActor.Receive(data) =>
-      syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
-      ac.reportComplete()
-      buffer.dropInPlace(1)
-      if (buffer.isEmpty) statusActor.send(StatusActor.Done())
-      else {
-        for(logged <- buffer.head._2) statusActor.send(StatusActor.Syncing(logged))
-      }
+      val deserialized = upickle.default.readBinary[Response](data)
+      syncer.send(SyncActor.Receive(deserialized))
 
+      if (deserialized.isInstanceOf[Response.Ack]) {
+        ac.reportComplete()
+        buffer.dropInPlace(1)
+        if (buffer.isEmpty) statusActor.send(StatusActor.Done())
+        else {
+          for(logged <- buffer.head._2) statusActor.send(StatusActor.Syncing(logged))
+        }
+      }
   }
 
   def spawnReaderThread(agent: AgentApi, out: Array[Byte] => Unit, restart: () => Unit) = {
@@ -106,6 +110,7 @@ class AgentReadWriteActor(agent: AgentApi,
 object SyncActor{
   sealed trait Msg
   case class Scan() extends Msg
+  case class ScanComplete(vfsArr: Seq[Vfs[Signature]]) extends Msg
 
   case class Events(paths: Set[os.Path]) extends Msg
   case class Debounced(debounceId: Object) extends Msg
@@ -138,23 +143,23 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
           includeTarget = true
         )
       } yield p
-      RemoteScanning(pathStream.toSet)
+      RemoteScanning(
+        pathStream.toSet,
+        mapping.map(_._2 -> new Vfs[Signature](Signature.Dir(0)))
+      )
   })
 
-  case class RemoteScanning(changedPaths: Set[os.Path]) extends State({
-    case SyncActor.Events(paths) => RemoteScanning(changedPaths ++ paths)
-    case SyncActor.Receive(Response.Scanned(pathLists)) =>
-      val vfsArr = for(pathList <- pathLists) yield {
-        val vfs = new Vfs[Signature](Signature.Dir(0))
-        for((path, sig) <- pathList) Vfs.updateVfs(path, sig, vfs)
-        vfs
-      }
+  case class RemoteScanning(changedPaths: Set[os.Path],
+                            vfsArr: Seq[(os.RelPath, Vfs[Signature])]) extends State({
+    case SyncActor.Events(paths) => RemoteScanning(changedPaths ++ paths, vfsArr)
 
-      val scanned = for{
-        (pathList, root) <- pathLists.zip(mapping.map(_._1))
-        (path, sig) <- pathList
-      } yield root / path
-      executeSync(changedPaths ++ scanned, vfsArr)
+    case SyncActor.Receive(Response.Scanned(base, p, sig)) =>
+      vfsArr.collectFirst{case (b, vfs) if b == base => Vfs.updateVfs(p, sig, vfs)}
+      logger.progress("Scanned remote path", (base / p).toString())
+      RemoteScanning(changedPaths ++ mapping.find(_._2 == base).map(_._1 / p), vfsArr)
+
+    case SyncActor.Receive(Response.Ack()) =>
+      executeSync(changedPaths, vfsArr.map(_._2))
   })
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
@@ -230,11 +235,9 @@ class DebounceActor(handle: Set[os.Path] => Unit,
       logChanges(values, if (buffer.isEmpty) "Detected" else "Ongoing")
       buffer.addAll(values)
       val count = buffer.size
-      ac.reportSchedule()
       scala.concurrent.Future{
         Thread.sleep(debounceMillis)
         this.send(DebounceActor.Trigger(count))
-        ac.reportComplete()
       }
     case DebounceActor.Trigger(count) =>
       if (count == buffer.size) {

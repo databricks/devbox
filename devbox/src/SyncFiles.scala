@@ -259,7 +259,7 @@ object SyncFiles {
     if (size != otherSize) {
       client(
         Rpc.SetSize(dest, segments, size),
-        s"Truncating file [$fileIndex/$fileTotalCount]:\n$segments"
+        s"Resizing file [$fileIndex/$fileTotalCount]:\n$segments"
       )
     }
     byteCount
