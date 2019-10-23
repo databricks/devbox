@@ -155,11 +155,11 @@ object DevboxAgentMain {
           os.perms.set.apply(wd / root / path, perms)
           client.writeMsg(Response.Ack())
 
+        case Rpc.Complete() => client.writeMsg(Response.Ack())
+
       }catch{
         case e: EOFException => throw e // master process has closed up, exit
-        case e: Throwable if !exitOnError =>
-          logger("AGNT ERROR", e)
-          client.writeMsg(RemoteException.create(e), false)
+        case e: Throwable if !exitOnError => logger("AGNT ERROR", e)
       }
     }
   }

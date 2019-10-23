@@ -115,6 +115,7 @@ object SyncActor{
   case class ScanComplete(vfsArr: Seq[Vfs[Signature]]) extends Msg
 
   case class Events(paths: Set[os.Path]) extends Msg
+  case class LocalScanned(paths: os.Path) extends Msg
   case class Debounced(debounceId: Object) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
   case class Retry() extends Msg
@@ -141,16 +142,18 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
           "Remote Scanning " + mapping.map(_._2).mkString(", ")
         )
       )
-      val pathStream = for {
-        ((src, dest), i) <- geny.Generator.from(mapping.zipWithIndex)
-        (p, attrs) <- os.walk.stream.attrs(
-          src,
-          (p, attrs) => skipArr(i)(p, attrs.isDir),
-          includeTarget = true
-        )
-      } yield p
+      scala.concurrent.Future {
+        for {
+          ((src, dest), i) <- geny.Generator.from(mapping.zipWithIndex)
+          (p, attrs) <- os.walk.stream.attrs(
+            src,
+            (p, attrs) => skipArr(i)(p, attrs.isDir),
+            includeTarget = true
+          )
+        } this.send(SyncActor.LocalScanned(p))
+      }
       RemoteScanning(
-        pathStream.toSet,
+        Set.empty,
         mapping.map(_._2 -> new Vfs[Signature](Signature.Dir(0)))
       )
   })
@@ -158,6 +161,9 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
   case class RemoteScanning(changedPaths: Set[os.Path],
                             vfsArr: Seq[(os.RelPath, Vfs[Signature])]) extends State({
     case SyncActor.Events(paths) => RemoteScanning(changedPaths ++ paths, vfsArr)
+    case SyncActor.LocalScanned(path) =>
+      logger.progress("Scanned local path", path.toString())
+      RemoteScanning(changedPaths ++ Seq(path), vfsArr)
 
     case SyncActor.Receive(Response.Scanned(base, p, sig)) =>
       vfsArr.collectFirst{case (b, vfs) if b == base => Vfs.updateVfs(p, sig, vfs)}
@@ -219,6 +225,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
     }
 
     if (failed.nonEmpty) this.send(SyncActor.Events(failed.toSet))
+    else agentReadWriter.send(AgentReadWriteActor.Send(Rpc.Complete(), "Sync Complete"))
     Waiting(vfsArr)
   }
 }
