@@ -21,13 +21,13 @@ class Syncer(agent: AgentApi,
     case "Linux" =>
       new WatchServiceWatcher(
         mapping.map(_._1),
-        events => debouncer.send(DebounceActor.Wrapped(SyncActor.Events(events))),
+        events => debouncer.send(DebounceActor.Paths(events)),
         logger
       )
     case "Mac OS X" =>
       new FSEventsWatcher(
         mapping.map(_._1),
-        events => debouncer.send(DebounceActor.Wrapped(SyncActor.Events(events))),
+        events => debouncer.send(DebounceActor.Paths(events)),
         logger,
         0.05
       )
@@ -37,18 +37,37 @@ class Syncer(agent: AgentApi,
     for ((src, dest) <- mapping.toArray) yield skipper.initialize(src),
     agentReadWriter,
     mapping,
-    logger,
+    new Logger {
+      def write(s: String) = logger.write(s)
+
+      def info(title: => String, body: => String, color: => Option[String]) = {
+        statusActor.send(StatusActor.Syncing(s"$title: $body"))
+        logger.info(title, body, color)
+      }
+
+      def progress(title: => String, body: => String) = {
+        statusActor.send(StatusActor.Syncing(s"$title: $body"))
+        logger.progress(title, body)
+      }
+      def close() = logger.close()
+    },
     signatureTransformer,
     skipper,
-    Executors.newSingleThreadScheduledExecutor()
+    Executors.newSingleThreadScheduledExecutor(),
   )
-  val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(agent, syncer)
+  val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
+    agent,
+    syncer,
+    statusActor
+  )
 
-  val debouncer = new DebounceActor[SyncActor.Events](
-    eventLists => syncer.send(SyncActor.Events(eventLists.flatMap(_.paths).toSet)),
+  val debouncer = new DebounceActor(
+    paths => syncer.send(SyncActor.Events(paths)),
+    statusActor,
     debounceMillis
   )
 
+  val statusActor = new StatusActor()
 
   val agentLoggerThread = new Thread(() => {
     while (try {
@@ -81,6 +100,7 @@ class Syncer(agent: AgentApi,
 
   def close() = {
     running = false
+    statusActor.send(StatusActor.Close())
     watcher.close()
     agent.destroy()
   }

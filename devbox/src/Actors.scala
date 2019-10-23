@@ -10,22 +10,28 @@ import scala.collection.mutable
 
 object AgentReadWriteActor{
   sealed trait Msg
-  case class Send(value: Rpc) extends Msg
+  case class Send(value: Rpc, logged: Option[String]) extends Msg
   case class Restarted() extends Msg
   case class ReadRestarted() extends Msg
   case class Receive(data: Array[Byte]) extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
-                          syncer: => SyncActor)
+                          syncer: => SyncActor,
+                          statusActor: => StatusActor)
                          (implicit ac: ActorContext)
   extends SimpleActor[AgentReadWriteActor.Msg](){
-  private val buffer = mutable.ArrayDeque.empty[Rpc]
+  private val buffer = mutable.ArrayDeque.empty[(Rpc, Option[String])]
 
   var sending = true
   def run(item: AgentReadWriteActor.Msg): Unit = item match{
-    case AgentReadWriteActor.Send(msg) =>
+    case AgentReadWriteActor.Send(msg, logged) =>
       ac.reportSchedule()
-      buffer.append(msg)
+      if (logged.isDefined && buffer.isEmpty) {
+        statusActor.send(StatusActor.Syncing(logged.get))
+      }
+
+      buffer.append((msg, logged))
+
       if (sending) sendRpcs(Seq(msg))
 
     case AgentReadWriteActor.ReadRestarted() =>
@@ -41,7 +47,7 @@ class AgentReadWriteActor(agent: AgentApi,
           buf => this.send(AgentReadWriteActor.Receive(buf)),
           () => this.send(AgentReadWriteActor.ReadRestarted())
         )
-        sendRpcs(buffer.toSeq)
+        sendRpcs(buffer.map(_._1).toSeq)
       }
 
 
@@ -49,6 +55,11 @@ class AgentReadWriteActor(agent: AgentApi,
       syncer.send(SyncActor.Receive(upickle.default.readBinary[Response](data)))
       ac.reportComplete()
       buffer.dropInPlace(1)
+      if (buffer.isEmpty) statusActor.send(StatusActor.Done())
+      else {
+        for(logged <- buffer.head._2) statusActor.send(StatusActor.Syncing(logged))
+      }
+
   }
 
   def spawnReaderThread(agent: AgentApi, out: Array[Byte] => Unit, restart: () => Unit) = {
@@ -116,7 +127,9 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
   case class Initializing(changedPaths: Set[os.Path]) extends State({
     case SyncActor.Events(paths) => Initializing(changedPaths ++ paths)
     case SyncActor.Scan() =>
-      agentReadWriter.send(AgentReadWriteActor.Send(Rpc.FullScan(mapping.map(_._2))))
+      agentReadWriter.send(
+        AgentReadWriteActor.Send(Rpc.FullScan(mapping.map(_._2)), None)
+      )
       val pathStream = for {
         ((src, dest), i) <- geny.Generator.from(mapping.zipWithIndex)
         (p, attrs) <- os.walk.stream.attrs(
@@ -145,7 +158,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
   })
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
-    case SyncActor.Events(paths) => executeSync(paths.toSet, vfsArr)
+    case SyncActor.Events(paths) => executeSync(paths, vfsArr)
     case SyncActor.Receive(Response.Ack()) => Waiting(vfsArr) // do nothing
     case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
   })
@@ -177,7 +190,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
         res <- SyncFiles.synchronizeRepo(
           logger, vfsArr(i), skipArr(i), src, dest,
           buffer, eventPaths, signatureTransformer,
-          p => agentReadWriter.send(AgentReadWriteActor.Send(p))
+          (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, Some(logged)))
         )
       } yield res
 
@@ -202,26 +215,66 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 }
 
 object DebounceActor{
-  sealed trait Msg[T]
-  case class Wrapped[T](value: T) extends Msg[T]
-  case class Fire[T](items: Seq[T]) extends Msg[T]
+  sealed trait Msg
+  case class Paths(values: Set[os.Path]) extends Msg
+  case class Trigger(count: Int) extends Msg
 }
-class DebounceActor[T]
-                   (handle: Seq[T] => Unit,
+class DebounceActor(handle: Set[os.Path] => Unit,
+                    statusActor: => StatusActor,
                     debounceMillis: Int)
-                   (implicit ac: ActorContext) extends BatchActor[DebounceActor.Msg[T]]{
-  def runBatch(items: Seq[DebounceActor.Msg[T]]) = {
-    val values = items
-      .flatMap{
-        case DebounceActor.Wrapped(v) => Seq(v)
-        case DebounceActor.Fire(vs) => vs
+                   (implicit ac: ActorContext)
+  extends SimpleActor[DebounceActor.Msg]{
+  val buffer = mutable.Set.empty[os.Path]
+  def run(msg: DebounceActor.Msg) = msg match{
+    case DebounceActor.Paths(values) =>
+      logChanges(values, if (buffer.isEmpty) "Detected" else "Ongoing")
+      buffer.addAll(values)
+      val count = buffer.size
+      ac.reportSchedule()
+      scala.concurrent.Future{
+        Thread.sleep(debounceMillis)
+        this.send(DebounceActor.Trigger(count))
+        ac.reportComplete()
       }
+    case DebounceActor.Trigger(count) =>
+      if (count == buffer.size) {
+        logChanges(buffer, "Syncing")
+        handle(buffer.toSet)
+        buffer.clear()
+      }
+  }
+  def logChanges(paths: Iterable[os.Path], verb: String) = {
+    val suffix =
+      if (paths.size == 1) ""
+      else s"\nand ${paths.size - 1} other files"
 
-    if (items.exists(_.isInstanceOf[DebounceActor.Fire[T]])){
-      handle(values)
-    }else{
-      Thread.sleep(debounceMillis)
-      this.send(DebounceActor.Fire(values))
-    }
+    statusActor.send(StatusActor.Syncing(s"$verb changes to\n${paths.head.relativeTo(os.pwd)}$suffix"))
+  }
+}
+object StatusActor{
+  sealed trait Msg
+  case class Syncing(msg: String) extends Msg
+  case class Done() extends Msg
+  case class Error() extends Msg
+  case class Close() extends Msg
+}
+class StatusActor()(implicit ac: ActorContext) extends SimpleActor[StatusActor.Msg]{
+  val Seq(blueSync, greenTick, redCross) =
+    for(name <- Seq("blue-sync", "green-tick", "red-cross"))
+    yield java.awt.Toolkit.getDefaultToolkit().getImage(s"devbox/resources/$name.png")
+
+  val icon = new java.awt.TrayIcon(blueSync)
+
+  java.awt.SystemTray.getSystemTray().add(icon)
+  def run(msg: StatusActor.Msg) = msg match{
+    case StatusActor.Syncing(msg) =>
+      icon.setImage(blueSync)
+      icon.setToolTip(msg)
+    case StatusActor.Done() =>
+      icon.setImage(greenTick)
+    case StatusActor.Error() =>
+      icon.setImage(redCross)
+      icon.setToolTip("Red")
+    case StatusActor.Close() => java.awt.SystemTray.getSystemTray().remove(icon)
   }
 }

@@ -76,7 +76,7 @@ object DevboxMain {
         }else {
           val skipper = Skipper.fromString(config.ignoreStrategy)
 
-          implicit val ac = new ActorContext.Simple(ExecutionContext.global, _.printStackTrace())
+          implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
           Util.autoclose(new Syncer(
             new ReliableAgent(remaining, os.pwd),
             for(s <- config.repo)

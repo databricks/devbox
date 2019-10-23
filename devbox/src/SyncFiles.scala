@@ -12,10 +12,10 @@ import scala.util.control.NonFatal
 
 object SyncFiles {
   class VfsRpcClient(stateVfs: Vfs[Signature], logger: Logger,
-                     send: Rpc => Unit){
-    def apply[T <: Action with Rpc: default.Writer](p: T) = {
+                     send: (Rpc, String) => Unit){
+    def apply[T <: Action with Rpc: default.Writer](p: T, logged: String) = {
       try {
-        send(p)
+        send(p, logged)
         Vfs.updateVfs(p, stateVfs)
       } catch {
         case NonFatal(ex) => logger.info("Connection", s"Message cannot be sent $ex")
@@ -75,7 +75,7 @@ object SyncFiles {
                       buffer: Array[Byte],
                       eventPaths: Seq[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
-                      send: Rpc => Unit): Either[ExitCode, (Long, Seq[os.Path])] = {
+                      send: (Rpc, String) => Unit): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
         computeSignatures(eventPaths, buffer, vfs, skip, src, logger, signatureTransformer)
@@ -169,38 +169,39 @@ object SyncFiles {
     val total = signatureMapping.length
     for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
       val segments = p.relativeTo(src)
-      logger.progress(s"Syncing path [$i/$total]", segments.toString())
+      val logged = s"Syncing path [$i/$total]:\n$segments"
       (localSig, remoteSig) match {
         case (None, _) =>
-          val rpc = Rpc.Remove(dest, segments)
-          client(rpc)
+          client(Rpc.Remove(dest, segments), logged)
         case (Some(Signature.Dir(perms)), remote) =>
           remote match {
             case None =>
-              client(Rpc.PutDir(dest, segments, perms))
+              client(Rpc.PutDir(dest, segments, perms), logged)
             case Some(Signature.Dir(remotePerms)) =>
-              client(Rpc.SetPerms(dest, segments, perms))
+              client(Rpc.SetPerms(dest, segments, perms), logged)
             case Some(_) =>
-              client(Rpc.Remove(dest, segments))
-              client(Rpc.PutDir(dest, segments, perms))
+              client(Rpc.Remove(dest, segments), logged)
+              client(Rpc.PutDir(dest, segments, perms), logged)
           }
 
         case (Some(Signature.Symlink(target)), remote) =>
           remote match {
             case None =>
-              client(Rpc.PutLink(dest, segments, target))
+              client(Rpc.PutLink(dest, segments, target), logged)
             case Some(_) =>
-              client(Rpc.Remove(dest, segments))
-              client(Rpc.PutLink(dest, segments, target))
+              client(Rpc.Remove(dest, segments), logged)
+              client(Rpc.PutLink(dest, segments, target), logged)
           }
         case (Some(Signature.File(perms, blockHashes, size)), remote) =>
-          if (remote.exists(!_.isInstanceOf[Signature.File])) client(Rpc.Remove(dest, segments))
+          if (remote.exists(!_.isInstanceOf[Signature.File])) {
+            client(Rpc.Remove(dest, segments), logged)
+          }
 
           remote match {
             case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
-              if (perms != otherPerms) client(Rpc.SetPerms(dest, segments, perms))
+              if (perms != otherPerms) client(Rpc.SetPerms(dest, segments, perms), logged)
 
-            case _ => client(Rpc.PutFile(dest, segments, perms))
+            case _ => client(Rpc.PutFile(dest, segments, perms), logged)
           }
       }
     }
@@ -227,10 +228,8 @@ object SyncFiles {
         if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
       } {
         val hashMsg = if (blockHashes.size > 1) s" $i/${blockHashes.length}" else ""
-        logger.progress(
-          s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]",
-          segments.toString()
-        )
+        val logged = s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]:\n$segments"
+
         buf.rewind()
         channel.position(i * Util.blockSize)
         var n = 0
@@ -251,12 +250,18 @@ object SyncFiles {
             i * Util.blockSize,
             new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr),
             blockHashes(i)
-          )
+          ),
+          logged
         )
       }
     }
 
-    if (size != otherSize) client(Rpc.SetSize(dest, segments, size))
+    if (size != otherSize) {
+      client(
+        Rpc.SetSize(dest, segments, size),
+        s"Truncating file [$fileIndex/$fileTotalCount]:\n$segments"
+      )
+    }
     byteCount
   }
 
@@ -271,7 +276,7 @@ object SyncFiles {
 
     eventPaths.zipWithIndex.map { case (p, i) =>
       logger.progress(
-        s"Scanning local folder [$i/${eventPaths.length}]",
+        s"Scanning local path [$i/${eventPaths.length}]",
         p.relativeTo(src).toString()
       )
 
