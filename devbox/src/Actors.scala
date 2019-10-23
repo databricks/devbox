@@ -11,7 +11,7 @@ import scala.collection.mutable
 
 object AgentReadWriteActor{
   sealed trait Msg
-  case class Send(value: Rpc, logged: Option[String]) extends Msg
+  case class Send(value: Rpc, logged: String) extends Msg
   case class ForceRestart() extends Msg
   case class Restarted() extends Msg
   case class ReadRestarted() extends Msg
@@ -22,7 +22,7 @@ class AgentReadWriteActor(agent: AgentApi,
                           statusActor: => StatusActor)
                          (implicit ac: ActorContext)
   extends SimpleActor[AgentReadWriteActor.Msg](){
-  private val buffer = mutable.ArrayDeque.empty[(Rpc, Option[String])]
+  private val buffer = mutable.ArrayDeque.empty[Rpc]
 
   var sending = true
   var retryCount = 0
@@ -30,11 +30,9 @@ class AgentReadWriteActor(agent: AgentApi,
   def run(item: AgentReadWriteActor.Msg): Unit = item match{
     case AgentReadWriteActor.Send(msg, logged) =>
       ac.reportSchedule()
-      if (logged.isDefined && buffer.isEmpty) {
-        statusActor.send(StatusActor.Syncing(logged.get))
-      }
+      statusActor.send(StatusActor.Syncing(logged))
 
-      buffer.append((msg, logged))
+      buffer.append(msg)
 
       if (sending) sendRpcs(Seq(msg))
 
@@ -55,7 +53,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
         sending = true
         spawnReaderThread()
-        sendRpcs(buffer.map(_._1).toSeq)
+        sendRpcs(buffer.toSeq)
       }
 
 
@@ -68,9 +66,6 @@ class AgentReadWriteActor(agent: AgentApi,
         ac.reportComplete()
         buffer.dropInPlace(1)
         if (buffer.isEmpty) statusActor.send(StatusActor.Done())
-        else {
-          for(logged <- buffer.head._2) statusActor.send(StatusActor.Syncing(logged))
-        }
       }
   }
 
@@ -141,7 +136,10 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
     case SyncActor.Events(paths) => Initializing(changedPaths ++ paths)
     case SyncActor.Scan() =>
       agentReadWriter.send(
-        AgentReadWriteActor.Send(Rpc.FullScan(mapping.map(_._2)), None)
+        AgentReadWriteActor.Send(
+          Rpc.FullScan(mapping.map(_._2)),
+          "Remote Scanning " + mapping.map(_._2).mkString(", ")
+        )
       )
       val pathStream = for {
         ((src, dest), i) <- geny.Generator.from(mapping.zipWithIndex)
@@ -203,7 +201,7 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
         res <- SyncFiles.synchronizeRepo(
           logger, vfsArr(i), skipArr(i), src, dest,
           buffer, eventPaths, signatureTransformer,
-          (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, Some(logged)))
+          (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged))
         )
       } yield res
 
@@ -269,7 +267,7 @@ object StatusActor{
   case class Close() extends Msg
 }
 class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
-                 (implicit ac: ActorContext) extends SimpleActor[StatusActor.Msg]{
+                 (implicit ac: ActorContext) extends BatchActor[StatusActor.Msg]{
   val Seq(blueSync, greenTick, redCross) =
     for(name <- Seq("blue-sync", "green-tick", "red-cross"))
     yield java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png"))
@@ -292,36 +290,39 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
     def mouseExited(e: MouseEvent): Unit = ()
   })
 
-  var lastIcon = blueSync
+  var image = blueSync
+  var tooltip = ""
   var syncedFiles = 0
   var syncedBytes = 0L
-  def run(msg: StatusActor.Msg) = msg match{
-    case StatusActor.Syncing(msg) =>
-      if (lastIcon ne blueSync) icon.setImage(blueSync)
-      lastIcon = blueSync
-      icon.setToolTip(msg)
+  def runBatch(msgs: Seq[StatusActor.Msg]) = {
+    val lastImage = image
+    val lastTooltip = tooltip
+    msgs.foreach{
+      case StatusActor.Syncing(msg) =>
+        image = blueSync
+        tooltip = msg
 
-    case StatusActor.FilesAndBytes(nFiles, nBytes) =>
-      syncedFiles += nFiles
-      syncedBytes += nBytes
+      case StatusActor.FilesAndBytes(nFiles, nBytes) =>
+        syncedFiles += nFiles
+        syncedBytes += nBytes
 
-    case StatusActor.Done() =>
-      if (lastIcon ne greenTick) {
-        icon.setImage(greenTick)
-        lastIcon = greenTick
-        icon.setToolTip(
-          s"Syncing Complete\n$syncedFiles files $syncedBytes bytes\n${java.time.Instant.now()}"
-        )
+      case StatusActor.Done() =>
+        image = greenTick
+        tooltip = s"Syncing Complete\n$syncedFiles files $syncedBytes bytes\n${java.time.Instant.now()}"
         syncedFiles = 0
         syncedBytes = 0
-      }
-    case StatusActor.Error() =>
-      if (lastIcon ne redCross) icon.setImage(redCross)
-      lastIcon = redCross
-      icon.setToolTip(
-        "Unable to connect to devbox, gave up after 5 attempts;\n" +
-        "click on this logo to try again"
-      )
-    case StatusActor.Close() => java.awt.SystemTray.getSystemTray().remove(icon)
+      case StatusActor.Error() =>
+
+        image = redCross
+        tooltip =
+          "Unable to connect to devbox, gave up after 5 attempts;\n" +
+          "click on this logo to try again"
+
+      case StatusActor.Close() => java.awt.SystemTray.getSystemTray().remove(icon)
+    }
+
+    if (lastImage != image) icon.setImage(image)
+    if (lastTooltip != tooltip) icon.setToolTip(tooltip)
+    Thread.sleep(100)
   }
 }
