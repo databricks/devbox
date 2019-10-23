@@ -136,7 +136,8 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
                 logger: Logger,
                 signatureTransformer: (os.RelPath, Signature) => Signature,
                 skipper: Skipper,
-                scheduledExecutorService: ScheduledExecutorService)
+                scheduledExecutorService: ScheduledExecutorService,
+                statusActor: => StatusActor)
                (implicit ac: ActorContext)
   extends StateMachineActor[SyncActor.Msg]() {
 
@@ -214,11 +215,9 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 
       exitCode match {
         case Right((streamedByteCount, changedPaths)) =>
-        //                  allChangedPaths.appendAll(changedPaths)
-        //                  allSyncedBytes += streamedByteCount
+          statusActor.send(StatusActor.FilesAndBytes(changedPaths.length, streamedByteCount))
         case Left(SyncFiles.NoOp) => // do nothing
         case Left(SyncFiles.SyncFail(value)) =>
-          //          changedPaths.appendAll(eventPaths)
           val x = new StringWriter()
           val p = new PrintWriter(x)
           value.printStackTrace(p)
@@ -270,6 +269,7 @@ class DebounceActor(handle: Set[os.Path] => Unit,
 object StatusActor{
   sealed trait Msg
   case class Syncing(msg: String) extends Msg
+  case class FilesAndBytes(files: Int, bytes: Long) extends Msg
   case class Done() extends Msg
   case class Error() extends Msg
   case class Close() extends Msg
@@ -299,15 +299,28 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
   })
 
   var lastIcon = blueSync
+  var syncedFiles = 0
+  var syncedBytes = 0L
   def run(msg: StatusActor.Msg) = msg match{
     case StatusActor.Syncing(msg) =>
       if (lastIcon ne blueSync) icon.setImage(blueSync)
       lastIcon = blueSync
       icon.setToolTip(msg)
+
+    case StatusActor.FilesAndBytes(nFiles, nBytes) =>
+      syncedFiles += nFiles
+      syncedBytes += nBytes
+
     case StatusActor.Done() =>
-      if (lastIcon ne greenTick) icon.setImage(greenTick)
-      lastIcon = greenTick
-      icon.setToolTip("Syncing Complete\n" + java.time.Instant.now())
+      if (lastIcon ne greenTick) {
+        icon.setImage(greenTick)
+        lastIcon = greenTick
+        icon.setToolTip(
+          s"Syncing Complete\n$syncedFiles files $syncedBytes bytes\n${java.time.Instant.now()}"
+        )
+        syncedFiles = 0
+        syncedBytes = 0
+      }
     case StatusActor.Error() =>
       if (lastIcon ne redCross) icon.setImage(redCross)
       lastIcon = redCross

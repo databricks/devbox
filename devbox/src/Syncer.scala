@@ -54,6 +54,7 @@ class Syncer(agent: AgentApi,
     signatureTransformer,
     skipper,
     Executors.newSingleThreadScheduledExecutor(),
+    statusActor
   )
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
