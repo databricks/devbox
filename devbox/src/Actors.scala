@@ -38,91 +38,97 @@ class AgentReadWriteActor(agent: AgentApi,
 
     buffer.append(msg)
 
-    if (sending) sendRpcs(Seq(msg))
+    if (sending) {
+      sendRpcs(Seq(msg))
+    }
   }
 
   val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
 
-  def run(item: AgentReadWriteActor.Msg): Unit = item match{
-    case AgentReadWriteActor.Send(msg, logged) => sendLogged(msg, logged)
+  def run(item: AgentReadWriteActor.Msg): Unit = {
+    println()
+    pprint.log(item)
+    pprint.log(retryCount)
+    pprint.log(sending)
+    item match{
+      case AgentReadWriteActor.Send(msg, logged) => sendLogged(msg, logged)
 
-    case AgentReadWriteActor.ForceRestart() =>
-      if (sending){
-        statusActor.send(StatusActor.Syncing("Syncing Restarted"))
-        sending = true
+      case AgentReadWriteActor.ForceRestart() =>
+        if (!sending){
+          statusActor.send(StatusActor.Syncing("Syncing Restarted"))
+          retryCount = 0
+          restart()
+        }
+
+      case AgentReadWriteActor.ReadRestarted() =>
+        if (sending){
+          retry()
+        }
+
+      case AgentReadWriteActor.SendChunks(
+        SyncFiles.SendChunks(
+          p, dest, segments, chunkIndices, fileIndex, fileTotalCount, blockHashes
+        )
+      ) =>
+
+        var bytes = 0L
+        val byteArr = new Array[Byte](Util.blockSize)
+        val buf = ByteBuffer.wrap(byteArr)
+        Util.autoclose(os.read.channel(p)) { channel =>
+          for (i <- chunkIndices) {
+            val hashMsg = if (blockHashes.size > 1) s" $i/${blockHashes.size}" else ""
+
+            buf.rewind()
+            channel.position(i * Util.blockSize)
+            var n = 0
+            while ( {
+              if (n == Util.blockSize) false
+              else channel.read(buf) match {
+                case -1 => false
+                case d =>
+                  n += d
+                  true
+              }
+            }) ()
+            bytes += n
+            val msg = Rpc.WriteChunk(
+              dest,
+              segments,
+              i * Util.blockSize,
+              new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
+            )
+
+            sendLogged(
+              msg,
+              s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]:\n$segments"
+            )
+          }
+        }
+        statusActor.send(StatusActor.FilesAndBytes(1, bytes))
+
+      case AgentReadWriteActor.Restarted() =>
+        if (!sending){
+          spawnReaderThread()
+          if (buffer.isEmpty) buffer.append(Rpc.Complete())
+          sendRpcs(buffer.toSeq)
+          sending = true
+        }
+
+
+      case AgentReadWriteActor.Receive(data) =>
         retryCount = 0
-        restart()
-      }
+        syncer.send(SyncActor.Receive(data))
 
-    case AgentReadWriteActor.ReadRestarted() =>
-      if (sending){
-        retry()
-      }
+        if (data.isInstanceOf[Response.Ack]) {
+          ac.reportComplete()
 
-    case AgentReadWriteActor.SendChunks(
-      SyncFiles.SendChunks(
-        p, dest, segments, chunkIndices, fileIndex, fileTotalCount, blockHashes
-      )
-    ) =>
+          val dropped = buffer.removeHead()
 
-      var bytes = 0L
-      val byteArr = new Array[Byte](Util.blockSize)
-      val buf = ByteBuffer.wrap(byteArr)
-      Util.autoclose(os.read.channel(p)) { channel =>
-        for (i <- chunkIndices) {
-          val hashMsg = if (blockHashes.size > 1) s" $i/${blockHashes.size}" else ""
-
-          buf.rewind()
-          channel.position(i * Util.blockSize)
-          var n = 0
-          while ( {
-            if (n == Util.blockSize) false
-            else channel.read(buf) match {
-              case -1 => false
-              case d =>
-                n += d
-                true
-            }
-          }) ()
-          bytes += n
-          val msg = Rpc.WriteChunk(
-            dest,
-            segments,
-            i * Util.blockSize,
-            new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
-          )
-
-          sendLogged(
-            msg,
-            s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]:\n$segments"
-          )
+          if (buffer.isEmpty && dropped.isInstanceOf[Rpc.Complete]){
+            statusActor.send(StatusActor.Done())
+          }
         }
-      }
-      statusActor.send(StatusActor.FilesAndBytes(1, bytes))
-
-    case AgentReadWriteActor.Restarted() =>
-      if (!sending){
-
-        sending = true
-        spawnReaderThread()
-        if (buffer.isEmpty) buffer.append(Rpc.Complete())
-        sendRpcs(buffer.toSeq)
-      }
-
-
-    case AgentReadWriteActor.Receive(data) =>
-      retryCount = 0
-      syncer.send(SyncActor.Receive(data))
-
-      if (data.isInstanceOf[Response.Ack]) {
-        ac.reportComplete()
-
-        val dropped = buffer.removeHead()
-
-        if (buffer.isEmpty && dropped.isInstanceOf[Rpc.Complete]){
-          statusActor.send(StatusActor.Done())
-        }
-      }
+    }
   }
 
   def spawnReaderThread() = {
@@ -150,7 +156,8 @@ class AgentReadWriteActor(agent: AgentApi,
     }).start()
     new Thread(() => {
       while(try{
-        this.send(AgentReadWriteActor.Receive(client.readMsg[Response]()))
+        val response = client.readMsg[Response]()
+        this.send(AgentReadWriteActor.Receive(response))
         true
       }catch{
         case e: java.io.IOException =>
@@ -163,7 +170,9 @@ class AgentReadWriteActor(agent: AgentApi,
 
   def sendRpcs(msgs: Seq[Rpc]) = {
     try {
+      pprint.log(msgs)
       for(msg <- msgs)client.writeMsg(msg)
+      println("SENT")
     }catch{ case e: java.io.IOException =>
       println("sendRpcs restart")
       restart()
@@ -171,6 +180,7 @@ class AgentReadWriteActor(agent: AgentApi,
   }
 
   def restart(): Unit = {
+    println("RESTART")
     retryCount += 1
     sending = false
     try agent.destroy()

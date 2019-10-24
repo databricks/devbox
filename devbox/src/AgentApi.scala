@@ -15,6 +15,7 @@ class ReliableAgent(prep: Seq[String], cmd: Seq[String], cwd: os.Path) extends A
   var process: java.lang.Process = _
 
   override def start(): Unit = {
+    println("ReliableAgent.start")
     assert(process == null)
 
     os.proc(prep).call(stdout = os.Inherit, stderr = os.Inherit)
