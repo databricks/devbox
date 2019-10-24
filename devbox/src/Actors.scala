@@ -27,19 +27,21 @@ class AgentReadWriteActor(agent: AgentApi,
                           logger: Logger)
                          (implicit ac: ActorContext)
   extends SimpleActor[AgentReadWriteActor.Msg](){
-  private val buffer = mutable.ArrayDeque.empty[Rpc]
+  private val buffer = mutable.ArrayDeque.empty[(Rpc, StatusActor.Msg)]
 
   var sending = true
   var retryCount = 0
 
   def sendLogged(msg: Rpc, logged: String) = {
     ac.reportSchedule()
-    statusActor.send(StatusActor.Syncing(logged))
 
-    buffer.append(msg)
+    buffer.append(msg -> StatusActor.Syncing(logged))
 
     if (sending) sendRpcs(Seq(msg))
-    else statusActor.send(StatusActor.Error("Unable to connect to devbox"))
+    else statusActor.send(StatusActor.Error(
+      "Unable to connect to devbox\n" +
+      "click on this logo to try again"
+    ))
   }
 
   val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
@@ -48,7 +50,7 @@ class AgentReadWriteActor(agent: AgentApi,
     case AgentReadWriteActor.Send(msg, logged) => sendLogged(msg, logged)
 
     case AgentReadWriteActor.ForceRestart() =>
-      if (sending){
+      if (!sending){
         statusActor.send(StatusActor.Syncing("Syncing Restarted"))
         retryCount = 0
         restart()
@@ -105,9 +107,9 @@ class AgentReadWriteActor(agent: AgentApi,
         spawnReaderThread()
         if (buffer.isEmpty) {
           ac.reportSchedule()
-          buffer.append(Rpc.Complete())
+          buffer.append(Rpc.Complete() -> StatusActor.Done())
         }
-        sendRpcs(buffer.toSeq)
+        sendRpcs(buffer.toSeq.map(_._1))
         sending = true
       }
 
@@ -118,11 +120,9 @@ class AgentReadWriteActor(agent: AgentApi,
       if (data.isInstanceOf[Response.Ack]) {
         ac.reportComplete()
 
-        val dropped = buffer.removeHead()
+        val (droppedMsg, logged) = buffer.removeHead()
 
-        if (buffer.isEmpty && dropped.isInstanceOf[Rpc.Complete]){
-          statusActor.send(StatusActor.Done())
-        }
+        statusActor.send(if (buffer.nonEmpty) logged else StatusActor.Done())
       }
   }
 
@@ -341,7 +341,7 @@ class DebounceActor(handle: Set[os.Path] => Unit,
         }
       }
     case DebounceActor.Trigger(count) =>
-      if (count == buffer.size) {
+      if (buffer.nonEmpty) {
         logChanges(buffer, "Syncing")
         handle(buffer.toSet)
         buffer.clear()
