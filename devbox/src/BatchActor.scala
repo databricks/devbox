@@ -44,6 +44,7 @@ object ActorContext{
 trait Actor[T]{
   def send(t: T): Unit
 }
+
 abstract class BatchActor[T]()(implicit ac: ActorContext) extends Actor[T]{
   def runBatch(msgs: Seq[T]): Unit
 

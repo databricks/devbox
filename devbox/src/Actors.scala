@@ -38,9 +38,8 @@ class AgentReadWriteActor(agent: AgentApi,
 
     buffer.append(msg)
 
-    if (sending) {
-      sendRpcs(Seq(msg))
-    }
+    if (sending) sendRpcs(Seq(msg))
+    else statusActor.send(StatusActor.Error("Unable to connect to devbox"))
   }
 
   val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
@@ -111,7 +110,6 @@ class AgentReadWriteActor(agent: AgentApi,
         sendRpcs(buffer.toSeq)
         sending = true
       }
-
 
     case AgentReadWriteActor.Receive(data) =>
       retryCount = 0
@@ -324,6 +322,7 @@ object DebounceActor{
   case class Paths(values: Set[os.Path]) extends Msg
   case class Trigger(count: Int) extends Msg
 }
+
 class DebounceActor(handle: Set[os.Path] => Unit,
                     statusActor: => StatusActor,
                     debounceMillis: Int)
