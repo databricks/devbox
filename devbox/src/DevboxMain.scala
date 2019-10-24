@@ -12,7 +12,6 @@ object DevboxMain {
                     stride: Int = 1,
                     debounceMillis: Int = 150,
                     help: Boolean = false,
-                    toast: Boolean = false,
                     logFile: Option[os.Path] = None,
                     ignoreStrategy: String = "",
                     readOnlyRemote: String = null,
@@ -36,11 +35,6 @@ object DevboxMain {
         "help", None,
         "Print this message",
         (c, v) => c.copy(help = true)
-      ),
-      Arg[Config, Unit](
-        "toast", None,
-        "Enable Mac-OS toast notifications",
-        (c, v) => c.copy(toast = true)
       ),
       Arg[Config, os.Path](
         "log-file", None,
@@ -77,8 +71,9 @@ object DevboxMain {
           val skipper = Skipper.fromString(config.ignoreStrategy)
 
           implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
+          val (prep, connect) = remaining.splitAt(remaining.indexOf("--"))
           Util.autoclose(new Syncer(
-            new ReliableAgent(remaining, os.pwd),
+            new ReliableAgent(prep, connect.drop(1) /* drop the -- */, os.pwd),
             for(s <- config.repo)
             yield s.split(':') match{
               case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)

@@ -1,10 +1,5 @@
 package devbox.common
 
-import devbox.common
-import devbox.common.Util.gitIgnoreToRegex
-import devbox.common.Vfs.Node
-
-import scala.collection.mutable
 
 trait Skipper {
   def prepare(base: os.Path): (os.RelPath, Boolean) => Boolean

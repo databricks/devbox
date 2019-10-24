@@ -43,9 +43,8 @@ object Vfs{
                     children: mutable.Map[String, Node[T]]) extends Node[T]
 
   // Update stateVfs according to the given action
-  def updateVfs(p: os.RelPath, sig: Signature, vfs: Vfs[Signature]) = {
+  def overwriteUpdateVfs(p: os.RelPath, sig: Signature, vfs: Vfs[Signature]) = {
     val (name, folder) = vfs.resolveParent(p).get
-    assert(!folder.children.contains(name))
     folder.children(name) =
       if (!sig.isInstanceOf[Signature.Dir]) Vfs.File(sig)
       else Vfs.Dir(sig, mutable.LinkedHashMap.empty[String, Vfs.Node[Signature]])

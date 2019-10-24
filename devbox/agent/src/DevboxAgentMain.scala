@@ -89,7 +89,7 @@ object DevboxAgentMain {
       count += 1
       try client.readMsg[Rpc]() match {
         case Rpc.FullScan(paths) =>
-          Util.initialSkippedScan(paths.map(wd / _), skipper){ (scanRoot, p, sig, i, total) =>
+          InitialScan.initialSkippedScan(paths.map(wd / _), skipper){ (scanRoot, p, sig, i, total) =>
             client.writeMsg(
               Response.Scanned(scanRoot.relativeTo(wd), p.relativeTo(scanRoot), sig, i, total)
             )

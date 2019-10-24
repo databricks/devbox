@@ -42,19 +42,20 @@ class AgentReadWriteActor(agent: AgentApi,
   }
 
   val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
+
   def run(item: AgentReadWriteActor.Msg): Unit = item match{
     case AgentReadWriteActor.Send(msg, logged) => sendLogged(msg, logged)
 
     case AgentReadWriteActor.ForceRestart() =>
       if (sending){
+        statusActor.send(StatusActor.Syncing("Syncing Restarted"))
         retryCount = 0
         restart()
       }
 
     case AgentReadWriteActor.ReadRestarted() =>
       if (sending){
-        if (retryCount < 5) restart()
-        else statusActor.send(StatusActor.Error())
+        retry()
       }
 
     case AgentReadWriteActor.SendChunks(
@@ -103,6 +104,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
         sending = true
         spawnReaderThread()
+        if (buffer.isEmpty) buffer.append(Rpc.Complete())
         sendRpcs(buffer.toSeq)
       }
 
@@ -124,6 +126,28 @@ class AgentReadWriteActor(agent: AgentApi,
 
   def spawnReaderThread() = {
     new Thread(() => {
+      while ( {
+        val strOpt =
+          try Some(agent.stderr.readLine())
+          catch{
+            case e: java.io.EOFException => None
+            case e: java.io.IOException => None
+          }
+        strOpt match{
+          case None | Some(null)=> false
+          case Some(str) =>
+            try {
+              logger.write(ujson.read(str).str)
+              true
+            } catch {
+              case e: ujson.ParseException =>
+                println(str)
+                false
+            }
+        }
+      }) ()
+    }).start()
+    new Thread(() => {
       while(try{
         this.send(AgentReadWriteActor.Receive(client.readMsg[Response]()))
         true
@@ -136,21 +160,43 @@ class AgentReadWriteActor(agent: AgentApi,
   }
 
 
-
   def sendRpcs(msgs: Seq[Rpc]) = {
     try {
       for(msg <- msgs)client.writeMsg(msg)
     }catch{ case e: java.io.IOException =>
+      println("sendRpcs restart")
       restart()
     }
   }
 
-  def restart() = {
+  def restart(): Unit = {
     retryCount += 1
-    agent.destroy()
-    agent.start()
-    sending = false
-    this.send(AgentReadWriteActor.Restarted())
+    try agent.destroy()
+    catch{case e: Throwable => /*donothing*/}
+    try {
+      statusActor.send(StatusActor.Syncing(s"Restarting agent\nAttempt #$retryCount"))
+      agent.start()
+      sending = false
+      this.send(AgentReadWriteActor.Restarted())
+    } catch{case e: os.SubprocessException =>
+      retry()
+    }
+  }
+
+  def retry() = {
+    if (retryCount < 5) {
+      val seconds = math.pow(2, retryCount).toInt
+      statusActor.send(StatusActor.Error(
+        s"Unable to connect to devbox, trying again after $seconds seconds"
+      ))
+      Thread.sleep(1000 * seconds)
+      restart()
+    }
+    else statusActor.send(StatusActor.Error(
+      "Unable to connect to devbox, gave up after 5 attempts;\n" +
+        "click on this logo to try again"
+    ))
+
   }
 }
 
@@ -189,7 +235,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       )
       scala.concurrent.Future{
         try{
-          Util.initialSkippedScan(mapping.map(_._1), skipper){ (scanRoot, p, sig, i, total) =>
+          common.InitialScan.initialSkippedScan(mapping.map(_._1), skipper){ (scanRoot, p, sig, i, total) =>
             this.send(SyncActor.LocalScanned(p, i, total))
           }
           this.send(SyncActor.LocalScanComplete())
@@ -217,7 +263,9 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       RemoteScanning(localPaths ++ Seq(path), remotePaths, vfsArr, scansComplete)
 
     case SyncActor.Receive(Response.Scanned(base, p, sig, i, total)) =>
-      vfsArr.collectFirst{case (b, vfs) if b == base => Vfs.updateVfs(p, sig, vfs)}
+      vfsArr.collectFirst{case (b, vfs) if b == base =>
+        Vfs.overwriteUpdateVfs(p, sig, vfs)
+      }
       logger.progress(s"Scanned remote path [$i/$total]", (base / p).toString())
       val newRemotePaths = remotePaths ++ mapping.find(_._2 == base).map(_._1 / p)
       RemoteScanning(localPaths, newRemotePaths, vfsArr, scansComplete)
@@ -308,7 +356,7 @@ object StatusActor{
   case class Syncing(msg: String) extends Msg
   case class FilesAndBytes(files: Int, bytes: Long) extends Msg
   case class Done() extends Msg
-  case class Error() extends Msg
+  case class Error(msg: String) extends Msg
   case class Close() extends Msg
 }
 class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
@@ -363,12 +411,9 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
 
         syncedFiles = 0
         syncedBytes = 0
-      case StatusActor.Error() =>
-
+      case StatusActor.Error(msg) =>
         image = redCross
-        tooltip =
-          "Unable to connect to devbox, gave up after 5 attempts;\n" +
-          "click on this logo to try again"
+        tooltip = msg
 
       case StatusActor.Close() => tray.remove(icon)
     }

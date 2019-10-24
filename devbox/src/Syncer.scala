@@ -70,17 +70,6 @@ class Syncer(agent: AgentApi,
 
   val statusActor = new StatusActor(agentReadWriter)
 
-  val agentLoggerThread = new Thread(() => {
-    while (try {
-      val str = agent.stderr.readLine()
-      if (str != null) logger.write(ujson.read(str).str)
-      true
-    } catch{
-      case e: java.io.EOFException => false
-      case e: java.io.IOException => false
-    }) ()
-  })
-
   val watcherThread = new Thread(() => watcher.start())
 
   var running = false
@@ -89,7 +78,6 @@ class Syncer(agent: AgentApi,
     agent.start()
     agentReadWriter.spawnReaderThread()
 
-    agentLoggerThread.start()
     watcherThread.start()
     syncer.send(SyncActor.Scan())
 
