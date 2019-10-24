@@ -59,6 +59,7 @@ class AgentReadWriteActor(agent: AgentApi,
       )
     ) =>
 
+      var bytes = 0L
       val byteArr = new Array[Byte](Util.blockSize)
       val buf = ByteBuffer.wrap(byteArr)
       Util.autoclose(os.read.channel(p)) { channel =>
@@ -77,7 +78,7 @@ class AgentReadWriteActor(agent: AgentApi,
                 true
             }
           }) ()
-
+          bytes += n
           val msg = Rpc.WriteChunk(
             dest,
             segments,
@@ -91,7 +92,7 @@ class AgentReadWriteActor(agent: AgentApi,
           )
         }
       }
-      statusActor.send(StatusActor.FilesAndBytes(1, 0))
+      statusActor.send(StatusActor.FilesAndBytes(1, bytes))
 
     case AgentReadWriteActor.Restarted() =>
       if (!sending){
@@ -124,7 +125,7 @@ class AgentReadWriteActor(agent: AgentApi,
         val n = agent.stdout.readInt()
         val buf = new Array[Byte](n)
         agent.stdout.readFully(buf)
-        this.send(AgentReadWriteActor.Receive(buf))
+        this.send(AgentReadWriteActor.Receive(Util.gunzip(buf)))
         true
       }catch{
         case e: java.io.IOException =>
@@ -140,8 +141,9 @@ class AgentReadWriteActor(agent: AgentApi,
     try {
       for(msg <- msgs){
         val blob = upickle.default.writeBinary(msg)
-        agent.stdin.writeInt(blob.length)
-        agent.stdin.write(blob)
+        val compressed = Util.gzip(blob)
+        agent.stdin.writeInt(compressed.length)
+        agent.stdin.write(compressed)
         agent.stdin.flush()
       }
     }catch{ case e: java.io.IOException =>

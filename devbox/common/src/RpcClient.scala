@@ -12,8 +12,9 @@ class RpcClient(var out: OutputStream with DataOutput,
     logger("MSG WRITE", t)
     val blob = upickle.default.writeBinary(t)
     out.synchronized {
-      out.writeInt(blob.length)
-      out.write(blob)
+      val compressed = Util.gzip(blob)
+      out.writeInt(compressed.length)
+      out.write(compressed)
       out.flush()
     }
   }
@@ -22,9 +23,9 @@ class RpcClient(var out: OutputStream with DataOutput,
 
     val blob = in.synchronized{
       val length = in.readInt()
-      val blob = new Array[Byte](length)
-      in.readFully(blob)
-      blob
+      val compressed = new Array[Byte](length)
+      in.readFully(compressed)
+      Util.gunzip(compressed)
     }
 
     val res =

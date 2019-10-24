@@ -179,7 +179,7 @@ object SyncFiles {
       if (size != otherSize) {
         val msg = Rpc.SetSize(dest, segments, size)
         Vfs.updateVfs(msg, stateVfs)
-        send(msg, s"Syncing file [$n/$total]:\n$segments")
+        send(msg, s"Syncing file chunk [$n/$total]:\n$segments")
       }
     }
   }
