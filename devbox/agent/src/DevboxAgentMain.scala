@@ -111,8 +111,6 @@ object DevboxAgentMain {
 
         case Rpc.PutDir(root, path, perms) =>
           val targetPath = wd / root / path
-          logger.apply("PUT DIR", targetPath)
-          logger.apply("PUT DIR", os.exists(targetPath))
           if (!os.exists(targetPath)) {
             os.makeDir(targetPath, perms)
           }
@@ -125,8 +123,9 @@ object DevboxAgentMain {
           }
           client.writeMsg(Response.Ack())
 
-        case Rpc.WriteChunk(root, path, offset, data, hash) =>
+        case Rpc.WriteChunk(root, path, offset, data) =>
           val p = wd / root / path
+
           withWritable(p){
             os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
           }

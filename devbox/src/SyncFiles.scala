@@ -1,30 +1,74 @@
 package devbox
 
-import java.nio.ByteBuffer
+import java.io.{PrintWriter, StringWriter}
 import java.nio.file.{Files, LinkOption}
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.LinkedBlockingQueue
 
 import devbox.common.{Action, Bytes, Logger, Rpc, RpcException, Signature, Skipper, Util, Vfs}
 import os.Path
-import upickle.default
 
+import scala.collection.mutable
 import scala.concurrent.ExecutionContext
-import scala.util.control.NonFatal
 
 object SyncFiles {
-  class VfsRpcClient(stateVfs: Vfs[Signature], logger: Logger,
-                     send: (Rpc, String) => Unit){
-    def apply[T <: Action with Rpc: default.Writer](p: T, logged: String) = {
-      try {
-        send(p, logged)
-        Vfs.updateVfs(p, stateVfs)
-      } catch {
-        case NonFatal(ex) => logger.info("Connection", s"Message cannot be sent $ex")
+  def executeSync(mapping: Seq[(os.Path, os.RelPath)],
+                  skipper: Skipper,
+                  signatureTransformer: (os.RelPath, Signature) => Signature,
+                  changedPaths: Set[os.Path],
+                  vfsArr: Seq[Vfs[Signature]],
+                  logger: Logger,
+                  send: (Rpc, String) => Unit,
+                  stream: SendChunks => Unit
+                 )(implicit ec: ExecutionContext) = {
+
+    // We need to .distinct after we convert the strings to paths, in order
+    // to ensure the inputs are canonicalized and don't have meaningless
+    // differences such as trailing slashes
+    logger("SYNC EVENTS", changedPaths)
+
+    val failed = mutable.Set.empty[os.Path]
+    for (((src, dest), i) <- mapping.zipWithIndex) {
+      logger.info("Preparing to Skip", "")
+      val skip = skipper.prepare(src)
+      logger.info("Skipping", "")
+      val eventPaths = changedPaths.filter(p =>
+        p.startsWith(src) && !skip(p.relativeTo(src), true)
+      )
+
+      logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
+
+      val exitCode =
+        if (eventPaths.isEmpty) Left(SyncFiles.NoOp)
+        else SyncFiles.synchronizeRepo(
+          logger, vfsArr(i), src, dest,
+          eventPaths, signatureTransformer,
+          send, stream
+        )
+
+      exitCode match {
+        case Right(_) =>
+        case Left(SyncFiles.NoOp) => // do nothing
+        case Left(SyncFiles.SyncFail(value)) =>
+          val x = new StringWriter()
+          val p = new PrintWriter(x)
+          value.printStackTrace(p)
+          logger("SYNC FAILED", x.toString)
+          failed.addAll(eventPaths)
       }
     }
+
+
+    failed
   }
 
+  case class SendChunks(p: os.Path,
+                        dest: os.RelPath,
+                        segments: os.RelPath,
+                        chunkIndices: Seq[Int],
+                        fileIndex: Int,
+                        fileTotalCount: Int,
+                        blockHashes: Seq[Bytes])
   /**
     * Represents the various ways a repo synchronization can exit early.
     */
@@ -46,8 +90,9 @@ object SyncFiles {
                       dest: os.RelPath,
                       eventPaths: Set[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
-                      send: (Rpc, String) => Unit)
-                     (implicit ec: ExecutionContext): Either[ExitCode, (Long, Seq[os.Path])] = {
+                      send: (Rpc, String) => Unit,
+                      stream: SendChunks => Unit)
+                     (implicit ec: ExecutionContext): Either[ExitCode, Unit] = {
     logger.info("Checking for changes", s"in ${eventPaths.size} paths")
     for{
       signatureMapping <- restartOnFailure(
@@ -56,20 +101,16 @@ object SyncFiles {
 
       _ <- if (signatureMapping.nonEmpty) Right(()) else Left(NoOp)
 
-      _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
+    } yield {
+      logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
 
-      sortedSignatures = sortSignatureChanges(signatureMapping)
+      val sortedSignatures = sortSignatureChanges(signatureMapping)
 
-      _ = logger.info(s"${sortedSignatures.length} paths changed", s"$src")
+      logger.info(s"${sortedSignatures.length} paths changed", s"$src")
 
-      vfsRpcClient = new VfsRpcClient(vfs, logger, send)
-
-      _ = syncMetadata(vfsRpcClient, sortedSignatures, src, dest, logger)
-
-      streamedByteCount <- restartOnFailure(
-        streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, sortedSignatures)
-      )
-    } yield (streamedByteCount, sortedSignatures.map(_._1))
+      syncMetadata(vfs, send, sortedSignatures, src, dest, logger)
+      streamAllFileContents(logger, vfs, send, stream, src, dest, sortedSignatures)
+    }
   }
 
   def sortSignatureChanges(sigs: Seq[(os.Path, Option[Signature], Option[Signature])]) = {
@@ -100,43 +141,61 @@ object SyncFiles {
 
   def streamAllFileContents(logger: Logger,
                             stateVfs: Vfs[Signature],
-                            client: VfsRpcClient,
+                            send: (Rpc, String) => Unit,
+                            stream: SendChunks => Unit,
                             src: Path,
                             dest: os.RelPath,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
     val total = signatureMapping.length
-    var byteCount = 0L
     for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
       val segments = p.relativeTo(src)
       val (otherHashes, otherSize) = otherSig match {
         case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
         case _ => (Nil, 0L)
       }
-      logger("SYNC CHUNKS", segments)
-      byteCount += streamFileContents(
-        logger,
-        client,
-        stateVfs,
-        dest,
-        p,
-        segments,
-        blockHashes,
-        otherHashes,
-        size,
-        otherSize,
-        n,
-        total
+      logger("SYNC CHUNKS", (segments, size, otherSize, otherSig))
+      val chunkIndices = for {
+        i <- blockHashes.indices
+        if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
+      } yield {
+        Vfs.updateVfs(
+          Action.WriteChunk(segments, i, blockHashes(i)),
+          stateVfs
+        )
+        i
+      }
+      stream(
+        SendChunks(
+          p,
+          dest,
+          segments,
+          chunkIndices,
+          n,
+          total,
+          blockHashes
+        )
       )
+
+      if (size != otherSize) {
+        val msg = Rpc.SetSize(dest, segments, size)
+        Vfs.updateVfs(msg, stateVfs)
+        send(msg, s"Syncing file [$n/$total]:\n$segments")
+      }
     }
-    byteCount
   }
 
-  def syncMetadata(client: VfsRpcClient,
+  def syncMetadata(vfs: Vfs[Signature],
+                   send: (Rpc, String) => Unit,
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
                    dest: os.RelPath,
                    logger: Logger): Unit = {
+
     logger.apply("SYNC META", signatureMapping)
+    def client(rpc: Rpc with Action, logged: String) = {
+      send(rpc, logged)
+      Vfs.updateVfs(rpc, vfs)
+    }
     val total = signatureMapping.length
     for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
       val segments = p.relativeTo(src)
@@ -178,63 +237,6 @@ object SyncFiles {
     }
   }
 
-  def streamFileContents(logger: Logger,
-                         client: VfsRpcClient,
-                         stateVfs: Vfs[Signature],
-                         dest: os.RelPath,
-                         p: Path,
-                         segments: os.RelPath,
-                         blockHashes: Seq[Bytes],
-                         otherHashes: Seq[Bytes],
-                         size: Long,
-                         otherSize: Long,
-                         fileIndex: Int,
-                         fileTotalCount: Int): Int = {
-    val byteArr = new Array[Byte](Util.blockSize)
-    val buf = ByteBuffer.wrap(byteArr)
-    var byteCount = 0
-    Util.autoclose(os.read.channel(p)) { channel =>
-      for {
-        i <- blockHashes.indices
-        if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
-      } {
-        val hashMsg = if (blockHashes.size > 1) s" $i/${blockHashes.length}" else ""
-        val logged = s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]:\n$segments"
-
-        buf.rewind()
-        channel.position(i * Util.blockSize)
-        var n = 0
-        while ( {
-          if (n == Util.blockSize) false
-          else channel.read(buf) match {
-            case -1 => false
-            case d =>
-              n += d
-              true
-          }
-        }) ()
-        byteCount += n
-        client(
-          Rpc.WriteChunk(
-            dest,
-            segments,
-            i * Util.blockSize,
-            new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr),
-            blockHashes(i)
-          ),
-          logged
-        )
-      }
-    }
-
-    if (size != otherSize) {
-      client(
-        Rpc.SetSize(dest, segments, size),
-        s"Resizing file [$fileIndex/$fileTotalCount]:\n$segments"
-      )
-    }
-    byteCount
-  }
 
   def computeSignatures(eventPaths: Set[Path],
                         stateVfs: Vfs[Signature],

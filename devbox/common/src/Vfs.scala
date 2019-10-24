@@ -75,9 +75,7 @@ object Vfs{
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Signature.Symlink(dest))
 
-    case Rpc.WriteChunk(_, path, offset, bytes, hash) =>
-      assert(offset % Util.blockSize == 0)
-      val index = offset / Util.blockSize
+    case Action.WriteChunk(path, index, hash) =>
       val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception("File not found " + path.toString)).asInstanceOf[Vfs.File[Signature.File]]
       currentFile.value = currentFile.value.copy(
         blockHashes =

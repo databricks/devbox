@@ -2,9 +2,10 @@ package devbox
 
 import java.awt.event.{ActionEvent, ActionListener, MouseEvent, MouseListener}
 import java.io.{PrintWriter, StringWriter}
+import java.nio.ByteBuffer
 import java.util.concurrent.ScheduledExecutorService
 
-import devbox.common.{Logger, Response, Rpc, Signature, Skipper, Util, Vfs}
+import devbox.common.{Bytes, Logger, Response, Rpc, Signature, Skipper, Util, Vfs}
 
 import scala.collection.mutable
 
@@ -13,6 +14,7 @@ object AgentReadWriteActor{
   sealed trait Msg
   case class Send(value: Rpc, logged: String) extends Msg
   case class ForceRestart() extends Msg
+  case class SendChunks(value: SyncFiles.SendChunks) extends Msg
   case class Restarted() extends Msg
   case class ReadRestarted() extends Msg
   case class Receive(data: Array[Byte]) extends Msg
@@ -27,14 +29,17 @@ class AgentReadWriteActor(agent: AgentApi,
   var sending = true
   var retryCount = 0
 
+  def sendLogged(msg: Rpc, logged: String) = {
+    ac.reportSchedule()
+    statusActor.send(StatusActor.Syncing(logged))
+
+    buffer.append(msg)
+
+    if (sending) sendRpcs(Seq(msg))
+  }
+
   def run(item: AgentReadWriteActor.Msg): Unit = item match{
-    case AgentReadWriteActor.Send(msg, logged) =>
-      ac.reportSchedule()
-      statusActor.send(StatusActor.Syncing(logged))
-
-      buffer.append(msg)
-
-      if (sending) sendRpcs(Seq(msg))
+    case AgentReadWriteActor.Send(msg, logged) => sendLogged(msg, logged)
 
     case AgentReadWriteActor.ForceRestart() =>
       if (sending){
@@ -47,6 +52,46 @@ class AgentReadWriteActor(agent: AgentApi,
         if (retryCount < 5) restart()
         else statusActor.send(StatusActor.Error())
       }
+
+    case AgentReadWriteActor.SendChunks(
+      SyncFiles.SendChunks(
+        p, dest, segments, chunkIndices, fileIndex, fileTotalCount, blockHashes
+      )
+    ) =>
+
+      val byteArr = new Array[Byte](Util.blockSize)
+      val buf = ByteBuffer.wrap(byteArr)
+      Util.autoclose(os.read.channel(p)) { channel =>
+        for (i <- chunkIndices) {
+          val hashMsg = if (blockHashes.size > 1) s" $i/${blockHashes.size}" else ""
+
+          buf.rewind()
+          channel.position(i * Util.blockSize)
+          var n = 0
+          while ( {
+            if (n == Util.blockSize) false
+            else channel.read(buf) match {
+              case -1 => false
+              case d =>
+                n += d
+                true
+            }
+          }) ()
+
+          val msg = Rpc.WriteChunk(
+            dest,
+            segments,
+            i * Util.blockSize,
+            new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
+          )
+
+          sendLogged(
+            msg,
+            s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]:\n$segments"
+          )
+        }
+      }
+      statusActor.send(StatusActor.FilesAndBytes(1, 0))
 
     case AgentReadWriteActor.Restarted() =>
       if (!sending){
@@ -189,60 +234,40 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
             s"Initial Scans Complete",
             s"${localPaths.size} local paths, ${remotePaths.size} remote paths"
           )
-          executeSync(localPaths ++ remotePaths, vfsArr.map(_._2))
+          val failures = SyncFiles.executeSync(
+            mapping,
+            skipper,
+            signatureTransformer,
+            localPaths ++ remotePaths,
+            vfsArr.map(_._2),
+            logger,
+            (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged)),
+            s => agentReadWriter.send(AgentReadWriteActor.SendChunks(s))
+          )
+          if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
+          else agentReadWriter.send(AgentReadWriteActor.Send(Rpc.Complete(), "Sync Complete"))
+          Waiting(vfsArr.map(_._2))
       }
   })
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
-    case SyncActor.Events(paths) => executeSync(paths, vfsArr)
+    case SyncActor.Events(paths) =>
+      val failures = SyncFiles.executeSync(
+        mapping,
+        skipper,
+        signatureTransformer,
+        paths,
+        vfsArr,
+        logger,
+        (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged)),
+        s => agentReadWriter.send(AgentReadWriteActor.SendChunks(s))
+      )
+      if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
+      else agentReadWriter.send(AgentReadWriteActor.Send(Rpc.Complete(), "Sync Complete"))
+      Waiting(vfsArr)
     case SyncActor.Receive(Response.Ack()) => Waiting(vfsArr) // do nothing
     case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
   })
-
-
-  def executeSync(changedPaths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]): State = {
-
-    // We need to .distinct after we convert the strings to paths, in order
-    // to ensure the inputs are canonicalized and don't have meaningless
-    // differences such as trailing slashes
-    logger("SYNC EVENTS", changedPaths)
-
-    val failed = mutable.Set.empty[os.Path]
-    for (((src, dest), i) <- mapping.zipWithIndex) {
-      logger.info("Preparing to Skip", "")
-      val skip = skipper.prepare(src)
-      logger.info("Skipping", "")
-      val eventPaths = changedPaths.filter(p =>
-        p.startsWith(src) && !skip(p.relativeTo(src), true)
-      )
-
-      logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
-
-      val exitCode =
-        if (eventPaths.isEmpty) Left(SyncFiles.NoOp)
-        else SyncFiles.synchronizeRepo(
-          logger, vfsArr(i), src, dest,
-          eventPaths, signatureTransformer,
-          (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged))
-        )
-
-      exitCode match {
-        case Right((streamedByteCount, changedPaths)) =>
-          statusActor.send(StatusActor.FilesAndBytes(changedPaths.length, streamedByteCount))
-        case Left(SyncFiles.NoOp) => // do nothing
-        case Left(SyncFiles.SyncFail(value)) =>
-          val x = new StringWriter()
-          val p = new PrintWriter(x)
-          value.printStackTrace(p)
-          logger("SYNC FAILED", x.toString)
-          failed.addAll(eventPaths)
-      }
-    }
-
-    if (failed.nonEmpty) this.send(SyncActor.Events(failed.toSet))
-    else agentReadWriter.send(AgentReadWriteActor.Send(Rpc.Complete(), "Sync Complete"))
-    Waiting(vfsArr)
-  }
 }
 
 object DebounceActor{

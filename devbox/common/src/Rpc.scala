@@ -4,6 +4,10 @@ import Util.{permsetRw, relpathRw}
 sealed trait Rpc
 sealed trait Action
 
+object Action{
+  case class WriteChunk(path: os.RelPath, blockIndex: Int, hash: Bytes) extends Action
+}
+
 object Rpc{
   case class FullScan(roots: Seq[os.RelPath]) extends Rpc
   object FullScan{ implicit val rw: ReadWriter[FullScan] = macroRW }
@@ -22,7 +26,7 @@ object Rpc{
   case class PutLink(root: os.RelPath, path: os.RelPath, dest: String) extends Rpc with Action
   object PutLink{ implicit val rw: ReadWriter[PutLink] = macroRW }
 
-  case class WriteChunk(root: os.RelPath, path: os.RelPath, offset: Long, data: Bytes, hash: Bytes) extends Rpc with Action
+  case class WriteChunk(root: os.RelPath, path: os.RelPath, offset: Long, data: Bytes) extends Rpc
   object WriteChunk{ implicit val rw: ReadWriter[WriteChunk] = macroRW }
 
   case class SetSize(root: os.RelPath, path: os.RelPath, offset: Long) extends Rpc with Action
