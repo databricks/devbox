@@ -51,24 +51,22 @@ object SyncFiles {
         computeSignatures(eventPaths, buffer, vfs, src, logger, signatureTransformer)
       )
 
+      _ <- if (signatureMapping.nonEmpty) Right(()) else Left(NoOp)
+
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
 
       sortedSignatures = sortSignatureChanges(signatureMapping)
 
-      filteredSignatures = sortedSignatures.filter{case (p, lhs, rhs) => lhs != rhs}
-
-      _ <- if (filteredSignatures.nonEmpty) Right(()) else Left(NoOp)
-
-      _ = logger.info(s"${filteredSignatures.length} paths changed", s"$src")
+      _ = logger.info(s"${signatureMapping.length} paths changed", s"$src")
 
       vfsRpcClient = new VfsRpcClient(vfs, logger, send)
 
-      _ = syncMetadata(vfsRpcClient, filteredSignatures, src, dest, logger)
+      _ = syncMetadata(vfsRpcClient, sortedSignatures, src, dest, logger)
 
       streamedByteCount <- restartOnFailure(
-        streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, filteredSignatures)
+        streamAllFileContents(logger, vfs, vfsRpcClient, src, dest, sortedSignatures)
       )
-    } yield (streamedByteCount, filteredSignatures.map(_._1))
+    } yield (streamedByteCount, sortedSignatures.map(_._1))
   }
 
   def sortSignatureChanges(sigs: Seq[(os.Path, Option[Signature], Option[Signature])]) = {
@@ -84,7 +82,7 @@ object SyncFiles {
         // on case-insensitive filesystems
         local.isDefined,
         // Lastly, we sort by the stringified path, for neatness
-        p.toString
+        p
       )
     }
   }
@@ -256,9 +254,8 @@ object SyncFiles {
       )
       .toMap
 
-    eventPathsLinks.zipWithIndex.map { case ((p, isLink), i) =>
-      Tuple3(
-        p,
+    eventPathsLinks.flatMap{ case (p, isLink) =>
+      val newSig =
         if ((isLink && !preListed(p / os.up).contains(p.last)) ||
             (!isLink && !os.followLink(p).contains(p)) )None
         else {
@@ -273,9 +270,10 @@ object SyncFiles {
           Signature
             .compute(p, buffer, fileType)
             .map(signatureTransformer(p.relativeTo(src), _))
-        },
-        stateVfs.resolve(p.relativeTo(src)).map(_.value)
-      )
+        }
+      val oldSig = stateVfs.resolve(p.relativeTo(src)).map(_.value)
+      if (newSig == oldSig) None
+      else Some(Tuple3(p, newSig, oldSig))
     }
 
   }
