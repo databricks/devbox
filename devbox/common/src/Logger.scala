@@ -23,7 +23,7 @@ object Logger{
   }
   val margin = 20
   val marginStr = "\n" + (" " * margin) + " | "
-  case class File(dest: os.Path, toast: Boolean) extends Logger{
+  case class File(dest: os.Path) extends Logger{
     val output = os.write.outputStream(dest, openOptions = Seq(CREATE, WRITE, TRUNCATE_EXISTING))
     def write(s: String): Unit = synchronized{
       output.write(fansi.Str(s).plainText.getBytes("UTF-8"))
@@ -33,22 +33,18 @@ object Logger{
     var lastProgressTimestamp = 0L
     override def info(title: => String, body: => String, color: => Option[String]): Unit = {
       val title0 = title
-      val body0 = body
       color match {
         case Some(c) => println(s"${Console.RESET}$c$title0: $body${Console.RESET}")
         case None => println(s"$title0: $body")
       }
       lastProgressTimestamp = System.currentTimeMillis()
-      if (toast) os.proc("osascript", "-e", s"""display notification "$body0" with title "$title0" """).call()
     }
     override def progress(title: => String, body: => String): Unit = {
       val now = System.currentTimeMillis()
       if (now - lastProgressTimestamp > 5000){
         val title0 = title
-        val body0 = body
         println(s"$title0: $body")
         lastProgressTimestamp = now
-        if (toast) os.proc("osascript", "-e", s"""display notification "$body0" with title "$title0" """).call()
       }
     }
   }

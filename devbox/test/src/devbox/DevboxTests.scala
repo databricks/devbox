@@ -68,7 +68,7 @@ object DevboxTests extends TestSuite{
     val (src, dest, log, commits, skipper, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
 
-    val logger = Logger.File(log, toast = false)
+    val logger = Logger.File(log)
 
     def createSyncer() = instantiateSyncer(
       src, dest, skipper, 50,

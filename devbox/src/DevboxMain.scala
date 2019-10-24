@@ -86,7 +86,7 @@ object DevboxMain {
             },
             skipper,
             config.debounceMillis,
-            Logger.File(config.logFile.get, config.toast),
+            Logger.File(config.logFile.get),
             if (config.readOnlyRemote == null) (_, sig) => sig
             else {
               val (regexStr, negate) =

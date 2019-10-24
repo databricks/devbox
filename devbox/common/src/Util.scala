@@ -32,7 +32,6 @@ object Util {
       )
 
       val total = fileStream.count()
-
       for {
         ((p, attrs), i) <- fileStream.zipWithIndex
         sig <- Signature.compute(p, buffer, attrs.fileType)

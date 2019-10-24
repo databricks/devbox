@@ -3,11 +3,13 @@ package devbox
 import java.nio.ByteBuffer
 import java.nio.file.{Files, LinkOption}
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.concurrent.LinkedBlockingQueue
 
 import devbox.common.{Action, Bytes, Logger, Rpc, RpcException, Signature, Skipper, Util, Vfs}
 import os.Path
 import upickle.default
 
+import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
 object SyncFiles {
@@ -42,13 +44,14 @@ object SyncFiles {
                       vfs: Vfs[Signature],
                       src: os.Path,
                       dest: os.RelPath,
-                      buffer: Array[Byte],
-                      eventPaths: Seq[Path],
+                      eventPaths: Set[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
-                      send: (Rpc, String) => Unit): Either[ExitCode, (Long, Seq[os.Path])] = {
+                      send: (Rpc, String) => Unit)
+                     (implicit ec: ExecutionContext): Either[ExitCode, (Long, Seq[os.Path])] = {
+    logger.info("Checking for changes", s"in ${eventPaths.size} paths")
     for{
       signatureMapping <- restartOnFailure(
-        computeSignatures(eventPaths, buffer, vfs, src, logger, signatureTransformer)
+        computeSignatures(eventPaths, vfs, src, logger, signatureTransformer)
       )
 
       _ <- if (signatureMapping.nonEmpty) Right(()) else Left(NoOp)
@@ -57,7 +60,7 @@ object SyncFiles {
 
       sortedSignatures = sortSignatureChanges(signatureMapping)
 
-      _ = logger.info(s"${signatureMapping.length} paths changed", s"$src")
+      _ = logger.info(s"${sortedSignatures.length} paths changed", s"$src")
 
       vfsRpcClient = new VfsRpcClient(vfs, logger, send)
 
@@ -233,12 +236,12 @@ object SyncFiles {
     byteCount
   }
 
-  def computeSignatures(eventPaths: Seq[Path],
-                        buffer: Array[Byte],
+  def computeSignatures(eventPaths: Set[Path],
                         stateVfs: Vfs[Signature],
                         src: os.Path,
                         logger: Logger,
                         signatureTransformer: (os.RelPath, Signature) => Signature)
+                       (implicit ec: ExecutionContext)
   : Seq[(os.Path, Option[Signature], Option[Signature])] = {
 
     val eventPathsLinks = eventPaths.map(p => (p, os.isLink(p)))
@@ -248,33 +251,48 @@ object SyncFiles {
     val preListed = eventPathsLinks
       .filter(_._2)
       .map(_._1 / os.up)
-      .distinct
       .map(dir =>
         (dir, if (!os.isDir(dir, followLinks = false)) Set[String]() else os.list(dir).map(_.last).toSet)
       )
       .toMap
 
-    eventPathsLinks.flatMap{ case (p, isLink) =>
-      val newSig =
-        if ((isLink && !preListed(p / os.up).contains(p.last)) ||
-            (!isLink && !os.followLink(p).contains(p)) )None
-        else {
-          val attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
-          val fileType =
-            if (attrs.isRegularFile) os.FileType.File
-            else if (attrs.isDirectory) os.FileType.Dir
-            else if (attrs.isSymbolicLink) os.FileType.SymLink
-            else if (attrs.isOther) os.FileType.Other
-            else ???
+    val buffers = new LinkedBlockingQueue[Array[Byte]]()
+    for(i <- 0 until 4) buffers.add(new Array[Byte](Util.blockSize))
+    val count = new java.util.concurrent.atomic.AtomicInteger(0)
+    val total = eventPathsLinks.size
+    val futures = eventPathsLinks
+      .iterator
+      .map{ case (p, isLink) =>
+        scala.concurrent.Future {
+          val newSig =
+            if ((isLink && !preListed(p / os.up).contains(p.last)) ||
+               (!isLink && !os.followLink(p).contains(p))) None
+            else {
+              val attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
+              val fileType =
+                if (attrs.isRegularFile) os.FileType.File
+                else if (attrs.isDirectory) os.FileType.Dir
+                else if (attrs.isSymbolicLink) os.FileType.SymLink
+                else if (attrs.isOther) os.FileType.Other
+                else ???
 
-          Signature
-            .compute(p, buffer, fileType)
-            .map(signatureTransformer(p.relativeTo(src), _))
+              val buffer = buffers.take()
+              try Signature
+                .compute(p, buffer, fileType)
+                .map(signatureTransformer(p.relativeTo(src), _))
+              finally buffers.put(buffer)
+            }
+          val oldSig = stateVfs.resolve(p.relativeTo(src)).map(_.value)
+          logger.progress(
+            s"Checking for changes [${count.getAndIncrement()}/$total]",
+            p.relativeTo(src).toString()
+          )
+          if (newSig == oldSig) None
+          else Some(Tuple3(p, newSig, oldSig))
         }
-      val oldSig = stateVfs.resolve(p.relativeTo(src)).map(_.value)
-      if (newSig == oldSig) None
-      else Some(Tuple3(p, newSig, oldSig))
-    }
+      }
 
+    val sequenced = scala.concurrent.Future.sequence(futures.toSeq)
+    scala.concurrent.Await.result(sequenced, scala.concurrent.duration.Duration.Inf).flatten
   }
 }

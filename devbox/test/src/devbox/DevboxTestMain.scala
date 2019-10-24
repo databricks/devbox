@@ -87,7 +87,7 @@ object DevboxTestMain {
 
           if (config.label == "manual"){
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
-            val logger = new Logger.File(log, config.toast)
+            val logger = new Logger.File(log)
             val skip = Skipper.fromString(config.ignoreStrategy)
             val (syncer, ac) = instantiateSyncer(
               src, dest,

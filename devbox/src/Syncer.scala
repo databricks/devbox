@@ -40,12 +40,12 @@ class Syncer(agent: AgentApi,
       def write(s: String) = logger.write(s)
 
       def info(title: => String, body: => String, color: => Option[String]) = {
-        statusActor.send(StatusActor.Syncing(s"$title: $body"))
+        statusActor.send(StatusActor.Syncing(s"$title:\n$body"))
         logger.info(title, body, color)
       }
 
       def progress(title: => String, body: => String) = {
-        statusActor.send(StatusActor.Syncing(s"$title: $body"))
+        statusActor.send(StatusActor.Syncing(s"$title:\n$body"))
         logger.progress(title, body)
       }
       def close() = logger.close()

@@ -29,42 +29,14 @@ object Skipper{
     type NodeType = Option[com.google.re2j.Pattern]
 
     def prepare(base: os.Path) = {
-      val vfsTree = new Vfs[NodeType](None)
-      def check(p: os.RelPath, isDir: Boolean): Boolean = {
-        var current = vfsTree.root
-        var parents = current.value.toList
-        var continue = true
-        for (segment <- p.segments if continue) {
-          if (!current.children.contains(segment)) continue = false
-          else{
-            current = current.children(segment).asInstanceOf[Vfs.Dir[NodeType]]
-            parents = current.value.toList ::: parents
-          }
-        }
-        parents.exists(_.matches(p.toString + (if (isDir) "/" else "")))
-      }
+      val ignored =
+        os.proc("git", "status", "--short", "--ignored")
+          .call(cwd = base)
+          .out
+          .lines
+          .collect{ case s"!! $name" => os.RelPath(name) }
 
-      val walk = os.walk.stream.attrs(
-        base,
-        skip = (p, stat) => check(p.relativeTo(base), stat.isDir),
-        includeTarget = true
-      )
-
-      for ((sub, attrs) <- walk) {
-        if (attrs.isDir){
-          val value =
-            if (!os.exists(sub / ".gitignore")) None
-            else Some(gitIgnoreToRegex(base, sub.relativeTo(base) / ".gitignore"))
-
-          if (sub == base) vfsTree.root.value = value
-          else {
-            val (name, node) = vfsTree.resolveParent(sub.relativeTo(base)).get
-            node.children(name) = new Vfs.Dir[NodeType](value, mutable.Map.empty)
-          }
-        }
-      }
-
-      check
+      (p, isDir) => ignored.exists(p.startsWith(_))
     }
   }
 }
