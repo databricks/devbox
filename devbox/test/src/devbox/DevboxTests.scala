@@ -219,8 +219,10 @@ object DevboxTests extends TestSuite{
 
   def validate(src: os.Path, dest: os.Path, skipper: Skipper) = {
     println("Validating...")
-    val srcPaths = os.walk.attrs(src, (p, attrs) => skipper.initialize(src)(p, attrs.isDir))
-    val destPaths = os.walk.attrs(dest, (p, attrs) => skipper.initialize(dest)(p, attrs.isDir))
+    val skipSrc = skipper.prepare(src)
+    val skipDest = skipper.prepare(dest)
+    val srcPaths = os.walk.attrs(src, (p, attrs) => skipSrc(p.relativeTo(src), attrs.isDir))
+    val destPaths = os.walk.attrs(dest, (p, attrs) => skipDest(p.relativeTo(dest), attrs.isDir))
 
     val srcRelPaths = srcPaths.map(_._1.relativeTo(src)).toSet
     val destRelPaths = destPaths.map(_._1.relativeTo(dest)).toSet

@@ -124,8 +124,7 @@ object SyncActor{
   case class Receive(value: devbox.common.Response) extends Msg
   case class Retry() extends Msg
 }
-class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
-                agentReadWriter: => AgentReadWriteActor,
+class SyncActor(agentReadWriter: => AgentReadWriteActor,
                 mapping: Seq[(os.Path, os.RelPath)],
                 logger: Logger,
                 signatureTransformer: (os.RelPath, Signature) => Signature,
@@ -147,17 +146,10 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
         )
       )
       scala.concurrent.Future{
-        val skipArr = mapping.map(t => skipper.initialize(t._1))
-        for {
-          ((src, dest), i) <- geny.Generator.from(mapping.zipWithIndex)
-          fileStream = os.walk.stream.attrs(
-            src,
-            (p, attrs) => skipArr(i)(p, attrs.isDir),
-            includeTarget = true
-          )
-          count = fileStream.count()
-          (p, attrs) <- fileStream
-        } this.send(SyncActor.LocalScanned(p, i, count))
+
+        Util.initialSkippedScan(mapping.map(_._1), skipper){ (scanRoot, p, sig, i, total) =>
+          this.send(SyncActor.LocalScanned(p, i, total))
+        }
       }
       RemoteScanning(
         Set.empty,
@@ -199,24 +191,20 @@ class SyncActor(skipArr: Array[(os.Path, Boolean) => Boolean],
 
     val failed = mutable.Set.empty[os.Path]
     for (((src, dest), i) <- mapping.zipWithIndex) {
+      val skip = skipper.prepare(src)
       val eventPaths = allEventPaths.filter(p =>
-        p.startsWith(src) && !skipArr(i)(p, true)
+        p.startsWith(src) && !skip(p.relativeTo(src), true)
       )
 
       logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
 
-      val exitCode = for {
-        _ <- if (eventPaths.isEmpty) Left(SyncFiles.NoOp: SyncFiles.ExitCode) else Right(())
-        _ <- SyncFiles.updateSkipPredicate(
-          eventPaths, skipper, vfsArr(i), src, buffer, logger,
-          signatureTransformer, skipArr(i) = _
-        )
-        res <- SyncFiles.synchronizeRepo(
-          logger, vfsArr(i), skipArr(i), src, dest,
+      val exitCode =
+        if (eventPaths.isEmpty) Left(SyncFiles.NoOp)
+        else SyncFiles.synchronizeRepo(
+          logger, vfsArr(i), src, dest,
           buffer, eventPaths, signatureTransformer,
           (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged))
         )
-      } yield res
 
       exitCode match {
         case Right((streamedByteCount, changedPaths)) =>

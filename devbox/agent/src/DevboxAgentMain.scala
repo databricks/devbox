@@ -78,7 +78,7 @@ object DevboxAgentMain {
                exitOnError: Boolean,
                randomKill: Option[Int]) = {
 
-    val buffer = new Array[Byte](Util.blockSize)
+
     var count = 0
     while (randomKill match{
       case Some(n) if count == n =>
@@ -89,24 +89,10 @@ object DevboxAgentMain {
       count += 1
       try client.readMsg[Rpc]() match {
         case Rpc.FullScan(paths) =>
-          for(path <- paths) {
-            val scanRoot = wd / path
-            val skip = skipper.initialize(scanRoot)
-            if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
-
-            val fileStream = os.walk.stream.attrs(
-              scanRoot,
-              (p, attrs) => skip(p, attrs.isDir) && !attrs.isDir
+          Util.initialSkippedScan(paths.map(wd / _), skipper){ (scanRoot, p, sig, i, total) =>
+            client.writeMsg(
+              Response.Scanned(scanRoot.relativeTo(wd), p.relativeTo(scanRoot), sig, i, total)
             )
-
-            val total = fileStream.count()
-
-            for {
-              ((p, attrs), i) <- fileStream.zipWithIndex
-              sig <- Signature.compute(p, buffer, attrs.fileType)
-            } {
-              client.writeMsg(Response.Scanned(path, p.relativeTo(scanRoot), sig, i, total))
-            }
           }
 
           client.writeMsg(Response.Ack())

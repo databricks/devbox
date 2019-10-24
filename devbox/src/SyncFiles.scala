@@ -23,35 +23,6 @@ object SyncFiles {
     }
   }
 
-  def updateSkipPredicate(eventPaths: Seq[os.Path],
-                          skipper: Skipper,
-                          vfs: Vfs[Signature],
-                          src: os.Path,
-                          buffer: Array[Byte],
-                          logger: Logger,
-                          signatureTransformer: (os.RelPath, Signature) => Signature,
-                          setSkip: ((os.Path, Boolean) => Boolean) => Unit) = {
-    val allModifiedSkipFiles = for{
-      p <- eventPaths
-      pathToCheck <- skipper.checkReset(p)
-      newSig =
-      if (!os.exists(pathToCheck)) None
-      else Signature.compute(pathToCheck, buffer, os.FileType.Dir).map(signatureTransformer(pathToCheck.relativeTo(src), _))
-      oldSig = vfs.resolve(pathToCheck.relativeTo(src)).map(_.value)
-      if newSig != oldSig
-    } yield (pathToCheck, oldSig, newSig)
-
-    if (allModifiedSkipFiles.isEmpty) Right(())
-    else{
-      logger.info(
-        "Gitignore file changed, re-scanning repository",
-        allModifiedSkipFiles.head._1.toString
-      )
-      logger("SYNC GITIGNORE", allModifiedSkipFiles)
-      restartOnFailure(setSkip(skipper.initialize(src)))
-    }
-  }
-
   /**
     * Represents the various ways a repo synchronization can exit early.
     */
@@ -69,7 +40,6 @@ object SyncFiles {
 
   def synchronizeRepo(logger: Logger,
                       vfs: Vfs[Signature],
-                      skip: (os.Path, Boolean) => Boolean,
                       src: os.Path,
                       dest: os.RelPath,
                       buffer: Array[Byte],
@@ -78,7 +48,7 @@ object SyncFiles {
                       send: (Rpc, String) => Unit): Either[ExitCode, (Long, Seq[os.Path])] = {
     for{
       signatureMapping <- restartOnFailure(
-        computeSignatures(eventPaths, buffer, vfs, skip, src, logger, signatureTransformer)
+        computeSignatures(eventPaths, buffer, vfs, src, logger, signatureTransformer)
       )
 
       _ = logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
@@ -268,7 +238,6 @@ object SyncFiles {
   def computeSignatures(eventPaths: Seq[Path],
                         buffer: Array[Byte],
                         stateVfs: Vfs[Signature],
-                        skip: (os.Path, Boolean) => Boolean,
                         src: os.Path,
                         logger: Logger,
                         signatureTransformer: (os.RelPath, Signature) => Signature)

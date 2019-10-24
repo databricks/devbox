@@ -19,6 +19,26 @@ object Util {
     finally x.close()
   }
 
+  def initialSkippedScan(scanRoots: Seq[os.Path], skipper: Skipper)
+                        (f: (os.Path, os.Path, Signature, Int, Int) => Unit) = {
+    val buffer = new Array[Byte](Util.blockSize)
+    for(scanRoot <- scanRoots) {
+      val skip = skipper.prepare(scanRoot)
+      if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
+
+      val fileStream = os.walk.stream.attrs(
+        scanRoot,
+        (p, attrs) => skip(p.relativeTo(scanRoot), attrs.isDir) && !attrs.isDir
+      )
+
+      val total = fileStream.count()
+
+      for {
+        ((p, attrs), i) <- fileStream.zipWithIndex
+        sig <- Signature.compute(p, buffer, attrs.fileType)
+      } f(scanRoot, p, sig, i, total)
+    }
+  }
   /**
     * Convert the lines of a gitignore file into a re2j regex.
     *
@@ -26,11 +46,11 @@ object Util {
     * letting us efficiently match file paths against the gitignore. Somehow
     * 100-1000x faster than matching using JGit's FastIgnoreRule.
     */
-  def gitIgnoreToRegex(base: os.Path, p: os.Path) = {
+  def gitIgnoreToRegex(base: os.Path, p: os.RelPath) = {
     com.google.re2j.Pattern.compile(
-      os.read.lines.stream(p)
+      os.read.lines.stream(base / p)
         .filter(l => l.nonEmpty && l(0) != '#')
-        .map(gitIgnoreLineToRegex(_, (p / os.up).relativeTo(base).toString()))
+        .map(gitIgnoreLineToRegex(_, (p / os.up).toString()))
         .mkString("|")
     )
   }
