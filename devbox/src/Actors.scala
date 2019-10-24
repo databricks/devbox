@@ -48,7 +48,7 @@ class AgentReadWriteActor(agent: AgentApi,
     case AgentReadWriteActor.Send(msg, logged) => sendLogged(msg, logged)
 
     case AgentReadWriteActor.ForceRestart() =>
-      if (sending){
+      if (!sending){
         statusActor.send(StatusActor.Syncing("Syncing Restarted"))
         retryCount = 0
         restart()
