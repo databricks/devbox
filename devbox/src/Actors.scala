@@ -49,6 +49,7 @@ class AgentReadWriteActor(agent: AgentApi,
     case AgentReadWriteActor.ForceRestart() =>
       if (sending){
         statusActor.send(StatusActor.Syncing("Syncing Restarted"))
+        sending = true
         retryCount = 0
         restart()
       }
@@ -171,12 +172,12 @@ class AgentReadWriteActor(agent: AgentApi,
 
   def restart(): Unit = {
     retryCount += 1
+    sending = false
     try agent.destroy()
     catch{case e: Throwable => /*donothing*/}
     try {
       statusActor.send(StatusActor.Syncing(s"Restarting agent\nAttempt #$retryCount"))
       agent.start()
-      sending = false
       this.send(AgentReadWriteActor.Restarted())
     } catch{case e: os.SubprocessException =>
       retry()
