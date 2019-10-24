@@ -5,7 +5,7 @@ import java.io.{PrintWriter, StringWriter}
 import java.nio.ByteBuffer
 import java.util.concurrent.ScheduledExecutorService
 
-import devbox.common.{Bytes, Logger, Response, Rpc, Signature, Skipper, Util, Vfs}
+import devbox.common.{Bytes, Logger, Response, Rpc, RpcClient, Signature, Skipper, Util, Vfs}
 
 import scala.collection.mutable
 
@@ -17,11 +17,12 @@ object AgentReadWriteActor{
   case class SendChunks(value: SyncFiles.SendChunks) extends Msg
   case class Restarted() extends Msg
   case class ReadRestarted() extends Msg
-  case class Receive(data: Array[Byte]) extends Msg
+  case class Receive(data: Response) extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
                           syncer: => SyncActor,
-                          statusActor: => StatusActor)
+                          statusActor: => StatusActor,
+                          logger: Logger)
                          (implicit ac: ActorContext)
   extends SimpleActor[AgentReadWriteActor.Msg](){
   private val buffer = mutable.ArrayDeque.empty[Rpc]
@@ -38,6 +39,7 @@ class AgentReadWriteActor(agent: AgentApi,
     if (sending) sendRpcs(Seq(msg))
   }
 
+  val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
   def run(item: AgentReadWriteActor.Msg): Unit = item match{
     case AgentReadWriteActor.Send(msg, logged) => sendLogged(msg, logged)
 
@@ -105,10 +107,9 @@ class AgentReadWriteActor(agent: AgentApi,
 
     case AgentReadWriteActor.Receive(data) =>
       retryCount = 0
-      val deserialized = upickle.default.readBinary[Response](data)
-      syncer.send(SyncActor.Receive(deserialized))
+      syncer.send(SyncActor.Receive(data))
 
-      if (deserialized.isInstanceOf[Response.Ack]) {
+      if (data.isInstanceOf[Response.Ack]) {
         ac.reportComplete()
 
         val dropped = buffer.removeHead()
@@ -122,10 +123,7 @@ class AgentReadWriteActor(agent: AgentApi,
   def spawnReaderThread() = {
     new Thread(() => {
       while(try{
-        val n = agent.stdout.readInt()
-        val buf = new Array[Byte](n)
-        agent.stdout.readFully(buf)
-        this.send(AgentReadWriteActor.Receive(Util.gunzip(buf)))
+        this.send(AgentReadWriteActor.Receive(client.readMsg[Response]()))
         true
       }catch{
         case e: java.io.IOException =>
@@ -139,13 +137,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
   def sendRpcs(msgs: Seq[Rpc]) = {
     try {
-      for(msg <- msgs){
-        val blob = upickle.default.writeBinary(msg)
-        val compressed = Util.gzip(blob)
-        agent.stdin.writeInt(compressed.length)
-        agent.stdin.write(compressed)
-        agent.stdin.flush()
-      }
+      for(msg <- msgs)client.writeMsg(msg)
     }catch{ case e: java.io.IOException =>
       restart()
     }

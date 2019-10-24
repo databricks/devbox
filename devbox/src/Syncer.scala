@@ -58,7 +58,8 @@ class Syncer(agent: AgentApi,
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
     syncer,
-    statusActor
+    statusActor,
+    logger
   )
 
   val debouncer = new DebounceActor(
