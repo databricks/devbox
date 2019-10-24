@@ -29,9 +29,8 @@ object SyncFiles {
 
     val failed = mutable.Set.empty[os.Path]
     for (((src, dest), i) <- mapping.zipWithIndex) {
-      logger.info("Preparing to Skip", "")
+      logger.info("Analyzing ignored files", src.toString())
       val skip = skipper.prepare(src)
-      logger.info("Skipping", "")
       val eventPaths = changedPaths.filter(p =>
         p.startsWith(src) && !skip(p.relativeTo(src), true)
       )

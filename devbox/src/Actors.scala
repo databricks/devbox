@@ -3,6 +3,8 @@ package devbox
 import java.awt.event.{ActionEvent, ActionListener, MouseEvent, MouseListener}
 import java.io.{PrintWriter, StringWriter}
 import java.nio.ByteBuffer
+import java.time.ZoneId
+import java.time.format.{DateTimeFormatter, FormatStyle}
 import java.util.concurrent.ScheduledExecutorService
 
 import devbox.common.{Bytes, Logger, Response, Rpc, RpcClient, Signature, Skipper, Util, Vfs}
@@ -334,6 +336,8 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
     def mouseExited(e: MouseEvent): Unit = ()
   })
 
+  val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
+    .withZone(ZoneId.systemDefault())
   var image = blueSync
   var tooltip = ""
   var syncedFiles = 0
@@ -352,7 +356,11 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
 
       case StatusActor.Done() =>
         image = greenTick
-        tooltip = s"Syncing Complete\n$syncedFiles files $syncedBytes bytes\n${java.time.Instant.now()}"
+        tooltip =
+          s"Syncing Complete\n" +
+          s"$syncedFiles files $syncedBytes bytes\n" +
+          s"${formatter.format(java.time.Instant.now())}"
+
         syncedFiles = 0
         syncedBytes = 0
       case StatusActor.Error() =>
