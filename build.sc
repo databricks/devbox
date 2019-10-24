@@ -60,11 +60,6 @@ object devbox extends DevboxModule{
       bundleRepo("git@github.com:lihaoyi/mill.git", "mill", "3cc21b24e4c16a934cb76edb2937045b41662f46")
     }
 
-    def ammoniteBundle = T{
-      bundleRepo("git@github.com:lihaoyi/Ammonite.git", "Ammonite", "24d4327529a939627722c43407ca03f9c0602abc")
-    }
-
-
     def testFrameworks = Seq("devbox.UTestFramework")
     def ivyDeps = Agg(
       ivy"com.lihaoyi::utest:0.7.1",
@@ -74,8 +69,7 @@ object devbox extends DevboxModule{
       "AGENT_EXECUTABLE" -> agent.assembly().path.toString,
       "SCALATAGS_BUNDLE" -> scalatagsBundle().path.toString,
       "OSLIB_BUNDLE" -> oslibBundle().path.toString,
-      "MILL_BUNDLE" -> millBundle().path.toString,
-      "AMMONITE_BUNDLE" -> ammoniteBundle().path.toString,
+      "MILL_BUNDLE" -> millBundle().path.toString
     )
   }
 }

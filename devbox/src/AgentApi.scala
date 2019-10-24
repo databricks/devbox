@@ -18,7 +18,7 @@ class ReliableAgent(prep: Seq[String], cmd: Seq[String], cwd: os.Path) extends A
     println("ReliableAgent.start")
     assert(process == null)
 
-    os.proc(prep).call(stdout = os.Inherit, stderr = os.Inherit)
+    if (prep != Nil) os.proc(prep).call(stdout = os.Inherit, stderr = os.Inherit)
     process = new java.lang.ProcessBuilder().command(cmd:_*).directory(cwd.toIO).start()
     stderr = new DataInputStream(process.getErrorStream)
     stdout = new DataInputStream(process.getInputStream)

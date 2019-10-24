@@ -196,6 +196,7 @@ object DevboxTests extends TestSuite{
     implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
     val syncer = new Syncer(
       new ReliableAgent(
+        Nil,
         Seq(
           System.getenv("AGENT_EXECUTABLE"),
           "--ignore-strategy", ignoreStrategy,

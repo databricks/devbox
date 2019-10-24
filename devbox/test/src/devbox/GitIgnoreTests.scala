@@ -4,12 +4,6 @@ import utest._
 
 object GitIgnoreTests extends TestSuite {
   val tests = Tests{
-    def checkIgnore(gitIgnoreLine: String, gitIgnorePrefix: String, path: String) = {
-      val regexString = devbox.common.Util.gitIgnoreLineToRegex(gitIgnoreLine, gitIgnorePrefix)
-//      pprint.log(regexString)
-      com.google.re2j.Pattern.compile(regexString).matches(path)
-    }
-
     'skipper - {
       val base = os.temp.dir()
       'root - {
