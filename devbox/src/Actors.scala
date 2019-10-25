@@ -341,7 +341,7 @@ class DebounceActor(handle: Set[os.Path] => Unit,
         }
       }
     case DebounceActor.Trigger(count) =>
-      if (buffer.nonEmpty) {
+      if (count == buffer.size) {
         logChanges(buffer, "Syncing")
         handle(buffer.toSet)
         buffer.clear()
