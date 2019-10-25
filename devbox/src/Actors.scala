@@ -27,15 +27,15 @@ class AgentReadWriteActor(agent: AgentApi,
                           logger: Logger)
                          (implicit ac: ActorContext)
   extends SimpleActor[AgentReadWriteActor.Msg](){
-  private val buffer = mutable.ArrayDeque.empty[(Rpc, StatusActor.Msg)]
+  private val buffer = mutable.ArrayDeque.empty[(Rpc, String)]
 
   var sending = true
   var retryCount = 0
 
   def sendLogged(msg: Rpc, logged: String) = {
     ac.reportSchedule()
-
-    buffer.append(msg -> StatusActor.Syncing(logged))
+    statusActor.send(StatusActor.Syncing(logged))
+    buffer.append(msg -> logged)
 
     if (sending) sendRpcs(Seq(msg))
     else statusActor.send(StatusActor.Error(
@@ -107,7 +107,7 @@ class AgentReadWriteActor(agent: AgentApi,
         spawnReaderThread()
         if (buffer.isEmpty) {
           ac.reportSchedule()
-          buffer.append(Rpc.Complete() -> StatusActor.Done())
+          buffer.append(Rpc.Complete() -> "Re-connection Re-sync")
         }
         sendRpcs(buffer.toSeq.map(_._1))
         sending = true
@@ -121,14 +121,16 @@ class AgentReadWriteActor(agent: AgentApi,
         ac.reportComplete()
 
         val (droppedMsg, logged) = buffer.removeHead()
-
-        statusActor.send(if (buffer.nonEmpty) logged else StatusActor.Done())
+        statusActor.send(
+          if (buffer.nonEmpty) StatusActor.Syncing(logged + "\n" + "(Complete)")
+          else StatusActor.Done()
+        )
       }
   }
 
   def spawnReaderThread() = {
     new Thread(() => {
-      while ( {
+      try while ( {
         val strOpt =
           try Some(agent.stderr.readLine())
           catch{
@@ -147,10 +149,12 @@ class AgentReadWriteActor(agent: AgentApi,
                 false
             }
         }
-      }) ()
-    }).start()
+      }) () finally{
+        println("DevboxAgentLoggerThread exiting")
+      }
+    }, "DevboxAgentLoggerThread").start()
     new Thread(() => {
-      while(try{
+      try while(try{
         val response = client.readMsg[Response]()
         this.send(AgentReadWriteActor.Receive(response))
         true
@@ -158,8 +162,10 @@ class AgentReadWriteActor(agent: AgentApi,
         case e: java.io.IOException =>
           this.send(AgentReadWriteActor.ReadRestarted())
           false
-      })()
-    }).start()
+      })() finally{
+        println("DevboxAgentOutputThread exiting")
+      }
+    }, "DevboxAgentOutputThread").start()
   }
 
 
@@ -292,7 +298,12 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
             s => agentReadWriter.send(AgentReadWriteActor.SendChunks(s))
           )
           if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
-          else agentReadWriter.send(AgentReadWriteActor.Send(Rpc.Complete(), "Sync Complete"))
+          else agentReadWriter.send(
+            AgentReadWriteActor.Send(
+              Rpc.Complete(),
+              "Sync Complete\nwaiting for confirmation from Devbox"
+            )
+          )
           Waiting(vfsArr.map(_._2))
       }
   })
@@ -310,7 +321,12 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
         s => agentReadWriter.send(AgentReadWriteActor.SendChunks(s))
       )
       if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
-      else agentReadWriter.send(AgentReadWriteActor.Send(Rpc.Complete(), "Sync Complete"))
+      else agentReadWriter.send(
+        AgentReadWriteActor.Send(
+          Rpc.Complete(),
+          "Sync Complete\nwaiting for confirmation from Devbox"
+        )
+      )
       Waiting(vfsArr)
     case SyncActor.Receive(Response.Ack()) => Waiting(vfsArr) // do nothing
     case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
