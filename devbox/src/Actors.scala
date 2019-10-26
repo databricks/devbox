@@ -200,7 +200,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
       RestartSleeping(buffer, retryCount)
     } else {
-      statusActor.send(StatusActor.Error(
+      statusActor.send(StatusActor.Greyed(
         "Unable to connect to devbox, gave up after 5 attempts;\n" +
           "click on this logo to try again"
       ))
@@ -365,6 +365,7 @@ class DebounceActor(handle: Set[os.Path] => Unit,
         }
         Debouncing(paths)
       }
+    case DebounceActor.Trigger(count) => Idle()
   })
 
   case class Debouncing(paths: Set[os.Path]) extends State({
@@ -400,12 +401,13 @@ object StatusActor{
   case class FilesAndBytes(files: Int, bytes: Long) extends Msg
   case class Done() extends Msg
   case class Error(msg: String) extends Msg
+  case class Greyed(msg: String) extends Msg
   case class Close() extends Msg
 }
 class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
                  (implicit ac: ActorContext) extends BatchActor[StatusActor.Msg]{
-  val Seq(blueSync, greenTick, redCross) =
-    for(name <- Seq("blue-sync", "green-tick", "red-cross"))
+  val Seq(blueSync, greenTick, redCross, greyDash) =
+    for(name <- Seq("blue-sync", "green-tick", "red-cross", "grey-dash"))
     yield java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png"))
 
   val icon = new java.awt.TrayIcon(blueSync)
@@ -436,6 +438,10 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
     msgs.foreach{
       case StatusActor.Syncing(msg) =>
         image = blueSync
+        tooltip = msg
+
+      case StatusActor.Greyed(msg) =>
+        image = greyDash
         tooltip = msg
 
       case StatusActor.FilesAndBytes(nFiles, nBytes) =>
