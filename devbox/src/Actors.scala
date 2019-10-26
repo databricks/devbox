@@ -55,14 +55,6 @@ class AgentReadWriteActor(agent: AgentApi,
       }
   })
 
-  case class Restarting(buffer: Vector[SyncFiles.Msg], retryCount: Int) extends State({
-    case AgentReadWriteActor.Send(msg) =>
-      ac.reportSchedule()
-      Restarting(buffer :+ msg, retryCount)
-
-    case AgentReadWriteActor.ForceRestart() => restart(buffer, 0)
-  })
-
   case class GivenUp(buffer: Vector[SyncFiles.Msg]) extends State({
     case AgentReadWriteActor.Send(msg) =>
       ac.reportSchedule()
