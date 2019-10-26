@@ -352,6 +352,7 @@ class DebounceActor(handle: Set[os.Path] => Unit,
 
   def initialState: State = Idle()
 
+
   case class Idle() extends State({
     case DebounceActor.Paths(paths) =>
       if (!paths.exists(p => p.last != "index.lock")) Idle()
@@ -374,7 +375,6 @@ class DebounceActor(handle: Set[os.Path] => Unit,
       handle(paths)
       Idle()
   })
-
   def logChanges(paths: Iterable[os.Path], verb: String) = {
     val suffix =
       if (paths.size == 1) ""
@@ -399,7 +399,7 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
     yield java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png"))
 
   val icon = new java.awt.TrayIcon(blueSync)
-
+  icon.setToolTip("Devbox Initializing")
   val tray = java.awt.SystemTray.getSystemTray()
   tray.add(icon)
 
@@ -409,11 +409,8 @@ class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
     }
 
     def mousePressed(e: MouseEvent): Unit = ()
-
     def mouseReleased(e: MouseEvent): Unit = ()
-
     def mouseEntered(e: MouseEvent): Unit = ()
-
     def mouseExited(e: MouseEvent): Unit = ()
   })
 
