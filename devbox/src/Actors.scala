@@ -39,7 +39,20 @@ class AgentReadWriteActor(agent: AgentApi,
 
     case AgentReadWriteActor.ForceRestart() => restart(buffer, 0)
 
-    case AgentReadWriteActor.Receive(data) => receive(buffer, data)
+    case AgentReadWriteActor.Receive(data) =>
+      syncer.send(SyncActor.Receive(data))
+
+      if (!data.isInstanceOf[Response.Ack]) Active(buffer)
+      else {
+        ac.reportComplete()
+
+        val msg = buffer.head
+        statusActor.send(
+          if (buffer.nonEmpty) StatusActor.Syncing(msg.logged + "\n" + "(Complete)")
+          else StatusActor.Done()
+        )
+        Active(buffer.tail)
+      }
   })
 
   case class Restarting(buffer: Vector[SyncFiles.Msg], retryCount: Int) extends State({
@@ -61,21 +74,6 @@ class AgentReadWriteActor(agent: AgentApi,
   })
 
   val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
-  def receive(buffer: Vector[SyncFiles.Msg], data: Response) = {
-    syncer.send(SyncActor.Receive(data))
-
-    if (!data.isInstanceOf[Response.Ack]) Active(buffer)
-    else {
-      ac.reportComplete()
-
-      val msg = buffer.head
-      statusActor.send(
-        if (buffer.nonEmpty) StatusActor.Syncing(msg.logged + "\n" + "(Complete)")
-        else StatusActor.Done()
-      )
-      Active(buffer.tail)
-    }
-  }
 
   def sendRpcFor(buffer: Vector[SyncFiles.Msg],
                  retryCount: Int,
