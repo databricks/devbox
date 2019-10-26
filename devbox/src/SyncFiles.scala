@@ -12,14 +12,23 @@ import scala.collection.mutable
 import scala.concurrent.ExecutionContext
 
 object SyncFiles {
+
+  sealed trait Msg{def logged: String}
+  case class RpcMsg(value: Rpc, logged: String) extends Msg
+  case class SendChunkMsg(p: os.Path,
+                          dest: os.RelPath,
+                          segments: os.RelPath,
+                          chunkIndex: Int,
+                          logged: String) extends Msg
+
+
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
                   skipper: Skipper,
                   signatureTransformer: (os.RelPath, Signature) => Signature,
                   changedPaths: Set[os.Path],
                   vfsArr: Seq[Vfs[Signature]],
                   logger: Logger,
-                  send: (Rpc, String) => Unit,
-                  stream: SendChunks => Unit
+                  send: Msg => Unit
                  )(implicit ec: ExecutionContext) = {
 
     // We need to .distinct after we convert the strings to paths, in order
@@ -42,7 +51,7 @@ object SyncFiles {
         else SyncFiles.synchronizeRepo(
           logger, vfsArr(i), src, dest,
           eventPaths, signatureTransformer,
-          send, stream
+          send
         )
 
       exitCode match {
@@ -61,13 +70,6 @@ object SyncFiles {
     failed
   }
 
-  case class SendChunks(p: os.Path,
-                        dest: os.RelPath,
-                        segments: os.RelPath,
-                        chunkIndices: Seq[Int],
-                        fileIndex: Int,
-                        fileTotalCount: Int,
-                        blockHashes: Seq[Bytes])
   /**
     * Represents the various ways a repo synchronization can exit early.
     */
@@ -89,8 +91,7 @@ object SyncFiles {
                       dest: os.RelPath,
                       eventPaths: Set[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
-                      send: (Rpc, String) => Unit,
-                      stream: SendChunks => Unit)
+                      send: Msg => Unit)
                      (implicit ec: ExecutionContext): Either[ExitCode, Unit] = {
     logger.info("Checking for changes", s"in ${eventPaths.size} paths")
     for{
@@ -108,7 +109,7 @@ object SyncFiles {
       logger.info(s"${sortedSignatures.length} paths changed", s"$src")
 
       syncMetadata(vfs, send, sortedSignatures, src, dest, logger)
-      streamAllFileContents(logger, vfs, send, stream, src, dest, sortedSignatures)
+      streamAllFileContents(logger, vfs, send, src, dest, sortedSignatures)
     }
   }
 
@@ -140,8 +141,7 @@ object SyncFiles {
 
   def streamAllFileContents(logger: Logger,
                             stateVfs: Vfs[Signature],
-                            send: (Rpc, String) => Unit,
-                            stream: SendChunks => Unit,
+                            send: Msg => Unit,
                             src: Path,
                             dest: os.RelPath,
                             signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
@@ -163,28 +163,29 @@ object SyncFiles {
         )
         i
       }
-      stream(
-        SendChunks(
-          p,
-          dest,
-          segments,
-          chunkIndices,
-          n,
-          total,
-          blockHashes
+      for(chunkIndex <- chunkIndices){
+        val hashMsg = if (blockHashes.size > 1) s" $chunkIndex/${blockHashes.size}" else ""
+        send(
+          SendChunkMsg(
+            p,
+            dest,
+            segments,
+            chunkIndex,
+            s"Syncing file chunk [$n/$total$hashMsg]:\n$segments"
+          )
         )
-      )
+      }
 
       if (size != otherSize) {
         val msg = Rpc.SetSize(dest, segments, size)
         Vfs.updateVfs(msg, stateVfs)
-        send(msg, s"Syncing file chunk [$n/$total]:\n$segments")
+        send(RpcMsg(msg, s"Syncing file chunk [$n/$total]:\n$segments"))
       }
     }
   }
 
   def syncMetadata(vfs: Vfs[Signature],
-                   send: (Rpc, String) => Unit,
+                   send: Msg => Unit,
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
                    dest: os.RelPath,
@@ -192,7 +193,7 @@ object SyncFiles {
 
     logger.apply("SYNC META", signatureMapping)
     def client(rpc: Rpc with Action, logged: String) = {
-      send(rpc, logged)
+      send(RpcMsg(rpc, logged))
       Vfs.updateVfs(rpc, vfs)
     }
     val total = signatureMapping.length

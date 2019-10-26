@@ -14,11 +14,10 @@ import scala.collection.mutable
 
 object AgentReadWriteActor{
   sealed trait Msg
-  case class Send(value: Rpc, logged: String) extends Msg
+  case class Send(value: SyncFiles.Msg) extends Msg
   case class ForceRestart() extends Msg
-  case class SendChunks(value: SyncFiles.SendChunks) extends Msg
   case class Restarted() extends Msg
-  case class ReadRestarted() extends Msg
+  case class ReadFailed() extends Msg
   case class Receive(data: Response) extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
@@ -26,105 +25,106 @@ class AgentReadWriteActor(agent: AgentApi,
                           statusActor: => StatusActor,
                           logger: Logger)
                          (implicit ac: ActorContext)
-  extends SimpleActor[AgentReadWriteActor.Msg](){
-  private val buffer = mutable.ArrayDeque.empty[(Rpc, String)]
+  extends StateMachineActor[AgentReadWriteActor.Msg](){
 
-  var sending = true
-  var retryCount = 0
+  def initialState = Active(Vector())
 
-  def sendLogged(msg: Rpc, logged: String) = {
-    ac.reportSchedule()
-    statusActor.send(StatusActor.Syncing(logged))
-    buffer.append(msg -> logged)
+  case class Active(buffer: Vector[SyncFiles.Msg]) extends State({
+    case AgentReadWriteActor.Send(msg) =>
+      ac.reportSchedule()
+      statusActor.send(StatusActor.Syncing(msg.logged))
+      val newBuffer = buffer :+ msg
+      sendRpcFor(newBuffer, 0, msg).getOrElse(Active(newBuffer))
 
-    if (sending) sendRpcs(Seq(msg))
-    else statusActor.send(StatusActor.Error(
-      "Unable to connect to devbox\n" +
-      "click on this logo to try again"
-    ))
-  }
+    case AgentReadWriteActor.ReadFailed() => restart(buffer, 0)
 
-  val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
+    case AgentReadWriteActor.ForceRestart() => restart(buffer, 0)
 
-  def run(item: AgentReadWriteActor.Msg): Unit = item match{
-    case AgentReadWriteActor.Send(msg, logged) => sendLogged(msg, logged)
+    case AgentReadWriteActor.Receive(data) => receive(buffer, data)
+  })
 
-    case AgentReadWriteActor.ForceRestart() =>
-      if (!sending){
-        statusActor.send(StatusActor.Syncing("Syncing Restarted"))
-        retryCount = 0
-        restart()
-      }
+  case class Restarting(buffer: Vector[SyncFiles.Msg], retryCount: Int) extends State({
+    case AgentReadWriteActor.Send(msg) =>
+      ac.reportSchedule()
+      Restarting(buffer :+ msg, retryCount)
 
-    case AgentReadWriteActor.ReadRestarted() =>
-      if (sending){
-        retry()
-      }
-
-    case AgentReadWriteActor.SendChunks(
-      SyncFiles.SendChunks(
-        p, dest, segments, chunkIndices, fileIndex, fileTotalCount, blockHashes
-      )
-    ) =>
-
-      var bytes = 0L
-      val byteArr = new Array[Byte](Util.blockSize)
-      val buf = ByteBuffer.wrap(byteArr)
-      Util.autoclose(os.read.channel(p)) { channel =>
-        for (i <- chunkIndices) {
-          val hashMsg = if (blockHashes.size > 1) s" $i/${blockHashes.size}" else ""
-
-          buf.rewind()
-          channel.position(i * Util.blockSize)
-          var n = 0
-          while ( {
-            if (n == Util.blockSize) false
-            else channel.read(buf) match {
-              case -1 => false
-              case d =>
-                n += d
-                true
-            }
-          }) ()
-          bytes += n
-          val msg = Rpc.WriteChunk(
-            dest,
-            segments,
-            i * Util.blockSize,
-            new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
-          )
-
-          sendLogged(
-            msg,
-            s"Syncing file chunk [$fileIndex/$fileTotalCount$hashMsg]:\n$segments"
-          )
-        }
-      }
-      statusActor.send(StatusActor.FilesAndBytes(1, bytes))
+    case AgentReadWriteActor.ForceRestart() => restart(buffer, 0)
 
     case AgentReadWriteActor.Restarted() =>
-      if (!sending){
-        spawnReaderThread()
-        if (buffer.isEmpty) {
+      spawnReaderThread()
+      val newMsg =
+        if (buffer.nonEmpty) None
+        else{
           ac.reportSchedule()
-          buffer.append(Rpc.Complete() -> "Re-connection Re-sync")
+          Some(SyncFiles.RpcMsg(Rpc.Complete(), "Re-connection Re-sync"))
         }
-        sendRpcs(buffer.toSeq.map(_._1))
-        sending = true
+
+      val newBuffer = buffer ++ newMsg
+      val failState = newBuffer.foldLeft(Option.empty[State]){
+        case (Some(end), _) => Some(end)
+        case (None, msg) => sendRpcFor(newBuffer, retryCount, msg)
       }
 
-    case AgentReadWriteActor.Receive(data) =>
-      retryCount = 0
-      syncer.send(SyncActor.Receive(data))
+      failState.getOrElse(Active(newBuffer))
+  })
 
-      if (data.isInstanceOf[Response.Ack]) {
-        ac.reportComplete()
+  case class GivenUp(buffer: Vector[SyncFiles.Msg]) extends State({
+    case AgentReadWriteActor.Send(msg) =>
+      ac.reportSchedule()
+      GivenUp(buffer :+ msg)
 
-        val (droppedMsg, logged) = buffer.removeHead()
-        statusActor.send(
-          if (buffer.nonEmpty) StatusActor.Syncing(logged + "\n" + "(Complete)")
-          else StatusActor.Done()
+    case AgentReadWriteActor.ForceRestart() =>
+      statusActor.send(StatusActor.Syncing("Syncing Restarted"))
+      restart(buffer, 0)
+  })
+
+  val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
+  def receive(buffer: Vector[SyncFiles.Msg], data: Response) = {
+    syncer.send(SyncActor.Receive(data))
+
+    if (!data.isInstanceOf[Response.Ack]) Active(buffer)
+    else {
+      ac.reportComplete()
+
+      val msg = buffer.head
+      statusActor.send(
+        if (buffer.nonEmpty) StatusActor.Syncing(msg.logged + "\n" + "(Complete)")
+        else StatusActor.Done()
+      )
+      Active(buffer.tail)
+    }
+  }
+
+  def sendRpcFor(buffer: Vector[SyncFiles.Msg],
+                 retryCount: Int,
+                 msg: SyncFiles.Msg) = msg match{
+    case SyncFiles.RpcMsg(rpc, logged) => sendRpc(buffer, retryCount, rpc)
+    case SyncFiles.SendChunkMsg(p, dest, segments, chunkIndex, logged) =>
+      val byteArr = new Array[Byte](Util.blockSize)
+      val buf = ByteBuffer.wrap(byteArr)
+
+      Util.autoclose(os.read.channel(p)) { channel =>
+        buf.rewind()
+        channel.position(chunkIndex * Util.blockSize)
+        var n = 0
+        while ( {
+          if (n == Util.blockSize) false
+          else channel.read(buf) match {
+            case -1 => false
+            case d =>
+              n += d
+              true
+          }
+        }) ()
+
+        val msg = Rpc.WriteChunk(
+          dest,
+          segments,
+          chunkIndex * Util.blockSize,
+          new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
         )
+        statusActor.send(StatusActor.FilesAndBytes(1, n))
+        sendRpc(buffer, retryCount, msg)
       }
   }
 
@@ -160,7 +160,7 @@ class AgentReadWriteActor(agent: AgentApi,
         true
       }catch{
         case e: java.io.IOException =>
-          this.send(AgentReadWriteActor.ReadRestarted())
+          this.send(AgentReadWriteActor.ReadFailed())
           false
       })() finally{
         println("DevboxAgentOutputThread exiting")
@@ -169,43 +169,44 @@ class AgentReadWriteActor(agent: AgentApi,
   }
 
 
-  def sendRpcs(msgs: Seq[Rpc]) = {
+  def sendRpc(buffer: Vector[SyncFiles.Msg], retryCount: Int, msg: Rpc): Option[State] = {
     try {
-      for(msg <- msgs)client.writeMsg(msg)
-    }catch{ case e: java.io.IOException =>
-      restart()
+      client.writeMsg(msg)
+      None
+    } catch{ case e: java.io.IOException =>
+      Some(restart(buffer, retryCount))
     }
   }
 
-  def restart(): Unit = {
-    println("RESTART")
-    retryCount += 1
-    sending = false
+  def restart(buffer: Vector[SyncFiles.Msg], retryCount: Int): State = {
+
     try agent.destroy()
     catch{case e: Throwable => /*donothing*/}
-    try {
-      statusActor.send(StatusActor.Syncing(s"Restarting agent\nAttempt #$retryCount"))
-      agent.start()
-      this.send(AgentReadWriteActor.Restarted())
-    } catch{case e: os.SubprocessException =>
-      retry()
-    }
-  }
 
-  def retry() = {
     if (retryCount < 5) {
+      println("RESTART")
       val seconds = math.pow(2, retryCount).toInt
       statusActor.send(StatusActor.Error(
         s"Unable to connect to devbox, trying again after $seconds seconds"
       ))
       Thread.sleep(1000 * seconds)
-      restart()
-    }
-    else statusActor.send(StatusActor.Error(
-      "Unable to connect to devbox, gave up after 5 attempts;\n" +
-        "click on this logo to try again"
-    ))
 
+      try {
+        statusActor.send(StatusActor.Syncing(s"Restarting agent\nAttempt #$retryCount"))
+        agent.start()
+        this.send(AgentReadWriteActor.Restarted())
+      } catch{case e: os.SubprocessException =>
+        restart(buffer, retryCount + 1)
+      }
+      Restarting(buffer, retryCount)
+    } else {
+      statusActor.send(StatusActor.Error(
+        "Unable to connect to devbox, gave up after 5 attempts;\n" +
+          "click on this logo to try again"
+      ))
+
+      GivenUp(buffer)
+    }
   }
 }
 
@@ -238,8 +239,10 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
     case SyncActor.Scan() =>
       agentReadWriter.send(
         AgentReadWriteActor.Send(
-          Rpc.FullScan(mapping.map(_._2)),
-          "Remote Scanning " + mapping.map(_._2).mkString(", ")
+          SyncFiles.RpcMsg(
+            Rpc.FullScan(mapping.map(_._2)),
+            "Remote Scanning " + mapping.map(_._2).mkString(", ")
+          )
         )
       )
       scala.concurrent.Future{
@@ -294,14 +297,15 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
             localPaths ++ remotePaths,
             vfsArr.map(_._2),
             logger,
-            (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged)),
-            s => agentReadWriter.send(AgentReadWriteActor.SendChunks(s))
+            m => agentReadWriter.send(AgentReadWriteActor.Send(m))
           )
           if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
           else agentReadWriter.send(
             AgentReadWriteActor.Send(
-              Rpc.Complete(),
-              "Sync Complete\nwaiting for confirmation from Devbox"
+              SyncFiles.RpcMsg(
+                Rpc.Complete(),
+                "Sync Complete\nwaiting for confirmation from Devbox"
+              )
             )
           )
           Waiting(vfsArr.map(_._2))
@@ -317,14 +321,15 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
         paths,
         vfsArr,
         logger,
-        (p, logged) => agentReadWriter.send(AgentReadWriteActor.Send(p, logged)),
-        s => agentReadWriter.send(AgentReadWriteActor.SendChunks(s))
+        m => agentReadWriter.send(AgentReadWriteActor.Send(m))
       )
       if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
       else agentReadWriter.send(
         AgentReadWriteActor.Send(
-          Rpc.Complete(),
-          "Sync Complete\nwaiting for confirmation from Devbox"
+          SyncFiles.RpcMsg(
+            Rpc.Complete(),
+            "Sync Complete\nwaiting for confirmation from Devbox"
+          )
         )
       )
       Waiting(vfsArr)
