@@ -37,9 +37,11 @@ class AgentReadWriteActor(agent: AgentApi,
       val newBuffer = buffer :+ msg
       sendRpcFor(newBuffer, 0, msg).getOrElse(Active(newBuffer))
 
-    case AgentReadWriteActor.ReadFailed() => restart(buffer, 0)
+    case AgentReadWriteActor.ReadFailed() =>
+      restart(buffer, 0)
 
-    case AgentReadWriteActor.ForceRestart() => restart(buffer, 0)
+    case AgentReadWriteActor.ForceRestart() =>
+      restart(buffer, 0)
 
     case AgentReadWriteActor.Receive(data) =>
       syncer.send(SyncActor.Receive(data))
@@ -60,7 +62,7 @@ class AgentReadWriteActor(agent: AgentApi,
   case class RestartSleeping(buffer: Vector[SyncFiles.Msg], retryCount: Int) extends State({
     case AgentReadWriteActor.Send(msg) =>
       ac.reportSchedule()
-      RestartSleeping(buffer :+ msg, retryCount + 1)
+      RestartSleeping(buffer :+ msg, retryCount)
 
     case AgentReadWriteActor.ReadFailed() => RestartSleeping(buffer, retryCount)
 
@@ -69,17 +71,14 @@ class AgentReadWriteActor(agent: AgentApi,
     case AgentReadWriteActor.Receive(data) => RestartSleeping(buffer, retryCount)
 
     case AgentReadWriteActor.AttemptReconnect() =>
-      val startError = try {
-        statusActor.send(StatusActor.Syncing(s"Restarting Devbox agent\nAttempt #$retryCount"))
-        agent.start(s =>
-          statusActor.send(StatusActor.Syncing(
-            s"Restarting Devbox agent\nAttempt #$retryCount\n$s"
-          ))
-        )
-        None
-      } catch{case e: os.SubprocessException =>
-        Some(restart(buffer, retryCount + 1))
-      }
+
+      statusActor.send(StatusActor.Syncing(s"Restarting Devbox agent\nAttempt #$retryCount"))
+      val started = agent.start(s =>
+        statusActor.send(StatusActor.Syncing(
+          s"Restarting Devbox agent\nAttempt #$retryCount\n$s"
+        ))
+      )
+      val startError = if (started) None else Some(restart(buffer, retryCount))
 
       startError.getOrElse{
         spawnReaderThread()
@@ -103,6 +102,10 @@ class AgentReadWriteActor(agent: AgentApi,
   case class GivenUp(buffer: Vector[SyncFiles.Msg]) extends State({
     case AgentReadWriteActor.Send(msg) =>
       ac.reportSchedule()
+      statusActor.send(StatusActor.Greyed(
+        "Unable to connect to devbox, gave up after 5 attempts;\n" +
+        "click on this logo to try again"
+      ))
       GivenUp(buffer :+ msg)
 
     case AgentReadWriteActor.ForceRestart() =>
@@ -210,7 +213,7 @@ class AgentReadWriteActor(agent: AgentApi,
         this.send(AgentReadWriteActor.AttemptReconnect())
       }
 
-      RestartSleeping(buffer, retryCount)
+      RestartSleeping(buffer, retryCount + 1)
     } else {
       statusActor.send(StatusActor.Greyed(
         "Unable to connect to devbox, gave up after 5 attempts;\n" +
