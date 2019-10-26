@@ -370,7 +370,13 @@ class DebounceActor(handle: Set[os.Path] => Unit,
   case class Debouncing(paths: Set[os.Path]) extends State({
     case DebounceActor.Paths(morePaths) =>
       logChanges(morePaths, "Ongoing")
-      Debouncing(paths ++ morePaths)
+      val allPaths = paths ++ morePaths
+      val count = allPaths.size
+      scala.concurrent.Future {
+        Thread.sleep(debounceMillis)
+        this.send(DebounceActor.Trigger(count))
+      }
+      Debouncing(allPaths)
     case DebounceActor.Trigger(count) =>
       if (count != paths.size) Debouncing(paths)
       else{
