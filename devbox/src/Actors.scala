@@ -62,6 +62,8 @@ class AgentReadWriteActor(agent: AgentApi,
       ac.reportSchedule()
       RestartSleeping(buffer :+ msg, retryCount + 1)
 
+    case AgentReadWriteActor.ReadFailed() => RestartSleeping(buffer, retryCount)
+
     case AgentReadWriteActor.ForceRestart() => restart(buffer, 0)
 
     case AgentReadWriteActor.Receive(data) => RestartSleeping(buffer, retryCount)
