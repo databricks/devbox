@@ -341,7 +341,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
 object DebounceActor{
   sealed trait Msg
   case class Paths(values: Set[os.Path]) extends Msg
-  case class Trigger() extends Msg
+  case class Trigger(count: Int) extends Msg
 }
 
 class DebounceActor(handle: Set[os.Path] => Unit,
@@ -358,9 +358,10 @@ class DebounceActor(handle: Set[os.Path] => Unit,
       if (!paths.exists(p => p.last != "index.lock")) Idle()
       else {
         logChanges(paths, "Detected")
+        val count = paths.size
         scala.concurrent.Future {
           Thread.sleep(debounceMillis)
-          this.send(DebounceActor.Trigger())
+          this.send(DebounceActor.Trigger(count))
         }
         Debouncing(paths)
       }
@@ -370,10 +371,13 @@ class DebounceActor(handle: Set[os.Path] => Unit,
     case DebounceActor.Paths(morePaths) =>
       logChanges(morePaths, "Ongoing")
       Debouncing(paths ++ morePaths)
-    case DebounceActor.Trigger() =>
-      logChanges(paths, "Syncing")
-      handle(paths)
-      Idle()
+    case DebounceActor.Trigger(count) =>
+      if (count != paths.size) Debouncing(paths)
+      else{
+        logChanges(paths, "Syncing")
+        handle(paths)
+        Idle()
+      }
   })
   def logChanges(paths: Iterable[os.Path], verb: String) = {
     val suffix =
