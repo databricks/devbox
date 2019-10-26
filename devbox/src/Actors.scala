@@ -49,7 +49,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
         val msg = buffer.head
         statusActor.send(
-          if (buffer.nonEmpty) StatusActor.Syncing(msg.logged + "\n" + "(Complete)")
+          if (buffer.tail.nonEmpty) StatusActor.Syncing(msg.logged + "\n" + "(Complete)")
           else StatusActor.Done()
         )
         Active(buffer.tail)
