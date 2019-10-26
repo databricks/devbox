@@ -336,33 +336,40 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
 object DebounceActor{
   sealed trait Msg
   case class Paths(values: Set[os.Path]) extends Msg
-  case class Trigger(count: Int) extends Msg
+  case class Trigger() extends Msg
 }
 
 class DebounceActor(handle: Set[os.Path] => Unit,
                     statusActor: => StatusActor,
                     debounceMillis: Int)
                    (implicit ac: ActorContext)
-  extends SimpleActor[DebounceActor.Msg]{
-  val buffer = mutable.Set.empty[os.Path]
-  def run(msg: DebounceActor.Msg) = msg match{
-    case DebounceActor.Paths(values) =>
-      if (values.exists(p => p.last != "index.lock")) {
-        logChanges(values, if (buffer.isEmpty) "Detected" else "Ongoing")
-        buffer.addAll(values)
-        val count = buffer.size
+  extends StateMachineActor[DebounceActor.Msg]{
+
+  def initialState: State = Idle()
+
+  case class Idle() extends State({
+    case DebounceActor.Paths(paths) =>
+      if (!paths.exists(p => p.last != "index.lock")) Idle()
+      else {
+        logChanges(paths, "Detected")
         scala.concurrent.Future {
           Thread.sleep(debounceMillis)
-          this.send(DebounceActor.Trigger(count))
+          this.send(DebounceActor.Trigger())
         }
+        Debouncing(paths)
       }
-    case DebounceActor.Trigger(count) =>
-      if (count == buffer.size) {
-        logChanges(buffer, "Syncing")
-        handle(buffer.toSet)
-        buffer.clear()
-      }
-  }
+  })
+
+  case class Debouncing(paths: Set[os.Path]) extends State({
+    case DebounceActor.Paths(morePaths) =>
+      logChanges(morePaths, "Ongoing")
+      Debouncing(paths ++ morePaths)
+    case DebounceActor.Trigger() =>
+      logChanges(paths, "Syncing")
+      handle(paths)
+      Idle()
+  })
+
   def logChanges(paths: Iterable[os.Path], verb: String) = {
     val suffix =
       if (paths.size == 1) ""
@@ -371,6 +378,7 @@ class DebounceActor(handle: Set[os.Path] => Unit,
     statusActor.send(StatusActor.Syncing(s"$verb changes to\n${paths.head.relativeTo(os.pwd)}$suffix"))
   }
 }
+
 object StatusActor{
   sealed trait Msg
   case class Syncing(msg: String) extends Msg
