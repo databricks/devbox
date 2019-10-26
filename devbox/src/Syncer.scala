@@ -87,6 +87,6 @@ class Syncer(agent: AgentApi,
     running = false
     statusActor.send(StatusActor.Close())
     watcher.close()
-    agent.destroy()
+    agentReadWriter.send(AgentReadWriteActor.Close())
   }
 }

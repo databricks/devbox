@@ -20,6 +20,7 @@ object AgentReadWriteActor{
   case class ReadFailed() extends Msg
   case class AttemptReconnect() extends Msg
   case class Receive(data: Response) extends Msg
+  case class Close() extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
                           syncer: => SyncActor,
@@ -57,6 +58,10 @@ class AgentReadWriteActor(agent: AgentApi,
         )
         Active(buffer.tail)
       }
+
+    case AgentReadWriteActor.Close() =>
+      agent.destroy()
+      Closed()
   })
 
   case class RestartSleeping(buffer: Vector[SyncFiles.Msg], retryCount: Int) extends State({
@@ -97,6 +102,10 @@ class AgentReadWriteActor(agent: AgentApi,
 
         failState.getOrElse(Active(newBuffer))
       }
+
+    case AgentReadWriteActor.Close() =>
+      agent.destroy()
+      Closed()
   })
 
   case class GivenUp(buffer: Vector[SyncFiles.Msg]) extends State({
@@ -111,8 +120,15 @@ class AgentReadWriteActor(agent: AgentApi,
     case AgentReadWriteActor.ForceRestart() =>
       statusActor.send(StatusActor.Syncing("Syncing Restarted"))
       restart(buffer, 0)
+
+    case AgentReadWriteActor.Close() =>
+      agent.destroy()
+      Closed()
   })
 
+  case class Closed() extends State({
+    case _ => Closed()
+  })
   val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
 
   def sendRpcFor(buffer: Vector[SyncFiles.Msg],
@@ -201,7 +217,10 @@ class AgentReadWriteActor(agent: AgentApi,
   def restart(buffer: Vector[SyncFiles.Msg], retryCount: Int): State = {
 
     try agent.destroy()
-    catch{case e: Throwable => /*donothing*/}
+    catch{case e: Throwable =>
+      e.printStackTrace()
+      /*donothing*/
+    }
 
     if (retryCount < 5) {
       val seconds = math.pow(2, retryCount).toInt

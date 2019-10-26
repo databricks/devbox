@@ -47,6 +47,7 @@ class ReliableAgent(prep: Seq[String], cmd: Seq[String], cwd: os.Path) extends A
       stdout = new DataInputStream(process.getInputStream)
       stdin = new DataOutputStream(process.getOutputStream)
     }
+
     prepPassed
   }
 

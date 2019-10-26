@@ -111,15 +111,13 @@ object DevboxTests extends TestSuite{
         }
 
 
-        while( {
-          Thread.sleep(100)
-          ac.active.get() != 0
-        }) ()
+        while({Thread.sleep(100); ac.active.get() != 0}) ()
 
         if (restartSyncerEvery.exists(count % _ == 0)) {
           logger("TEST STOP SYNCER")
           syncer.close()
           syncer = null
+          while({Thread.sleep(100); ac.active.get() != 0}) ()
         }
 
         // Allow validation not-every-commit, because validation is really slow
@@ -137,6 +135,7 @@ object DevboxTests extends TestSuite{
       if (syncer != null) {
         syncer.close()
         syncer = null
+        while({Thread.sleep(100); ac.active.get() != 0}) ()
       }
     }
   }
