@@ -16,7 +16,6 @@ object AgentReadWriteActor{
   sealed trait Msg
   case class Send(value: SyncFiles.Msg) extends Msg
   case class ForceRestart() extends Msg
-  case class Restarted() extends Msg
   case class ReadFailed() extends Msg
   case class Receive(data: Response) extends Msg
 }
@@ -49,23 +48,6 @@ class AgentReadWriteActor(agent: AgentApi,
       Restarting(buffer :+ msg, retryCount)
 
     case AgentReadWriteActor.ForceRestart() => restart(buffer, 0)
-
-    case AgentReadWriteActor.Restarted() =>
-      spawnReaderThread()
-      val newMsg =
-        if (buffer.nonEmpty) None
-        else{
-          ac.reportSchedule()
-          Some(SyncFiles.RpcMsg(Rpc.Complete(), "Re-connection Re-sync"))
-        }
-
-      val newBuffer = buffer ++ newMsg
-      val failState = newBuffer.foldLeft(Option.empty[State]){
-        case (Some(end), _) => Some(end)
-        case (None, msg) => sendRpcFor(newBuffer, retryCount, msg)
-      }
-
-      failState.getOrElse(Active(newBuffer))
   })
 
   case class GivenUp(buffer: Vector[SyncFiles.Msg]) extends State({
@@ -191,14 +173,31 @@ class AgentReadWriteActor(agent: AgentApi,
       ))
       Thread.sleep(1000 * seconds)
 
-      try {
+      val startError = try {
         statusActor.send(StatusActor.Syncing(s"Restarting agent\nAttempt #$retryCount"))
         agent.start()
-        this.send(AgentReadWriteActor.Restarted())
+        None
       } catch{case e: os.SubprocessException =>
-        restart(buffer, retryCount + 1)
+        Some(restart(buffer, retryCount + 1))
       }
-      Restarting(buffer, retryCount)
+
+      startError.getOrElse{
+        spawnReaderThread()
+        val newMsg =
+          if (buffer.nonEmpty) None
+          else{
+            ac.reportSchedule()
+            Some(SyncFiles.RpcMsg(Rpc.Complete(), "Re-connection Re-sync"))
+          }
+
+        val newBuffer = buffer ++ newMsg
+        val failState = newBuffer.foldLeft(Option.empty[State]){
+          case (Some(end), _) => Some(end)
+          case (None, msg) => sendRpcFor(newBuffer, retryCount, msg)
+        }
+
+        failState.getOrElse(Active(newBuffer))
+      }
     } else {
       statusActor.send(StatusActor.Error(
         "Unable to connect to devbox, gave up after 5 attempts;\n" +
