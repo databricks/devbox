@@ -9,6 +9,9 @@ import devbox.common.Cli.Arg
 import devbox.common._
 import Cli.pathScoptRead
 import Util.relpathRw
+import devbox.common
+
+import scala.concurrent.ExecutionContext
 object DevboxAgentMain {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
@@ -53,7 +56,11 @@ object DevboxAgentMain {
 
       case Right((config, remaining)) =>
         os.makeDir.all(os.home / ".devbox")
-        val logger = Logger.JsonStderr(os.home / ".devbox" / "log.txt")
+        implicit val ac = new common.ActorContext.Simple(
+          ExecutionContext.Implicits.global,
+          _.printStackTrace()
+        )
+        val logger = new AgentLogger(n => os.home / ".devbox" / s"log-$n.txt", 5 * 1024 * 1024)
         logger("AGNT START", config.workingDir)
 
         val skipper = Skipper.fromString(config.ignoreStrategy)
@@ -71,7 +78,7 @@ object DevboxAgentMain {
         )
     }
   }
-  def mainLoop(logger: Logger,
+  def mainLoop(logger: AgentLogger,
                skipper: Skipper,
                client: RpcClient,
                wd: os.Path,

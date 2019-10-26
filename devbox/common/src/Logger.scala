@@ -1,70 +1,125 @@
 package devbox.common
 
-import java.nio.file.StandardOpenOption.{CREATE, WRITE, TRUNCATE_EXISTING}
+import java.nio.file.StandardOpenOption.{CREATE, WRITE, TRUNCATE_EXISTING, APPEND}
+trait BaseLogger extends AutoCloseable{
+  def rotationSize: Long
+  def dest: Int => os.Path
+  def truncate: Boolean
 
-trait Logger extends AutoCloseable{
-  def write(s: String): Unit
-  def info(title: => String, body: => String, color: => Option[String] = None): Unit
-  def progress(title: => String, body: => String): Unit
+  var n = 0
+  var size = 0L
+  var output: java.io.OutputStream = _
 
-  def apply(tag: String, x: => Any = Logger.NoOp): Unit = {
-    assert(tag.length <= Logger.margin)
+  def logOut(s: String): Unit
+  def write(s: String) = {
+    logOut(s)
 
-    val msg =
-      fansi.Color.Magenta(tag.padTo(Logger.margin, ' ')) ++ " | " ++
-      pprint.apply(x, height = Int.MaxValue)
-    write(msg.toString().replace("\n", Logger.marginStr))
+    if (output == null || size > rotationSize) {
+      n += 1
+      size = 0
+      if (output != null) output.close()
+      output = os.write.outputStream(
+        dest(n),
+        openOptions =
+          if (truncate) Seq(CREATE, WRITE, TRUNCATE_EXISTING)
+          else Seq(CREATE, WRITE, APPEND)
+      )
+      size = os.size(dest(n))
+      os.remove.all(dest(n - 2))
+    }
+    val bytes = fansi.Str(s).plainText.getBytes("UTF-8")
+    output.write(bytes)
+    output.write('\n')
+    size += bytes.length + 1
   }
-}
 
+  def close() = output.close()
+}
 object Logger{
+
   object NoOp {
     override def toString = ""
   }
   val margin = 20
   val marginStr = "\n" + (" " * margin) + " | "
-  case class File(dest: os.Path) extends Logger{
-    val output = os.write.outputStream(dest, openOptions = Seq(CREATE, WRITE, TRUNCATE_EXISTING))
-    def write(s: String): Unit = synchronized{
-      output.write(fansi.Str(s).plainText.getBytes("UTF-8"))
-      output.write('\n')
-    }
-    def close() = output.close()
+
+
+  sealed trait Msg
+  case class PPrinted(tag: String, value: Any) extends Msg
+  case class Info(title: String, body: String, color: Option[String]) extends Msg
+  case class Progress(title: String, body: String) extends Msg
+  case class Close() extends Msg
+
+}
+
+trait SyncLogger{
+  def apply(tag: String, x: Any = Logger.NoOp): Unit
+  def info(title: String, body: String, color: Option[String] = None): Unit
+  def progress(title: String, body: String): Unit
+}
+object SyncLogger{
+
+  class Impl(val dest: Int => os.Path, val rotationSize: Long, val truncate: Boolean)
+            (implicit ac: ActorContext) extends SimpleActor[Logger.Msg] with BaseLogger with SyncLogger{
+
     var lastProgressTimestamp = 0L
-    override def info(title: => String, body: => String, color: => Option[String]): Unit = {
-      val title0 = title
-      color match {
-        case Some(c) => println(s"${Console.RESET}$c$title0: $body${Console.RESET}")
-        case None => println(s"$title0: $body")
-      }
-      lastProgressTimestamp = System.currentTimeMillis()
+
+    def logOut(s: String) = {}
+    def apply(tag: String, x: Any = Logger.NoOp): Unit = this.send(Logger.PPrinted(tag, x))
+
+    def info(title: String, body: String, color: Option[String] = None): Unit = {
+      this.send(Logger.Info(title, body, color))
     }
-    override def progress(title: => String, body: => String): Unit = {
-      val now = System.currentTimeMillis()
-      if (now - lastProgressTimestamp > 5000){
+    def progress(title: String, body: String): Unit = {
+      this.send(Logger.Progress(title, body))
+    }
+
+    def run(msg: Logger.Msg): Unit = msg match{
+      case Logger.PPrinted(tag, value) =>
+        assert(tag.length <= Logger.margin)
+
+        val msgStr =
+          fansi.Color.Magenta(tag.padTo(Logger.margin, ' ')) ++ " | " ++
+          pprint.apply(value, height = Int.MaxValue)
+
+        write(msgStr.toString().replace("\n", Logger.marginStr))
+
+      case Logger.Info(title, body, color) =>
         val title0 = title
-        println(s"$title0: $body")
-        lastProgressTimestamp = now
-      }
-    }
-  }
+        color match {
+          case Some(c) => println(s"${Console.RESET}$c$title0: $body${Console.RESET}")
+          case None => println(s"$title0: $body")
+        }
+        lastProgressTimestamp = System.currentTimeMillis()
 
-  case class JsonStderr(dest: os.Path) extends Logger{
-    val output = os.write.outputStream(dest, openOptions = Seq(CREATE, WRITE, TRUNCATE_EXISTING))
-    def write(s: String) = synchronized{
-      System.err.println(ujson.write(s))
-      output.write(fansi.Str(s).plainText.getBytes("UTF-8"))
-      output.write('\n')
+      case Logger.Progress(title, body) =>
+        val now = System.currentTimeMillis()
+        if (now - lastProgressTimestamp > 5000){
+          val title0 = title
+          println(s"$title0: $body")
+          lastProgressTimestamp = now
+        }
     }
-    def close() = output.close()
-    def info(title: => String, body: => String, color: => Option[String]): Unit = ???
-    def progress(title: => String, body: => String): Unit = ???
-  }
 
-  case class Stderr() extends Logger{
-    def write(s: String) = System.err.println(s)
-    def close() = ()
-    def info(title: => String, body: => String, color: => Option[String]): Unit = ???
-    def progress(title: => String, body: => String): Unit = ???
+  }
+}
+
+class AgentLogger(val dest: Int => os.Path, val rotationSize: Long)
+                 (implicit ac: ActorContext) extends SimpleActor[Logger.PPrinted] with BaseLogger{
+
+  def truncate = true
+  def apply(tag: String, x: Any = Logger.NoOp): Unit = this.send(Logger.PPrinted(tag, x))
+
+  def logOut(s: String) = {
+    System.err.println(ujson.write(s))
+  }
+  def run(msg: Logger.PPrinted): Unit = {
+    assert(msg.tag.length <= Logger.margin)
+
+    val msgStr =
+      fansi.Color.Magenta(msg.tag.padTo(Logger.margin, ' ')) ++ " | " ++
+        pprint.apply(msg.value, height = Int.MaxValue)
+
+    write(msgStr.toString().replace("\n", Logger.marginStr))
   }
 }

@@ -7,6 +7,8 @@ import devbox.DevboxTests.{instantiateSyncer, prepareFolders}
 import devbox.common._
 import devbox.common.Cli.{Arg, showArg}
 
+import scala.concurrent.ExecutionContext
+
 object DevboxTestMain {
   case class Config(label: String = "manual",
                     stride: Int = 1,
@@ -86,10 +88,15 @@ object DevboxTestMain {
           val commits = remaining.map(_.toInt)
 
           if (config.label == "manual"){
+            implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
-            val logger = new Logger.File(log)
+            val logger = new SyncLogger.Impl(
+              n => os.pwd / "out" / "scratch" / config.label / s"log-$n.txt",
+              5 * 1024 * 1024,
+              truncate = true
+            )
             val skip = Skipper.fromString(config.ignoreStrategy)
-            val (syncer, ac) = instantiateSyncer(
+            val syncer = instantiateSyncer(
               src, dest,
               skip,
               config.debounceMillis,

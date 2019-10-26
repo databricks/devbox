@@ -72,6 +72,8 @@ object DevboxMain {
 
           implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
           val (prep, connect) = remaining.splitAt(remaining.indexOf("--"))
+          val s"$logFileName.$logFileExt" = config.logFile.get.last
+          val logFileBase = config.logFile.get / os.up
           Util.autoclose(new Syncer(
             new ReliableAgent(prep, connect.drop(1) /* drop the -- */, os.pwd),
             for(s <- config.repo)
@@ -81,7 +83,11 @@ object DevboxMain {
             },
             skipper,
             config.debounceMillis,
-            Logger.File(config.logFile.get),
+            new SyncLogger.Impl(
+              n => logFileBase / s"$logFileName-$n.$logFileExt",
+              0 * 1024 * 1024,
+              truncate = true
+            ),
             if (config.readOnlyRemote == null) (_, sig) => sig
             else {
               val (regexStr, negate) =

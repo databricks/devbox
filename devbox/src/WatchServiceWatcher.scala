@@ -5,17 +5,16 @@ import java.io.IOException
 import java.nio.file.ClosedWatchServiceException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.nio.file.StandardWatchEventKinds.{ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY, OVERFLOW}
-import java.util.concurrent.TimeUnit
 
 import com.sun.nio.file.SensitivityWatchEventModifier
-import devbox.common.Logger
+import devbox.common.{Logger, SyncLogger}
 
 import scala.collection.mutable
 import collection.JavaConverters._
 
 class WatchServiceWatcher(roots: Seq[os.Path],
                           onEvent: Set[os.Path] => Unit,
-                          logger: Logger) extends Watcher{
+                          logger: SyncLogger) extends Watcher{
 
   val nioWatchService = FileSystems.getDefault.newWatchService()
   val currentlyWatchedPaths = mutable.Map.empty[os.Path, WatchKey]
@@ -29,9 +28,9 @@ class WatchServiceWatcher(roots: Seq[os.Path],
   recursiveWatches()
 
   def watchSinglePath(p: os.Path) = {
-    logger("watchSinglePath", p)
-    if (os.isDir(p, followLinks = false)) {
-      logger("watchSinglePath", "dir")
+    val isDir = os.isDir(p, followLinks = false)
+    logger("WATCH", (p, isDir))
+    if (isDir) {
       currentlyWatchedPaths.put(
         p,
         p.toNIO.register(
@@ -47,14 +46,13 @@ class WatchServiceWatcher(roots: Seq[os.Path],
 
   def processEvent(watchKey: WatchKey) = {
     val p = os.Path(watchKey.watchable().asInstanceOf[java.nio.file.Path], os.pwd)
-    logger("ProcessWatchKey", p)
+    logger("WATCH PATH", p)
 
     val events = watchKey.pollEvents().asScala
 
-    logger("EVENT CONTEXTS", events.map(_.context()))
+    logger("WATCH CONTEXTS", events.map(_.context()))
 
-
-    logger("EVENT KINDS", events.map(_.kind()))
+    logger("WATCH KINDS", events.map(_.kind()))
 
     for(e <- events){
       bufferedEvents.add(p / e.context().toString)
@@ -78,16 +76,16 @@ class WatchServiceWatcher(roots: Seq[os.Path],
 
   def start(): Unit = {
     while (isRunning.get()) try {
-      logger("Watched", currentlyWatchedPaths)
+      logger("WATCH CURRENT", currentlyWatchedPaths)
       val watchKey0 = nioWatchService.take()
       if (watchKey0 != null){
-        logger("watchKey0", watchKey0.watchable())
+        logger("WATCH KEY0", watchKey0.watchable())
         processEvent(watchKey0)
         while({
           nioWatchService.poll() match{
             case null => false
             case watchKey =>
-              logger("watchKey", watchKey.watchable())
+              logger("WATCH KEY", watchKey.watchable())
               processEvent(watchKey)
               true
           }
@@ -98,7 +96,7 @@ class WatchServiceWatcher(roots: Seq[os.Path],
 
         // cleanup stale watches
         for(p <- currentlyWatchedPaths.keySet if !os.isDir(p, followLinks = false)){
-          logger("cancel", p)
+          logger("WATCH CANCEL", p)
           currentlyWatchedPaths.remove(p).foreach(_.cancel())
         }
       }
@@ -123,7 +121,6 @@ class WatchServiceWatcher(roots: Seq[os.Path],
   }
 
   private def triggerListener(): Unit = {
-    logger("bufferedEvents", bufferedEvents)
     onEvent(bufferedEvents.toSet)
     bufferedEvents.clear()
   }

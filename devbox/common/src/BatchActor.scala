@@ -1,5 +1,4 @@
-package devbox
-
+package devbox.common
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext
 

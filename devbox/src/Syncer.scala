@@ -13,7 +13,7 @@ class Syncer(agent: AgentApi,
              mapping: Seq[(os.Path, os.RelPath)],
              skipper: Skipper,
              debounceMillis: Int,
-             logger: Logger,
+             logger: SyncLogger,
              signatureTransformer: (os.RelPath, Signature) => Signature)
             (implicit ac: ActorContext) extends AutoCloseable{
 
@@ -36,19 +36,16 @@ class Syncer(agent: AgentApi,
   val syncer: SyncActor = new SyncActor(
     agentReadWriter,
     mapping,
-    new Logger {
-      def write(s: String) = logger.write(s)
-
-      def info(title: => String, body: => String, color: => Option[String]) = {
+    new SyncLogger{
+      def apply(tag: String, x: Any = Logger.NoOp): Unit = logger.apply(tag, x)
+      def info(title: String, body: String, color: Option[String]) = {
         statusActor.send(StatusActor.Syncing(s"$title:\n$body"))
         logger.info(title, body, color)
       }
-
-      def progress(title: => String, body: => String) = {
+      def progress(title: String, body: String) = {
         statusActor.send(StatusActor.Syncing(s"$title:\n$body"))
         logger.progress(title, body)
       }
-      def close() = logger.close()
     },
     signatureTransformer,
     skipper,
@@ -65,7 +62,8 @@ class Syncer(agent: AgentApi,
   val debouncer = new DebounceActor(
     paths => syncer.send(SyncActor.Events(paths)),
     statusActor,
-    debounceMillis
+    debounceMillis,
+    logger
   )
 
   val statusActor = new StatusActor(agentReadWriter)

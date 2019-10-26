@@ -1,10 +1,10 @@
 package devbox
 import com.sun.jna.{NativeLong, Pointer}
-import devbox.common.Logger
+import devbox.common.{Logger, SyncLogger}
 
 class FSEventsWatcher(srcs: Seq[os.Path],
                       onEvent: Set[os.Path] => Unit,
-                      logger: Logger,
+                      logger: SyncLogger,
                       latency: Double) extends Watcher{
   private[this] var closed = false
   val callback = new FSEventStreamCallback{
@@ -16,7 +16,7 @@ class FSEventsWatcher(srcs: Seq[os.Path],
                eventIds: Pointer) = {
       val length = numEvents.intValue
       val p = eventPaths.getStringArray(0, length)
-      logger("SYNC FSEVENT", p)
+      logger("FSEVENT", p)
       onEvent(p.map(os.Path(_)).toSet)
     }
   }
@@ -54,15 +54,15 @@ class FSEventsWatcher(srcs: Seq[os.Path],
     )
     CarbonApi.INSTANCE.FSEventStreamStart(streamRef)
     current = CarbonApi.INSTANCE.CFRunLoopGetCurrent()
-    logger("SYNC FSLOOP RUN")
+    logger("FSLOOP RUN")
     CarbonApi.INSTANCE.CFRunLoopRun()
-    logger("SYNC FSLOOP END")
+    logger("FSLOOP END")
   }
 
   def close() = {
     assert(!closed)
     closed = true
-    logger("SYNC FSLOOP STOP")
+    logger("FSLOOP STOP")
     CarbonApi.INSTANCE.CFRunLoopStop(current)
     CarbonApi.INSTANCE.FSEventStreamStop(streamRef)
     CarbonApi.INSTANCE.FSEventStreamUnscheduleFromRunLoop(
@@ -72,6 +72,6 @@ class FSEventsWatcher(srcs: Seq[os.Path],
     )
     CarbonApi.INSTANCE.FSEventStreamInvalidate(streamRef)
     CarbonApi.INSTANCE.FSEventStreamRelease(streamRef)
-    logger("SYNC FSLOOP STOP2")
+    logger("FSLOOP STOP2")
   }
 }

@@ -5,7 +5,7 @@ import java.nio.file.{Files, LinkOption}
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.{Action, Bytes, Logger, Rpc, RpcException, Signature, Skipper, Util, Vfs}
+import devbox.common.{Action, Bytes, Logger, Rpc, RpcException, Signature, Skipper, SyncLogger, Util, Vfs}
 import os.Path
 
 import scala.collection.mutable
@@ -27,7 +27,7 @@ object SyncFiles {
                   signatureTransformer: (os.RelPath, Signature) => Signature,
                   changedPaths: Set[os.Path],
                   vfsArr: Seq[Vfs[Signature]],
-                  logger: Logger,
+                  logger: SyncLogger,
                   send: Msg => Unit
                  )(implicit ec: ExecutionContext) = {
 
@@ -85,7 +85,7 @@ object SyncFiles {
     */
   case object NoOp extends ExitCode
 
-  def synchronizeRepo(logger: Logger,
+  def synchronizeRepo(logger: SyncLogger,
                       vfs: Vfs[Signature],
                       src: os.Path,
                       dest: os.RelPath,
@@ -139,7 +139,7 @@ object SyncFiles {
     }
   }
 
-  def streamAllFileContents(logger: Logger,
+  def streamAllFileContents(logger: SyncLogger,
                             stateVfs: Vfs[Signature],
                             send: Msg => Unit,
                             src: Path,
@@ -189,7 +189,7 @@ object SyncFiles {
                    signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
                    src: os.Path,
                    dest: os.RelPath,
-                   logger: Logger): Unit = {
+                   logger: SyncLogger): Unit = {
 
     logger.apply("SYNC META", signatureMapping)
     def client(rpc: Rpc with Action, logged: String) = {
@@ -241,7 +241,7 @@ object SyncFiles {
   def computeSignatures(eventPaths: Set[Path],
                         stateVfs: Vfs[Signature],
                         src: os.Path,
-                        logger: Logger,
+                        logger: SyncLogger,
                         signatureTransformer: (os.RelPath, Signature) => Signature)
                        (implicit ec: ExecutionContext)
   : Seq[(os.Path, Option[Signature], Option[Signature])] = {

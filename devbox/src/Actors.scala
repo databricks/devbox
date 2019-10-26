@@ -7,10 +7,11 @@ import java.time.ZoneId
 import java.time.format.{DateTimeFormatter, FormatStyle}
 import java.util.concurrent.ScheduledExecutorService
 
+import devbox.common.SyncLogger
 import devbox.common.{Bytes, Logger, Response, Rpc, RpcClient, Signature, Skipper, Util, Vfs}
 
 import scala.collection.mutable
-
+import devbox.common.{ActorContext, BatchActor, StateMachineActor}
 
 object AgentReadWriteActor{
   sealed trait Msg
@@ -23,7 +24,7 @@ object AgentReadWriteActor{
 class AgentReadWriteActor(agent: AgentApi,
                           syncer: => SyncActor,
                           statusActor: => StatusActor,
-                          logger: Logger)
+                          logger: SyncLogger)
                          (implicit ac: ActorContext)
   extends StateMachineActor[AgentReadWriteActor.Msg](){
 
@@ -151,7 +152,12 @@ class AgentReadWriteActor(agent: AgentApi,
           case None | Some(null)=> false
           case Some(str) =>
             try {
-              logger.write(ujson.read(str).str)
+              logger.apply(
+                "AGENT OUT",
+                new Object {
+                  override def toString: String = ujson.read(str).str
+                }
+              )
               true
             } catch {
               case e: ujson.ParseException =>
@@ -224,7 +230,7 @@ object SyncActor{
 }
 class SyncActor(agentReadWriter: => AgentReadWriteActor,
                 mapping: Seq[(os.Path, os.RelPath)],
-                logger: Logger,
+                logger: SyncLogger,
                 signatureTransformer: (os.RelPath, Signature) => Signature,
                 skipper: Skipper,
                 scheduledExecutorService: ScheduledExecutorService,
@@ -346,7 +352,8 @@ object DebounceActor{
 
 class DebounceActor(handle: Set[os.Path] => Unit,
                     statusActor: => StatusActor,
-                    debounceMillis: Int)
+                    debounceMillis: Int,
+                    logger: SyncLogger)
                    (implicit ac: ActorContext)
   extends StateMachineActor[DebounceActor.Msg]{
 
@@ -390,7 +397,7 @@ class DebounceActor(handle: Set[os.Path] => Unit,
     val suffix =
       if (paths.size == 1) ""
       else s"\nand ${paths.size - 1} other files"
-
+    logger("Debounce " + verb, paths)
     statusActor.send(StatusActor.Syncing(s"$verb changes to\n${paths.head.relativeTo(os.pwd)}$suffix"))
   }
 }

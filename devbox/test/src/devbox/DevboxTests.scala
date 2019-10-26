@@ -68,16 +68,26 @@ object DevboxTests extends TestSuite{
     val (src, dest, log, commits, skipper, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
 
-    val logger = Logger.File(log)
+    val s"$logFileName.$logFileExt" = log.last
+    val logFileBase = log / os.up
 
-    def createSyncer() = instantiateSyncer(
-      src, dest, skipper, 50,
-      logger, ignoreStrategy,
-      exitOnError = true,
-      signatureMapping = (_, sig) => sig,
-      randomKill = randomKill
-    )
-    var (syncer, ac) = createSyncer()
+    def createSyncer() = {
+      implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
+      val logger = new SyncLogger.Impl(
+        n => logFileBase / s"$logFileName-$n.$logFileExt",
+        5 * 1024 * 1024,
+        truncate = false
+      )
+
+      (logger, ac, instantiateSyncer(
+        src, dest, skipper, 50,
+        logger, ignoreStrategy,
+        exitOnError = true,
+        signatureMapping = (_, sig) => sig,
+        randomKill = randomKill
+      ))
+    }
+    var (logger, ac, syncer) = createSyncer()
     try {
       printBanner(initialCommit, commits.length, 0, commitsIndicesToCheck.length, commits(initialCommit))
       syncer.start()
@@ -93,7 +103,8 @@ object DevboxTests extends TestSuite{
 
         if (syncer == null) {
           logger("TEST RESTART SYNCER")
-          val (newSyncer, newAc) = createSyncer()
+          val (newLogger, newAc, newSyncer) = createSyncer()
+          logger = newLogger
           syncer = newSyncer
           ac = newAc
           syncer.start()
@@ -187,13 +198,14 @@ object DevboxTests extends TestSuite{
                         dest: os.Path,
                         skipper: Skipper,
                         debounceMillis: Int,
-                        logger: Logger,
+                        logger: SyncLogger,
                         ignoreStrategy: String,
                         exitOnError: Boolean,
                         signatureMapping: (os.RelPath, Signature) => Signature,
                         healthCheckInterval: Int = 0,
-                        randomKill: Option[Int] = None) = {
-    implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
+                        randomKill: Option[Int] = None)
+                       (implicit ac: ActorContext) = {
+
     val syncer = new Syncer(
       new ReliableAgent(
         Nil,
@@ -215,7 +227,7 @@ object DevboxTests extends TestSuite{
       logger,
       signatureMapping
     )
-    (syncer, ac)
+    syncer
   }
 
   def validate(src: os.Path, dest: os.Path, skipper: Skipper) = {
