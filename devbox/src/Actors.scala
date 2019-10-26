@@ -68,8 +68,12 @@ class AgentReadWriteActor(agent: AgentApi,
 
     case AgentReadWriteActor.AttemptReconnect() =>
       val startError = try {
-        statusActor.send(StatusActor.Syncing(s"Restarting agent\nAttempt #$retryCount"))
-        agent.start()
+        statusActor.send(StatusActor.Syncing(s"Restarting Devbox agent\nAttempt #$retryCount"))
+        agent.start(s =>
+          statusActor.send(StatusActor.Syncing(
+            s"Restarting Devbox agent\nAttempt #$retryCount\n$s"
+          ))
+        )
         None
       } catch{case e: os.SubprocessException =>
         Some(restart(buffer, retryCount + 1))

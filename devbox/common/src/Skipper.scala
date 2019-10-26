@@ -21,8 +21,6 @@ object Skipper{
   }
 
   object GitIgnore extends Skipper {
-    type NodeType = Option[com.google.re2j.Pattern]
-
     def prepare(base: os.Path) = {
       val ignored =
         os.proc("git", "status", "--short", "--ignored")

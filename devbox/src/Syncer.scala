@@ -73,7 +73,9 @@ class Syncer(agent: AgentApi,
   var running = false
   def start() = {
     running = true
-    agent.start()
+    agent.start(s =>
+      statusActor.send(StatusActor.Syncing(s"Initializing Devbox\n$s"))
+    )
     agentReadWriter.spawnReaderThread()
 
     watcherThread.start()
