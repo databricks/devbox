@@ -1,4 +1,5 @@
 package devbox
+import java.awt.event.{MouseEvent, MouseListener}
 import java.util.concurrent._
 
 import devbox.common._
@@ -66,12 +67,36 @@ class Syncer(agent: AgentApi,
     logger
   )
 
-  val statusActor = new StatusActor(agentReadWriter)
+  val statusActor = new StatusActor(
+    imageName => icon.setImage(images(imageName)),
+    tooltip => icon.setToolTip(tooltip),
+  )
 
   val watcherThread = new Thread(() => watcher.start())
 
   var running = false
+  val images = Seq("blue-sync", "green-tick", "red-cross", "grey-dash")
+    .map{name => (name, java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png")))}
+    .toMap
+  val icon = new java.awt.TrayIcon(images("blue-sync"))
+
+  icon.setToolTip("Devbox Initializing")
+
+  val tray = java.awt.SystemTray.getSystemTray()
+
+
+  icon.addMouseListener(new MouseListener {
+    def mouseClicked(e: MouseEvent): Unit = {
+      agentReadWriter.send(AgentReadWriteActor.ForceRestart())
+    }
+
+    def mousePressed(e: MouseEvent): Unit = ()
+    def mouseReleased(e: MouseEvent): Unit = ()
+    def mouseEntered(e: MouseEvent): Unit = ()
+    def mouseExited(e: MouseEvent): Unit = ()
+  })
   def start() = {
+    tray.add(icon)
     running = true
     agent.start(s =>
       statusActor.send(StatusActor.Syncing(s"Initializing Devbox\n$s"))
@@ -84,8 +109,8 @@ class Syncer(agent: AgentApi,
   }
 
   def close() = {
+    tray.remove(icon)
     running = false
-    statusActor.send(StatusActor.Close())
     watcher.close()
     agentReadWriter.send(AgentReadWriteActor.Close())
   }

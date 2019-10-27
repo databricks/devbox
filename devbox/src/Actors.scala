@@ -437,70 +437,75 @@ object StatusActor{
   case class Done() extends Msg
   case class Error(msg: String) extends Msg
   case class Greyed(msg: String) extends Msg
-  case class Close() extends Msg
+  case class Debounce() extends Msg
 }
-class StatusActor(agentReadWriteActor: => AgentReadWriteActor)
-                 (implicit ac: ActorContext) extends BatchActor[StatusActor.Msg]{
-  val Seq(blueSync, greenTick, redCross, greyDash) =
-    for(name <- Seq("blue-sync", "green-tick", "red-cross", "grey-dash"))
-    yield java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png"))
-
-  val icon = new java.awt.TrayIcon(blueSync)
-  icon.setToolTip("Devbox Initializing")
-  val tray = java.awt.SystemTray.getSystemTray()
-  tray.add(icon)
-
-  icon.addMouseListener(new MouseListener {
-    def mouseClicked(e: MouseEvent): Unit = {
-      agentReadWriteActor.send(AgentReadWriteActor.ForceRestart())
-    }
-
-    def mousePressed(e: MouseEvent): Unit = ()
-    def mouseReleased(e: MouseEvent): Unit = ()
-    def mouseEntered(e: MouseEvent): Unit = ()
-    def mouseExited(e: MouseEvent): Unit = ()
-  })
+class StatusActor(setImage: String => Unit,
+                  setTooltip: String => Unit)
+                 (implicit ac: ActorContext) extends StateMachineActor[StatusActor.Msg]{
 
   val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
     .withZone(ZoneId.systemDefault())
-  var image = blueSync
-  var tooltip = ""
-  var syncedFiles = 0
-  var syncedBytes = 0L
-  def runBatch(msgs: Seq[StatusActor.Msg]) = {
-    val lastImage = image
-    val lastTooltip = tooltip
-    msgs.foreach{
-      case StatusActor.Syncing(msg) =>
-        image = blueSync
-        tooltip = msg
 
-      case StatusActor.Greyed(msg) =>
-        image = greyDash
-        tooltip = msg
+  def initialState = StatusState(IconState("blue-tick", "Devbox initializing"), None, 0, 0)
+  case class IconState(image: String, tooltip: String)
 
-      case StatusActor.FilesAndBytes(nFiles, nBytes) =>
-        syncedFiles += nFiles
-        syncedBytes += nBytes
+  case class StatusState(icon: IconState,
+                         debouncedNextIcon: Option[IconState],
+                         syncFiles: Int,
+                         syncBytes: Long) extends State({
+    case StatusActor.Syncing(msg) =>
+      debounce(icon, debouncedNextIcon.isDefined, IconState("blue-sync", msg), syncFiles, syncBytes)
 
-      case StatusActor.Done() =>
-        image = greenTick
-        tooltip =
-          s"Syncing Complete\n" +
-          s"$syncedFiles files $syncedBytes bytes\n" +
-          s"${formatter.format(java.time.Instant.now())}"
+    case StatusActor.FilesAndBytes(nFiles, nBytes) =>
+      StatusState(icon, debouncedNextIcon, syncFiles + nFiles, syncBytes + nBytes)
 
-        syncedFiles = 0
-        syncedBytes = 0
-      case StatusActor.Error(msg) =>
-        image = redCross
-        tooltip = msg
+    case StatusActor.Done() =>
+      debounce(
+        icon,
+        debouncedNextIcon.isDefined,
+        IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)),
+        syncFiles = 0,
+        syncBytes = 0
+      )
 
-      case StatusActor.Close() => tray.remove(icon)
+    case StatusActor.Error(msg) =>
+      debounce(icon, debouncedNextIcon.isDefined, IconState("red-cross", msg), syncFiles, syncBytes)
+
+    case StatusActor.Greyed(msg) =>
+      debounce(icon, debouncedNextIcon.isDefined, IconState("grey-dash", msg), syncFiles, syncBytes)
+
+    case StatusActor.Debounce() =>
+      setIcon(icon, debouncedNextIcon.get)
+      StatusState(debouncedNextIcon.get, None, syncFiles, syncBytes)
+  })
+
+  def syncCompleteMsg(syncFiles: Int, syncBytes: Long) = {
+    s"Syncing Complete\n" +
+    s"$syncFiles files $syncBytes bytes\n" +
+    s"${formatter.format(java.time.Instant.now())}"
+  }
+
+  def debounce(icon: IconState,
+               debouncing: Boolean,
+               nextIcon: IconState,
+               syncFiles: Int,
+               syncBytes: Long): State = {
+    if (debouncing) StatusState(icon, Some(nextIcon), syncFiles, syncBytes)
+    else{
+      setIcon(icon, nextIcon)
+      if (icon == nextIcon) StatusState(icon, None, syncFiles, syncBytes)
+      else {
+        scala.concurrent.Future{
+          Thread.sleep(100)
+          this.send(StatusActor.Debounce())
+        }
+        StatusState(nextIcon, Some(nextIcon), syncFiles, syncBytes)
+      }
     }
+  }
 
-    if (lastImage != image) icon.setImage(image)
-    if (lastTooltip != tooltip) icon.setToolTip(tooltip)
-    Thread.sleep(100)
+  def setIcon(icon: IconState, nextIcon: IconState) = {
+    if (icon.image != nextIcon.image) setImage(nextIcon.image)
+    if (icon.tooltip != nextIcon.tooltip) setTooltip(nextIcon.tooltip)
   }
 }
