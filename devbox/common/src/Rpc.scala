@@ -1,11 +1,11 @@
 package devbox.common
 import upickle.default.{ReadWriter, macroRW}
-import Util.{permsetRw, relpathRw}
+import Util.{permsetRw, relpathRw, subpathRw}
 sealed trait Rpc
 sealed trait Action
 
 object Action{
-  case class WriteChunk(path: os.RelPath, blockIndex: Int, hash: Bytes) extends Action
+  case class WriteChunk(path: os.SubPath, blockIndex: Int, hash: Bytes) extends Action
 }
 
 object Rpc{
@@ -14,25 +14,25 @@ object Rpc{
 
 
 
-  case class PutFile(root: os.RelPath, path: os.RelPath, perms: os.PermSet) extends Rpc with Action
+  case class PutFile(root: os.RelPath, path: os.SubPath, perms: os.PermSet) extends Rpc with Action
   object PutFile{ implicit val rw: ReadWriter[PutFile] = macroRW }
 
-  case class Remove(root: os.RelPath, path: os.RelPath) extends Rpc with Action
+  case class Remove(root: os.RelPath, path: os.SubPath) extends Rpc with Action
   object Remove{ implicit val rw: ReadWriter[Remove] = macroRW }
 
-  case class PutDir(root: os.RelPath, path: os.RelPath, perms: os.PermSet) extends Rpc with Action
+  case class PutDir(root: os.RelPath, path: os.SubPath, perms: os.PermSet) extends Rpc with Action
   object PutDir{ implicit val rw: ReadWriter[PutDir] = macroRW }
 
-  case class PutLink(root: os.RelPath, path: os.RelPath, dest: String) extends Rpc with Action
+  case class PutLink(root: os.RelPath, path: os.SubPath, dest: String) extends Rpc with Action
   object PutLink{ implicit val rw: ReadWriter[PutLink] = macroRW }
 
-  case class WriteChunk(root: os.RelPath, path: os.RelPath, offset: Long, data: Bytes) extends Rpc
+  case class WriteChunk(root: os.RelPath, path: os.SubPath, offset: Long, data: Bytes) extends Rpc
   object WriteChunk{ implicit val rw: ReadWriter[WriteChunk] = macroRW }
 
-  case class SetSize(root: os.RelPath, path: os.RelPath, offset: Long) extends Rpc with Action
+  case class SetSize(root: os.RelPath, path: os.SubPath, offset: Long) extends Rpc with Action
   object SetSize{ implicit val rw: ReadWriter[SetSize] = macroRW }
 
-  case class SetPerms(root: os.RelPath, path: os.RelPath, perms: os.PermSet) extends Rpc with Action
+  case class SetPerms(root: os.RelPath, path: os.SubPath, perms: os.PermSet) extends Rpc with Action
   object SetPerms{ implicit val rw: ReadWriter[SetPerms] = macroRW }
 
   case class Complete() extends Rpc with Action
@@ -44,7 +44,7 @@ object Rpc{
 }
 sealed trait Response
 object Response{
-  case class Scanned(base: os.RelPath, p: os.RelPath, s: Signature, index: Int, total: Int) extends Response
+  case class Scanned(base: os.RelPath, p: os.SubPath, s: Signature, index: Int, total: Int) extends Response
   object Scanned{ implicit val rw: ReadWriter[Scanned] = macroRW }
 
   case class Ack() extends Response

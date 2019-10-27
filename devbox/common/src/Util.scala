@@ -27,6 +27,11 @@ object Util {
       _.toString(),
       os.RelPath(_)
     )
+  implicit val subpathRw: upickle.default.ReadWriter[os.SubPath] =
+    upickle.default.readwriter[String].bimap[os.SubPath](
+      _.toString(),
+      os.SubPath(_)
+    )
 
   def autoclose[T <: AutoCloseable, V](x: T)(f: T => V) = {
     try f(x)

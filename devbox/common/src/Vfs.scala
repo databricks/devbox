@@ -15,8 +15,7 @@ final class Vfs[T](val root: Vfs.Dir[T]) {
     this(Vfs.Dir[T](rootMetadata, mutable.LinkedHashMap.empty))
   }
 
-  def resolve(p: os.RelPath): Option[Vfs.Node[T]] = {
-    assert(p.ups == 0)
+  def resolve(p: os.SubPath): Option[Vfs.Node[T]] = {
     var current: Option[Vfs.Node[T]] = Some(root)
     for(segment <- p.segments) current = current match{
       case Some(Vfs.Dir(metadata, value)) => value.get(segment)
@@ -25,8 +24,7 @@ final class Vfs[T](val root: Vfs.Dir[T]) {
     current
   }
 
-  def resolveParent(p: os.RelPath): Option[(String, Vfs.Dir[T])] = {
-    assert(p.ups == 0)
+  def resolveParent(p: os.SubPath): Option[(String, Vfs.Dir[T])] = {
     if (p.segments.isEmpty) None
     else resolve(p / os.up).collect { case v: Vfs.Dir[T] => (p.segments.last, v)}
   }
@@ -43,7 +41,7 @@ object Vfs{
                     children: mutable.Map[String, Node[T]]) extends Node[T]
 
   // Update stateVfs according to the given action
-  def overwriteUpdateVfs(p: os.RelPath, sig: Signature, vfs: Vfs[Signature]) = {
+  def overwriteUpdateVfs(p: os.SubPath, sig: Signature, vfs: Vfs[Signature]) = {
     val (name, folder) = vfs.resolveParent(p).get
     folder.children(name) =
       if (!sig.isInstanceOf[Signature.Dir]) Vfs.File(sig)

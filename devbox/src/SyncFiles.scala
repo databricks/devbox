@@ -15,16 +15,16 @@ object SyncFiles {
 
   sealed trait Msg{def logged: String}
   case class RpcMsg(value: Rpc, logged: String) extends Msg
-  case class SendChunkMsg(p: os.Path,
+  case class SendChunkMsg(src: os.Path,
                           dest: os.RelPath,
-                          segments: os.RelPath,
+                          subPath: os.SubPath,
                           chunkIndex: Int,
                           logged: String) extends Msg
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
                   skipper: Skipper,
-                  signatureTransformer: (os.RelPath, Signature) => Signature,
+                  signatureTransformer: (os.SubPath, Signature) => Signature,
                   changedPaths: Set[os.Path],
                   vfsArr: Seq[Vfs[Signature]],
                   logger: SyncLogger,
@@ -40,11 +40,11 @@ object SyncFiles {
       for (((src, dest), i) <- mapping.zipWithIndex) yield {
         logger.info("Analyzing ignored files", src.toString())
         val skip = skipper.prepare(src)
-        val eventPaths = changedPaths.filter(p =>
-          p.startsWith(src) && !skip(p.relativeTo(src), true)
-        )
+        val eventPaths = changedPaths
+          .filter(p => p.startsWith(src) && !skip(p.relativeTo(src), true))
+          .map(p => p.subRelativeTo(src))
 
-        logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
+        logger("SYNC BASE", eventPaths)
 
         val exitCode =
           if (eventPaths.isEmpty) Future.successful(Left(SyncFiles.NoOp))
@@ -62,7 +62,7 @@ object SyncFiles {
             val p = new PrintWriter(x)
             value.printStackTrace(p)
             logger("SYNC FAILED", x.toString)
-            eventPaths
+            eventPaths.map(src / _)
         }
       }
     )
@@ -89,8 +89,8 @@ object SyncFiles {
                       vfs: Vfs[Signature],
                       src: os.Path,
                       dest: os.RelPath,
-                      eventPaths: Set[Path],
-                      signatureTransformer: (os.RelPath, Signature) => Signature,
+                      eventPaths: Set[os.SubPath],
+                      signatureTransformer: (os.SubPath, Signature) => Signature,
                       send: Msg => Unit)
                      (implicit ec: ExecutionContext): Future[Either[ExitCode, Unit]] = {
     logger.info("Checking for changes", s"in ${eventPaths.size} paths")
@@ -98,7 +98,7 @@ object SyncFiles {
       case scala.util.Success(signatureMapping) =>
         if (signatureMapping.isEmpty) scala.util.Success(Left(NoOp))
         else {
-          logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
+          logger("SYNC SIGNATURE", signatureMapping)
 
           val sortedSignatures = sortSignatureChanges(signatureMapping)
 
@@ -113,13 +113,13 @@ object SyncFiles {
     }
   }
 
-  def sortSignatureChanges(sigs: Seq[(os.Path, Option[Signature], Option[Signature])]) = {
+  def sortSignatureChanges(sigs: Seq[(os.SubPath, Option[Signature], Option[Signature])]) = {
     sigs.sortBy { case (p, local, remote) =>
       (
         // First, sort by how deep the path is. We want to operate on the
         // shallower paths first before the deeper paths, so folders can be
         // created before their contents is written.
-        p.segmentCount,
+        p.segments.size,
         // Next, we want to perform the deletions before any other operations.
         // If a file is renamed to a different case, we must make sure the old
         // file is deleted before the new file is written to avoid conflicts
@@ -144,21 +144,21 @@ object SyncFiles {
                             send: Msg => Unit,
                             src: Path,
                             dest: os.RelPath,
-                            signatureMapping: Seq[(Path, Option[Signature], Option[Signature])]) = {
+                            signatureMapping: Seq[(os.SubPath, Option[Signature], Option[Signature])]) = {
     val total = signatureMapping.length
-    for (((p, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
-      val segments = p.relativeTo(src)
+    for (((subPath, Some(Signature.File(_, blockHashes, size)), otherSig), n) <- signatureMapping.zipWithIndex) {
+
       val (otherHashes, otherSize) = otherSig match {
         case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
         case _ => (Nil, 0L)
       }
-      logger("SYNC CHUNKS", (segments, size, otherSize, otherSig))
+      logger("SYNC CHUNKS", (subPath, size, otherSize, otherSig))
       val chunkIndices = for {
         i <- blockHashes.indices
         if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
       } yield {
         Vfs.updateVfs(
-          Action.WriteChunk(segments, i, blockHashes(i)),
+          Action.WriteChunk(subPath, i, blockHashes(i)),
           stateVfs
         )
         i
@@ -167,26 +167,26 @@ object SyncFiles {
         val hashMsg = if (blockHashes.size > 1) s" $chunkIndex/${blockHashes.size}" else ""
         send(
           SendChunkMsg(
-            p,
+            src,
             dest,
-            segments,
+            subPath,
             chunkIndex,
-            s"Syncing file chunk [$n/$total$hashMsg]:\n$segments"
+            s"Syncing file chunk [$n/$total$hashMsg]:\n$subPath"
           )
         )
       }
 
       if (size != otherSize) {
-        val msg = Rpc.SetSize(dest, segments, size)
+        val msg = Rpc.SetSize(dest, subPath, size)
         Vfs.updateVfs(msg, stateVfs)
-        send(RpcMsg(msg, s"Syncing file chunk [$n/$total]:\n$segments"))
+        send(RpcMsg(msg, s"Syncing file chunk [$n/$total]:\n$subPath"))
       }
     }
   }
 
   def syncMetadata(vfs: Vfs[Signature],
                    send: Msg => Unit,
-                   signatureMapping: Seq[(os.Path, Option[Signature], Option[Signature])],
+                   signatureMapping: Seq[(os.SubPath, Option[Signature], Option[Signature])],
                    src: os.Path,
                    dest: os.RelPath,
                    logger: SyncLogger): Unit = {
@@ -197,56 +197,56 @@ object SyncFiles {
       Vfs.updateVfs(rpc, vfs)
     }
     val total = signatureMapping.length
-    for (((p, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
-      val segments = p.relativeTo(src)
-      val logged = s"Syncing path [$i/$total]:\n$segments"
+    for (((subPath, localSig, remoteSig), i) <- signatureMapping.zipWithIndex) {
+
+      val logged = s"Syncing path [$i/$total]:\n$subPath"
       (localSig, remoteSig) match {
         case (None, _) =>
-          client(Rpc.Remove(dest, segments), logged)
+          client(Rpc.Remove(dest, subPath), logged)
         case (Some(Signature.Dir(perms)), remote) =>
           remote match {
             case None =>
-              client(Rpc.PutDir(dest, segments, perms), logged)
+              client(Rpc.PutDir(dest, subPath, perms), logged)
             case Some(Signature.Dir(remotePerms)) =>
-              client(Rpc.SetPerms(dest, segments, perms), logged)
+              client(Rpc.SetPerms(dest, subPath, perms), logged)
             case Some(_) =>
-              client(Rpc.Remove(dest, segments), logged)
-              client(Rpc.PutDir(dest, segments, perms), logged)
+              client(Rpc.Remove(dest, subPath), logged)
+              client(Rpc.PutDir(dest, subPath, perms), logged)
           }
 
         case (Some(Signature.Symlink(target)), remote) =>
           remote match {
             case None =>
-              client(Rpc.PutLink(dest, segments, target), logged)
+              client(Rpc.PutLink(dest, subPath, target), logged)
             case Some(_) =>
-              client(Rpc.Remove(dest, segments), logged)
-              client(Rpc.PutLink(dest, segments, target), logged)
+              client(Rpc.Remove(dest, subPath), logged)
+              client(Rpc.PutLink(dest, subPath, target), logged)
           }
         case (Some(Signature.File(perms, blockHashes, size)), remote) =>
           if (remote.exists(!_.isInstanceOf[Signature.File])) {
-            client(Rpc.Remove(dest, segments), logged)
+            client(Rpc.Remove(dest, subPath), logged)
           }
 
           remote match {
             case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
-              if (perms != otherPerms) client(Rpc.SetPerms(dest, segments, perms), logged)
+              if (perms != otherPerms) client(Rpc.SetPerms(dest, subPath, perms), logged)
 
-            case _ => client(Rpc.PutFile(dest, segments, perms), logged)
+            case _ => client(Rpc.PutFile(dest, subPath, perms), logged)
           }
       }
     }
   }
 
 
-  def computeSignatures(eventPaths: Set[Path],
+  def computeSignatures(eventPaths: Set[os.SubPath],
                         stateVfs: Vfs[Signature],
                         src: os.Path,
                         logger: SyncLogger,
-                        signatureTransformer: (os.RelPath, Signature) => Signature)
+                        signatureTransformer: (os.SubPath, Signature) => Signature)
                        (implicit ec: ExecutionContext)
-  : Future[Seq[(os.Path, Option[Signature], Option[Signature])]] = {
+  : Future[Seq[(os.SubPath, Option[Signature], Option[Signature])]] = {
 
-    val eventPathsLinks = eventPaths.map(p => (p, os.isLink(p)))
+    val eventPathsLinks = eventPaths.map(p => (p, os.isLink(src / p)))
     // Existing under a differently-cased name counts as not existing.
     // The only way to reliably check for a mis-cased file on OS-X is
     // to list the parent folder and compare listed names
@@ -254,7 +254,11 @@ object SyncFiles {
       .filter(_._2)
       .map(_._1 / os.up)
       .map(dir =>
-        (dir, if (!os.isDir(dir, followLinks = false)) Set[String]() else os.list(dir).map(_.last).toSet)
+        (
+          dir,
+          if (!os.isDir(src / dir, followLinks = false)) Set[String]()
+          else os.list(src / dir).map(_.last).toSet
+        )
       )
       .toMap
 
@@ -264,13 +268,14 @@ object SyncFiles {
     val total = eventPathsLinks.size
     val futures = eventPathsLinks
       .iterator
-      .map{ case (p, isLink) =>
+      .map{ case (sub, isLink) =>
         Future {
+          val abs = src / sub
           val newSig =
-            if ((isLink && !preListed(p / os.up).contains(p.last)) ||
-               (!isLink && !os.followLink(p).contains(p))) None
+            if ((isLink && !preListed(sub / os.up).contains(sub.last)) ||
+               (!isLink && !os.followLink(abs).contains(abs))) None
             else {
-              val attrs = Files.readAttributes(p.wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
+              val attrs = Files.readAttributes((abs).wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
               val fileType =
                 if (attrs.isRegularFile) os.FileType.File
                 else if (attrs.isDirectory) os.FileType.Dir
@@ -280,17 +285,18 @@ object SyncFiles {
 
               val buffer = buffers.take()
               try Signature
-                .compute(p, buffer, fileType)
-                .map(signatureTransformer(p.relativeTo(src), _))
+                .compute(abs, buffer, fileType)
+                .map(signatureTransformer(sub, _))
               finally buffers.put(buffer)
             }
-          val oldSig = stateVfs.resolve(p.relativeTo(src)).map(_.value)
+          val oldSig = stateVfs.resolve(sub).map(_.value)
           logger.progress(
             s"Checking for changes [${count.getAndIncrement()}/$total]",
-            p.relativeTo(src).toString()
+            sub.toString()
           )
+
           if (newSig == oldSig) None
-          else Some(Tuple3(p, newSig, oldSig))
+          else Some(Tuple3(sub, newSig, oldSig))
         }
       }
 

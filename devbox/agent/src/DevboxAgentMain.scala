@@ -98,7 +98,7 @@ object DevboxAgentMain {
         case Rpc.FullScan(paths) =>
           InitialScan.initialSkippedScan(paths.map(wd / _), skipper){ (scanRoot, p, sig, i, total) =>
             client.writeMsg(
-              Response.Scanned(scanRoot.relativeTo(wd), p.relativeTo(scanRoot), sig, i, total)
+              Response.Scanned(scanRoot.relativeTo(wd), p.subRelativeTo(scanRoot), sig, i, total)
             )
           }
 

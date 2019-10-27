@@ -209,7 +209,7 @@ object DevboxTests extends TestSuite{
                         logger: SyncLogger,
                         ignoreStrategy: String,
                         exitOnError: Boolean,
-                        signatureMapping: (os.RelPath, Signature) => Signature,
+                        signatureMapping: (os.SubPath, Signature) => Signature,
                         healthCheckInterval: Int = 0,
                         randomKill: Option[Int] = None)
                        (implicit ac: ActorContext) = {

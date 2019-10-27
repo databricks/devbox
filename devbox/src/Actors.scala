@@ -135,11 +135,11 @@ class AgentReadWriteActor(agent: AgentApi,
                  retryCount: Int,
                  msg: SyncFiles.Msg) = msg match{
     case SyncFiles.RpcMsg(rpc, logged) => sendRpc(buffer, retryCount, rpc)
-    case SyncFiles.SendChunkMsg(p, dest, segments, chunkIndex, logged) =>
+    case SyncFiles.SendChunkMsg(src, dest, segments, chunkIndex, logged) =>
       val byteArr = new Array[Byte](Util.blockSize)
       val buf = ByteBuffer.wrap(byteArr)
 
-      Util.autoclose(os.read.channel(p)) { channel =>
+      Util.autoclose(os.read.channel(src / segments)) { channel =>
         buf.rewind()
         channel.position(chunkIndex * Util.blockSize)
         var n = 0
@@ -262,7 +262,7 @@ object SyncActor{
 class SyncActor(agentReadWriter: => AgentReadWriteActor,
                 mapping: Seq[(os.Path, os.RelPath)],
                 logger: SyncLogger,
-                signatureTransformer: (os.RelPath, Signature) => Signature,
+                signatureTransformer: (os.SubPath, Signature) => Signature,
                 skipper: Skipper,
                 scheduledExecutorService: ScheduledExecutorService,
                 statusActor: => StatusActor)
@@ -311,12 +311,12 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       logger.progress(s"Scanned local path [$i/$total]", path.toString())
       RemoteScanning(localPaths ++ Seq(path), remotePaths, vfsArr, scansComplete)
 
-    case SyncActor.Receive(Response.Scanned(base, p, sig, i, total)) =>
+    case SyncActor.Receive(Response.Scanned(base, subPath, sig, i, total)) =>
       vfsArr.collectFirst{case (b, vfs) if b == base =>
-        Vfs.overwriteUpdateVfs(p, sig, vfs)
+        Vfs.overwriteUpdateVfs(subPath, sig, vfs)
       }
-      logger.progress(s"Scanned remote path [$i/$total]", (base / p).toString())
-      val newRemotePaths = remotePaths ++ mapping.find(_._2 == base).map(_._1 / p)
+      logger.progress(s"Scanned remote path [$i/$total]", (base / subPath).toString())
+      val newRemotePaths = remotePaths ++ mapping.find(_._2 == base).map(_._1 / subPath)
       RemoteScanning(localPaths, newRemotePaths, vfsArr, scansComplete)
 
     case SyncActor.Receive(Response.Ack()) | SyncActor.LocalScanComplete() =>

@@ -15,7 +15,7 @@ class Syncer(agent: AgentApi,
              skipper: Skipper,
              debounceMillis: Int,
              logger: SyncLogger,
-             signatureTransformer: (os.RelPath, Signature) => Signature)
+             signatureTransformer: (os.SubPath, Signature) => Signature)
             (implicit ac: ActorContext) extends AutoCloseable{
 
   private[this] val watcher = os.watch.watch(mapping.map(_._1):_*)(
