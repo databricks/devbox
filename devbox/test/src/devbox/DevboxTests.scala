@@ -73,7 +73,8 @@ object DevboxTests extends TestSuite{
 
     def createSyncer() = {
       implicit val ac = new ActorContext.Test(
-        ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
+//        ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
+        ExecutionContext.global,
         _.printStackTrace()
       )
       val logger = new SyncLogger.Impl(
