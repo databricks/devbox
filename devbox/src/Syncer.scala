@@ -18,21 +18,10 @@ class Syncer(agent: AgentApi,
              signatureTransformer: (os.RelPath, Signature) => Signature)
             (implicit ac: ActorContext) extends AutoCloseable{
 
-  private[this] val watcher = System.getProperty("os.name") match{
-    case "Linux" =>
-      new WatchServiceWatcher(
-        mapping.map(_._1),
-        events => debouncer.send(DebounceActor.Paths(events)),
-        logger
-      )
-    case "Mac OS X" =>
-      new FSEventsWatcher(
-        mapping.map(_._1),
-        events => debouncer.send(DebounceActor.Paths(events)),
-        logger,
-        0.05
-      )
-  }
+  private[this] val watcher = os.watch.watch(mapping.map(_._1):_*)(
+    events => debouncer.send(DebounceActor.Paths(events)),
+    logger.apply(_, _)
+  )
 
   val syncer: SyncActor = new SyncActor(
     agentReadWriter,
@@ -72,8 +61,6 @@ class Syncer(agent: AgentApi,
     tooltip => icon.setToolTip(tooltip),
   )
 
-  val watcherThread = new Thread(() => watcher.start())
-
   var running = false
   val images = Seq("blue-sync", "green-tick", "red-cross", "grey-dash")
     .map{name => (name, java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png")))}
@@ -103,7 +90,6 @@ class Syncer(agent: AgentApi,
     )
     agentReadWriter.spawnReaderThread()
 
-    watcherThread.start()
     syncer.send(SyncActor.Scan())
 
   }

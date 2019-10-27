@@ -229,7 +229,7 @@ object DevboxTests extends TestSuite{
         }),
         dest
       ),
-      Seq(src -> Nil),
+      Seq(src -> os.rel),
       skipper,
       debounceMillis,
       logger,

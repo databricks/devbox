@@ -177,10 +177,11 @@ class AgentReadWriteActor(agent: AgentApi,
           case None | Some(null)=> false
           case Some(str) =>
             try {
+              val s = ujson.read(str).str
               logger.apply(
                 "AGENT OUT",
                 new Object {
-                  override def toString: String = ujson.read(str).str
+                  override def toString: String = s
                 }
               )
               true

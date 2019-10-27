@@ -2,6 +2,8 @@ package devbox
 
 import java.io._
 
+import os.SubProcess
+
 trait AgentApi {
   def isAlive(): Boolean
   def destroy(): Unit
@@ -12,7 +14,7 @@ trait AgentApi {
 }
 
 class ReliableAgent(prep: Seq[String], cmd: Seq[String], cwd: os.Path) extends AgentApi {
-  var process: java.lang.Process = _
+  var process: os.SubProcess = _
 
   override def start(logPrepOutput: String => Unit): Boolean = {
     assert(process == null)
@@ -20,37 +22,39 @@ class ReliableAgent(prep: Seq[String], cmd: Seq[String], cwd: os.Path) extends A
     val prepPassed =
       if (prep == Nil) true
       else {
-        val prepProcess = new java.lang.ProcessBuilder()
-          .command(prep:_*)
-          .directory(cwd.toIO)
-          .redirectErrorStream(true)
-          .start()
+        val prepResult = os.proc(prep)
+          .call(
+            cwd = cwd,
+            stderr = os.Pipe,
+            mergeErrIntoOut = true,
+            stdout = new os.ProcessOutput {
+              def redirectTo = ProcessBuilder.Redirect.PIPE
 
-        val reader = new BufferedReader(new InputStreamReader(prepProcess.getInputStream))
+              def processOutput(out: => SubProcess.OutputStream): Option[Runnable] = Some{ () =>
+                val reader = new BufferedReader(new InputStreamReader(out))
 
-        while({
-          scala.util.Try(reader.readLine())match{
-            case scala.util.Failure(_) | scala.util.Success(null) => false
-            case scala.util.Success(str) =>
-              println(str)
-              logPrepOutput(str)
-              true
-          }
-        })()
+                while({
+                  scala.util.Try(reader.readLine())match{
+                    case scala.util.Failure(_) | scala.util.Success(null) => false
+                    case scala.util.Success(str) =>
+                      println(str)
+                      logPrepOutput(str)
+                      true
+                  }
+                })()
+              }
+            }
+          )
 
-        prepProcess.waitFor()
-        prepProcess.exitValue() == 0
+        prepResult.exitCode == 0
       }
-    if (prepPassed){
-      process = new java.lang.ProcessBuilder().command(cmd:_*).directory(cwd.toIO).start()
-      stderr = new DataInputStream(process.getErrorStream)
-      stdout = new DataInputStream(process.getInputStream)
-      stdin = new DataOutputStream(process.getOutputStream)
-    }
+    if (prepPassed) process = os.proc(cmd).spawn(stderr = os.Pipe, cwd = cwd)
 
     prepPassed
   }
-
+  def stderr = process.stderr
+  def stdout = process.stdout
+  def stdin = process.stdin
   override def isAlive(): Boolean = process.isAlive
   override def destroy(): Unit = {
     assert(process != null)
@@ -59,9 +63,6 @@ class ReliableAgent(prep: Seq[String], cmd: Seq[String], cwd: os.Path) extends A
     process.waitFor()
     process = null
   }
-  var stderr: InputStream with DataInput = _
-  var stdout: InputStream with DataInput = _
-  var stdin: OutputStream with DataOutput = _
 }
 
 object AgentApi{
