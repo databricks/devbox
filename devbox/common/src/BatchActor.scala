@@ -1,4 +1,6 @@
 package devbox.common
+import java.util.concurrent.{Executors, ThreadFactory, TimeUnit}
+
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext
 
@@ -8,8 +10,12 @@ trait ActorContext extends ExecutionContext {
 
   def reportSchedule(): Unit
   def reportSchedule(a: Actor[_], msg: Any): Unit
+
   def reportComplete(): Unit
   def reportComplete(a: Actor[_], msg: Any): Unit
+
+  def scheduleMsg[T](a: Actor[T], msg: T, time: java.time.Duration): Unit
+
   def execute(runnable: Runnable): Unit = {
     reportSchedule()
     executionContext.execute(new Runnable {
@@ -20,21 +26,52 @@ trait ActorContext extends ExecutionContext {
     })
   }
 }
+
 object ActorContext{
-  class Simple(ec: ExecutionContext, logEx: Throwable => Unit) extends ActorContext{
+  trait Scheduler extends ActorContext {
+    lazy val scheduler = Executors.newSingleThreadScheduledExecutor(
+      new ThreadFactory {
+        def newThread(r: Runnable): Thread = {
+          val t = new Thread(r, "ActorContext-Scheduler-Thread")
+          t.setDaemon(true)
+          t
+        }
+      }
+    )
+
+    def scheduleMsg[T](a: Actor[T], msg: T, delay: java.time.Duration) = {
+      reportSchedule(a, msg)
+      scheduler.schedule[Unit](
+        () => {
+          a.send(msg)
+          reportComplete(a, msg)
+        },
+        delay.toMillis,
+        TimeUnit.MILLISECONDS
+      )
+    }
+  }
+
+  class Simple(ec: ExecutionContext, logEx: Throwable => Unit)
+  extends ActorContext.Scheduler {
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
+
     def reportSchedule() = ()
     def reportSchedule(a: Actor[_], msg: Any) = ()
+
     def reportComplete() = ()
     def reportComplete(a: Actor[_], msg: Any) = ()
   }
-  class Test(ec: ExecutionContext, logEx: Throwable => Unit) extends ActorContext{
+  class Test(ec: ExecutionContext, logEx: Throwable => Unit)
+  extends ActorContext.Scheduler {
     val active = new java.util.concurrent.atomic.AtomicLong(0)
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
+
     def reportSchedule() = active.incrementAndGet()
     def reportSchedule(a: Actor[_], msg: Any) = active.incrementAndGet()
+
     def reportComplete() = active.decrementAndGet()
     def reportComplete(a: Actor[_], msg: Any) = active.decrementAndGet()
   }

@@ -3,7 +3,7 @@ package devbox
 import java.awt.event.{ActionEvent, ActionListener, MouseEvent, MouseListener}
 import java.io.{PrintWriter, StringWriter}
 import java.nio.ByteBuffer
-import java.time.ZoneId
+import java.time.{Duration, ZoneId}
 import java.time.format.{DateTimeFormatter, FormatStyle}
 import java.util.concurrent.ScheduledExecutorService
 
@@ -228,10 +228,11 @@ class AgentReadWriteActor(agent: AgentApi,
       statusActor.send(StatusActor.Error(
         s"Unable to connect to devbox, trying again after $seconds seconds"
       ))
-      scala.concurrent.Future{
-        Thread.sleep(1000 * seconds)
-        this.send(AgentReadWriteActor.AttemptReconnect())
-      }
+      ac.scheduleMsg(
+        this,
+        AgentReadWriteActor.AttemptReconnect(),
+        Duration.ofSeconds(seconds)
+      )
 
       RestartSleeping(buffer, retryCount + 1)
     } else {
@@ -395,10 +396,11 @@ class DebounceActor(handle: Set[os.Path] => Unit,
       else {
         logChanges(paths, "Detected")
         val count = paths.size
-        scala.concurrent.Future {
-          Thread.sleep(debounceMillis)
-          this.send(DebounceActor.Trigger(count))
-        }
+        ac.scheduleMsg(
+          this,
+          DebounceActor.Trigger(count),
+          Duration.ofMillis(debounceMillis)
+        )
         Debouncing(paths)
       }
     case DebounceActor.Trigger(count) => Idle()
@@ -409,10 +411,12 @@ class DebounceActor(handle: Set[os.Path] => Unit,
       logChanges(morePaths, "Ongoing")
       val allPaths = paths ++ morePaths
       val count = allPaths.size
-      scala.concurrent.Future {
-        Thread.sleep(debounceMillis)
-        this.send(DebounceActor.Trigger(count))
-      }
+
+      ac.scheduleMsg(
+        this,
+        DebounceActor.Trigger(count),
+        Duration.ofMillis(debounceMillis)
+      )
       Debouncing(allPaths)
     case DebounceActor.Trigger(count) =>
       if (count != paths.size) Debouncing(paths)
@@ -496,10 +500,12 @@ class StatusActor(setImage: String => Unit,
       setIcon(icon, nextIcon)
       if (icon == nextIcon) StatusState(icon, None, syncFiles, syncBytes)
       else {
-        scala.concurrent.Future{
-          Thread.sleep(100)
-          this.send(StatusActor.Debounce())
-        }
+        ac.scheduleMsg(
+          this,
+          StatusActor.Debounce(),
+          Duration.ofMillis(100)
+        )
+
         StatusState(nextIcon, Some(nextIcon), syncFiles, syncBytes)
       }
     }
