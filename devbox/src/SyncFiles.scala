@@ -275,17 +275,10 @@ object SyncFiles {
             if ((isLink && !preListed(sub / os.up).contains(sub.last)) ||
                (!isLink && !os.followLink(abs).contains(abs))) None
             else {
-              val attrs = Files.readAttributes((abs).wrapped, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
-              val fileType =
-                if (attrs.isRegularFile) os.FileType.File
-                else if (attrs.isDirectory) os.FileType.Dir
-                else if (attrs.isSymbolicLink) os.FileType.SymLink
-                else if (attrs.isOther) os.FileType.Other
-                else ???
-
+              val attrs = os.stat(abs, followLinks = false)
               val buffer = buffers.take()
               try Signature
-                .compute(abs, buffer, fileType)
+                .compute(abs, buffer, attrs.fileType)
                 .map(signatureTransformer(sub, _))
               finally buffers.put(buffer)
             }
