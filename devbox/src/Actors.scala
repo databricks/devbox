@@ -192,6 +192,7 @@ class AgentReadWriteActor(agent: AgentApi,
         }
       })()
     }, "DevboxAgentLoggerThread").start()
+
     new Thread(() => {
       while(try{
         val response = client.readMsg[Response]()

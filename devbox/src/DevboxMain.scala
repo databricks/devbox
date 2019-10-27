@@ -85,7 +85,7 @@ object DevboxMain {
             config.debounceMillis,
             new SyncLogger.Impl(
               n => logFileBase / s"$logFileName-$n.$logFileExt",
-              0 * 1024 * 1024,
+              50 * 1024 * 1024,
               truncate = true
             ),
             if (config.readOnlyRemote == null) (_, sig) => sig

@@ -16,7 +16,6 @@ trait BaseLogger extends AutoCloseable{
 
     if (output == null || size > rotationSize) {
       n += 1
-      size = 0
       if (output != null) output.close()
       output = os.write.outputStream(
         dest(n),
