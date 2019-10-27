@@ -1,6 +1,6 @@
 package devbox
 import java.io.{DataInputStream, DataOutputStream, PipedInputStream, PipedOutputStream}
-import java.util.concurrent.Semaphore
+import java.util.concurrent.{Executors, Semaphore}
 
 import devbox.common._
 import org.eclipse.jgit.api.Git
@@ -72,7 +72,10 @@ object DevboxTests extends TestSuite{
     val logFileBase = log / os.up
 
     def createSyncer() = {
-      implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
+      implicit val ac = new ActorContext.Test(
+        ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
+        _.printStackTrace()
+      )
       val logger = new SyncLogger.Impl(
         n => logFileBase / s"$logFileName-$n.$logFileExt",
         5 * 1024 * 1024,
@@ -99,6 +102,11 @@ object DevboxTests extends TestSuite{
         logger("TEST CHECKOUT", commit.getShortMessage)
         repo.checkout().setName(commit.getName).call()
 
+        // Make sure we wait a moment so the filesystem has time to notice the
+        // changes and put the events back into our ActorSystem. Otherwise if we
+        // waitForInactivity too early, we may stop waiting too early as the
+        // system is inactive since the filesystem events haven't occurred yet
+        Thread.sleep(100)
         logger("TEST CHECKOUT DONE", commit.getShortMessage)
 
         if (syncer == null) {
@@ -111,13 +119,13 @@ object DevboxTests extends TestSuite{
         }
 
 
-        while({Thread.sleep(100); ac.active.get() != 0}) ()
+        ac.waitForInactivity()
 
         if (restartSyncerEvery.exists(count % _ == 0)) {
           logger("TEST STOP SYNCER")
           syncer.close()
           syncer = null
-          while({Thread.sleep(100); ac.active.get() != 0}) ()
+          ac.waitForInactivity()
         }
 
         // Allow validation not-every-commit, because validation is really slow
@@ -135,7 +143,7 @@ object DevboxTests extends TestSuite{
       if (syncer != null) {
         syncer.close()
         syncer = null
-        while({Thread.sleep(100); ac.active.get() != 0}) ()
+        ac.waitForInactivity()
       }
     }
   }

@@ -9,7 +9,7 @@ import devbox.common.{Action, Bytes, Logger, Rpc, RpcException, Signature, Skipp
 import os.Path
 
 import scala.collection.mutable
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{ExecutionContext, Future}
 
 object SyncFiles {
 
@@ -36,38 +36,38 @@ object SyncFiles {
     // differences such as trailing slashes
     logger("SYNC EVENTS", changedPaths)
 
-    val failed = mutable.Set.empty[os.Path]
-    for (((src, dest), i) <- mapping.zipWithIndex) {
-      logger.info("Analyzing ignored files", src.toString())
-      val skip = skipper.prepare(src)
-      val eventPaths = changedPaths.filter(p =>
-        p.startsWith(src) && !skip(p.relativeTo(src), true)
-      )
-
-      logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
-
-      val exitCode =
-        if (eventPaths.isEmpty) Left(SyncFiles.NoOp)
-        else SyncFiles.synchronizeRepo(
-          logger, vfsArr(i), src, dest,
-          eventPaths, signatureTransformer,
-          send
+    val failed = Future.sequence(
+      for (((src, dest), i) <- mapping.zipWithIndex) yield {
+        logger.info("Analyzing ignored files", src.toString())
+        val skip = skipper.prepare(src)
+        val eventPaths = changedPaths.filter(p =>
+          p.startsWith(src) && !skip(p.relativeTo(src), true)
         )
 
-      exitCode match {
-        case Right(_) =>
-        case Left(SyncFiles.NoOp) => // do nothing
-        case Left(SyncFiles.SyncFail(value)) =>
-          val x = new StringWriter()
-          val p = new PrintWriter(x)
-          value.printStackTrace(p)
-          logger("SYNC FAILED", x.toString)
-          failed.addAll(eventPaths)
+        logger("SYNC BASE", eventPaths.map(_.relativeTo(src).toString()))
+
+        val exitCode =
+          if (eventPaths.isEmpty) Future.successful(Left(SyncFiles.NoOp))
+          else SyncFiles.synchronizeRepo(
+            logger, vfsArr(i), src, dest,
+            eventPaths, signatureTransformer,
+            send
+          )
+
+        exitCode.map{
+          case Right(_) => Set()
+          case Left(SyncFiles.NoOp) => Set()
+          case Left(SyncFiles.SyncFail(value)) =>
+            val x = new StringWriter()
+            val p = new PrintWriter(x)
+            value.printStackTrace(p)
+            logger("SYNC FAILED", x.toString)
+            eventPaths
+        }
       }
-    }
+    )
 
-
-    failed
+    failed.map(_.flatten)
   }
 
   /**
@@ -78,7 +78,7 @@ object SyncFiles {
   /**
     * Something failed with an exception, and we want to re-try the sync
     */
-  case class SyncFail(value: Exception) extends ExitCode
+  case class SyncFail(value: Throwable) extends ExitCode
 
   /**
     * There was nothing to do so we stopped.
@@ -92,24 +92,24 @@ object SyncFiles {
                       eventPaths: Set[Path],
                       signatureTransformer: (os.RelPath, Signature) => Signature,
                       send: Msg => Unit)
-                     (implicit ec: ExecutionContext): Either[ExitCode, Unit] = {
+                     (implicit ec: ExecutionContext): Future[Either[ExitCode, Unit]] = {
     logger.info("Checking for changes", s"in ${eventPaths.size} paths")
-    for{
-      signatureMapping <- restartOnFailure(
-        computeSignatures(eventPaths, vfs, src, logger, signatureTransformer)
-      )
+    computeSignatures(eventPaths, vfs, src, logger, signatureTransformer).transform{
+      case scala.util.Success(signatureMapping) =>
+        if (signatureMapping.isEmpty) scala.util.Success(Left(NoOp))
+        else {
+          logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
 
-      _ <- if (signatureMapping.nonEmpty) Right(()) else Left(NoOp)
+          val sortedSignatures = sortSignatureChanges(signatureMapping)
 
-    } yield {
-      logger("SYNC SIGNATURE", signatureMapping.map{case (p, local, remote) => (p.relativeTo(src), local, remote)})
+          logger.info(s"${sortedSignatures.length} paths changed", s"$src")
 
-      val sortedSignatures = sortSignatureChanges(signatureMapping)
-
-      logger.info(s"${sortedSignatures.length} paths changed", s"$src")
-
-      syncMetadata(vfs, send, sortedSignatures, src, dest, logger)
-      streamAllFileContents(logger, vfs, send, src, dest, sortedSignatures)
+          syncMetadata(vfs, send, sortedSignatures, src, dest, logger)
+          streamAllFileContents(logger, vfs, send, src, dest, sortedSignatures)
+          scala.util.Success(Right(()))
+        }
+      case scala.util.Failure(ex) =>
+        scala.util.Success(Left(SyncFail(ex)))
     }
   }
 
@@ -244,7 +244,7 @@ object SyncFiles {
                         logger: SyncLogger,
                         signatureTransformer: (os.RelPath, Signature) => Signature)
                        (implicit ec: ExecutionContext)
-  : Seq[(os.Path, Option[Signature], Option[Signature])] = {
+  : Future[Seq[(os.Path, Option[Signature], Option[Signature])]] = {
 
     val eventPathsLinks = eventPaths.map(p => (p, os.isLink(p)))
     // Existing under a differently-cased name counts as not existing.
@@ -265,7 +265,7 @@ object SyncFiles {
     val futures = eventPathsLinks
       .iterator
       .map{ case (p, isLink) =>
-        scala.concurrent.Future {
+        Future {
           val newSig =
             if ((isLink && !preListed(p / os.up).contains(p.last)) ||
                (!isLink && !os.followLink(p).contains(p))) None
@@ -295,6 +295,6 @@ object SyncFiles {
       }
 
     val sequenced = scala.concurrent.Future.sequence(futures.toSeq)
-    scala.concurrent.Await.result(sequenced, scala.concurrent.duration.Duration.Inf).flatten
+    sequenced.map(_.flatten)
   }
 }

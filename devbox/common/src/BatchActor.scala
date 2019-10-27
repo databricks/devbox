@@ -1,8 +1,8 @@
 package devbox.common
-import java.util.concurrent.{Executors, ThreadFactory, TimeUnit}
+import java.util.concurrent.{CyclicBarrier, Executors, ThreadFactory, TimeUnit}
 
 import scala.collection.mutable
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{Await, ExecutionContext}
 
 trait ActorContext extends ExecutionContext {
   def executionContext: ExecutionContext
@@ -52,8 +52,7 @@ object ActorContext{
     }
   }
 
-  class Simple(ec: ExecutionContext, logEx: Throwable => Unit)
-  extends ActorContext.Scheduler {
+  class Simple(ec: ExecutionContext, logEx: Throwable => Unit) extends ActorContext.Scheduler {
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
 
@@ -63,17 +62,41 @@ object ActorContext{
     def reportComplete() = ()
     def reportComplete(a: Actor[_], msg: Any) = ()
   }
-  class Test(ec: ExecutionContext, logEx: Throwable => Unit)
-  extends ActorContext.Scheduler {
-    val active = new java.util.concurrent.atomic.AtomicLong(0)
+
+  class Test(ec: ExecutionContext, logEx: Throwable => Unit) extends ActorContext.Scheduler {
+    @volatile private[this] var active = 0L
+    @volatile private[this] var promise = concurrent.Promise.successful[Unit](())
+
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
 
-    def reportSchedule() = active.incrementAndGet()
-    def reportSchedule(a: Actor[_], msg: Any) = active.incrementAndGet()
+    def reportSchedule() = this.synchronized{
+      if (active == 0) {
+        assert(promise.isCompleted)
+        promise = concurrent.Promise[Unit]
+      }
+      active += 1
+    }
 
-    def reportComplete() = active.decrementAndGet()
-    def reportComplete(a: Actor[_], msg: Any) = active.decrementAndGet()
+    def reportSchedule(a: Actor[_], msg: Any) = reportSchedule()
+
+
+    def reportComplete() = this.synchronized{
+      active -= 1
+      if (active == 0) promise.success(())
+    }
+
+    def reportComplete(a: Actor[_], msg: Any) = reportComplete()
+
+    def waitForInactivity(timeout: Option[java.time.Duration] = None) = {
+      Await.result(
+        promise.future,
+        timeout match{
+          case None => scala.concurrent.duration.Duration.Inf
+          case Some(t) => scala.concurrent.duration.Duration.fromNanos(t.toNanos)
+        }
+      )
+    }
   }
 }
 

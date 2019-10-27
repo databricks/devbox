@@ -326,39 +326,26 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
             s"Initial Scans Complete",
             s"${localPaths.size} local paths, ${remotePaths.size} remote paths"
           )
-          val failures = SyncFiles.executeSync(
-            mapping,
-            skipper,
-            signatureTransformer,
-            localPaths ++ remotePaths,
-            vfsArr.map(_._2),
-            logger,
-            m => agentReadWriter.send(AgentReadWriteActor.Send(m))
-          )
-          if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
-          else agentReadWriter.send(
-            AgentReadWriteActor.Send(
-              SyncFiles.RpcMsg(
-                Rpc.Complete(),
-                "Sync Complete\nwaiting for confirmation from Devbox"
-              )
-            )
-          )
-          Waiting(vfsArr.map(_._2))
+          executeSync(localPaths ++ remotePaths, vfsArr.map(_._2))
       }
   })
 
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
-    case SyncActor.Events(paths) =>
-      val failures = SyncFiles.executeSync(
-        mapping,
-        skipper,
-        signatureTransformer,
-        paths,
-        vfsArr,
-        logger,
-        m => agentReadWriter.send(AgentReadWriteActor.Send(m))
-      )
+    case SyncActor.Events(paths) => executeSync(paths, vfsArr)
+    case SyncActor.Receive(Response.Ack()) => Waiting(vfsArr) // do nothing
+    case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
+  })
+
+  def executeSync(paths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]) = {
+    SyncFiles.executeSync(
+      mapping,
+      skipper,
+      signatureTransformer,
+      paths,
+      vfsArr,
+      logger,
+      m => agentReadWriter.send(AgentReadWriteActor.Send(m))
+    ).map{failures =>
       if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
       else agentReadWriter.send(
         AgentReadWriteActor.Send(
@@ -368,10 +355,9 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
           )
         )
       )
-      Waiting(vfsArr)
-    case SyncActor.Receive(Response.Ack()) => Waiting(vfsArr) // do nothing
-    case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
-  })
+    }
+    Waiting(vfsArr)
+  }
 }
 
 object DebounceActor{
