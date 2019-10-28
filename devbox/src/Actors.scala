@@ -97,7 +97,9 @@ class AgentReadWriteActor(agent: AgentApi,
         val newBuffer = buffer ++ newMsg
         val failState = newBuffer.foldLeft(Option.empty[State]){
           case (Some(end), _) => Some(end)
-          case (None, msg) => sendRpcFor(newBuffer, retryCount, msg)
+          case (None, msg) =>
+            statusActor.send(StatusActor.Syncing(msg.logged))
+            sendRpcFor(newBuffer, retryCount, msg)
         }
 
         failState.getOrElse(Active(newBuffer))
@@ -219,10 +221,7 @@ class AgentReadWriteActor(agent: AgentApi,
   def restart(buffer: Vector[SyncFiles.Msg], retryCount: Int): State = {
 
     try agent.destroy()
-    catch{case e: Throwable =>
-      e.printStackTrace()
-      /*donothing*/
-    }
+    catch{case e: Throwable => /*donothing*/}
 
     if (retryCount < 5) {
       val seconds = math.pow(2, retryCount).toInt
