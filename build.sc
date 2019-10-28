@@ -16,8 +16,8 @@ object devbox extends DevboxModule{
   object common extends DevboxModule{
     def scalaVersion = "2.13.1"
     def ivyDeps = Agg(
-      ivy"com.lihaoyi::os-lib:0.4.0",
-      ivy"com.lihaoyi::os-lib-watch:0.4.0",
+      ivy"com.lihaoyi::os-lib:0.4.2",
+      ivy"com.lihaoyi::os-lib-watch:0.4.2",
       ivy"com.lihaoyi::upickle:0.8.0",
       ivy"com.google.re2j:re2j:1.2",
       ivy"com.lihaoyi::pprint:0.5.5",

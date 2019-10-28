@@ -118,14 +118,14 @@ object DevboxAgentMain {
 
         case Rpc.PutDir(root, path, perms) =>
           val targetPath = wd / root / path
-          if (!os.exists(targetPath)) {
+          if (!os.exists(targetPath, followLinks = false)) {
             os.makeDir(targetPath, perms)
           }
           client.writeMsg(Response.Ack())
 
         case Rpc.PutLink(root, path, dest) =>
           val targetPath = wd / root / path
-          if (!os.exists(targetPath)) {
+          if (!os.exists(targetPath, followLinks = false)) {
             os.symlink(targetPath, os.FilePath(dest))
           }
           client.writeMsg(Response.Ack())

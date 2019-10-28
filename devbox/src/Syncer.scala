@@ -18,7 +18,8 @@ class Syncer(agent: AgentApi,
              signatureTransformer: (os.SubPath, Signature) => Signature)
             (implicit ac: ActorContext) extends AutoCloseable{
 
-  private[this] val watcher = os.watch.watch(mapping.map(_._1):_*)(
+  private[this] val watcher = os.watch.watch(
+    mapping.map(_._1),
     events => debouncer.send(DebounceActor.Paths(events)),
     logger.apply(_, _)
   )
@@ -57,33 +58,37 @@ class Syncer(agent: AgentApi,
   )
 
   val statusActor = new StatusActor(
-    imageName => icon.setImage(images(imageName)),
-    tooltip => icon.setToolTip(tooltip),
+//    _ => (), _ => (),
+    imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
+    tooltip => IconHandler.icon.setToolTip(tooltip),
   )
 
   var running = false
-  val images = Seq("blue-sync", "green-tick", "red-cross", "grey-dash")
-    .map{name => (name, java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png")))}
-    .toMap
-  val icon = new java.awt.TrayIcon(images("blue-sync"))
+  object IconHandler{
 
-  icon.setToolTip("Devbox Initializing")
+    val images = Seq("blue-sync", "green-tick", "red-cross", "grey-dash")
+      .map{name => (name, java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png")))}
+      .toMap
+    val icon = new java.awt.TrayIcon(images("blue-sync"))
 
-  val tray = java.awt.SystemTray.getSystemTray()
+    icon.setToolTip("Devbox Initializing")
+
+    val tray = java.awt.SystemTray.getSystemTray()
 
 
-  icon.addMouseListener(new MouseListener {
-    def mouseClicked(e: MouseEvent): Unit = {
-      agentReadWriter.send(AgentReadWriteActor.ForceRestart())
-    }
+    icon.addMouseListener(new MouseListener {
+      def mouseClicked(e: MouseEvent): Unit = {
+        agentReadWriter.send(AgentReadWriteActor.ForceRestart())
+      }
 
-    def mousePressed(e: MouseEvent): Unit = ()
-    def mouseReleased(e: MouseEvent): Unit = ()
-    def mouseEntered(e: MouseEvent): Unit = ()
-    def mouseExited(e: MouseEvent): Unit = ()
-  })
+      def mousePressed(e: MouseEvent): Unit = ()
+      def mouseReleased(e: MouseEvent): Unit = ()
+      def mouseEntered(e: MouseEvent): Unit = ()
+      def mouseExited(e: MouseEvent): Unit = ()
+    })
+  }
   def start() = {
-    tray.add(icon)
+    IconHandler.tray.add(IconHandler.icon)
     running = true
     agent.start(s =>
       statusActor.send(StatusActor.Syncing(s"Initializing Devbox\n$s"))
@@ -95,7 +100,7 @@ class Syncer(agent: AgentApi,
   }
 
   def close() = {
-    tray.remove(icon)
+    IconHandler.tray.remove(IconHandler.icon)
     running = false
     watcher.close()
     agentReadWriter.send(AgentReadWriteActor.Close())
