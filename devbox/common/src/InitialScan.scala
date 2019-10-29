@@ -7,7 +7,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object InitialScan {
   def initialSkippedScan(scanRoots: Seq[os.Path], skippers: Seq[Skipper])
-                        (f: (os.Path, os.SubPath, Signature, Int) => Unit)
+                        (f: (os.Path, os.SubPath, Signature) => Unit)
                         (implicit ec: ExecutionContext): Future[Unit] = {
     val buffers = new LinkedBlockingQueue[Array[Byte]]()
     for(i <- 0 until 6) buffers.add(new Array[Byte](Util.blockSize))
@@ -22,17 +22,16 @@ object InitialScan {
 
       Future.foldLeft(
         fileStream
-          .zipWithIndex
-          .map { case ((p, attrs), i) =>
+          .map { case (p, attrs) =>
             Future {
               val buffer = buffers.take()
-              try (scanRoot, p.subRelativeTo(scanRoot), Signature.compute(p, buffer, attrs.fileType), i)
+              try (scanRoot, p.subRelativeTo(scanRoot), Signature.compute(p, buffer, attrs.fileType))
               finally buffers.put(buffer)
             }
           }
           .toVector
       )(()) {
-        case (_, (p, s, Some(sig), i)) => f(p, s, sig, i)
+        case (_, (p, s, Some(sig))) => f(p, s, sig)
         case _ => ()
       }.map(_ => ())
     }

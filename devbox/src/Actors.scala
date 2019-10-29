@@ -145,16 +145,18 @@ class AgentReadWriteActor(agent: AgentApi,
     statusActor.send(msg match{
       case SyncFiles.Complete() => StatusActor.Syncing("Syncing Complete, waiting for confirmation")
       case SyncFiles.RemoteScan(paths) => StatusActor.Syncing("Remote scanning paths:\n" + paths.mkString("\n"))
+      case SyncFiles.StartFile(files, totalFiles) => StatusActor.FilesAndBytes(files, totalFiles, 0)
       case SyncFiles.RpcMsg(rpc) => StatusActor.SyncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
-        val chunkMsg = if (chunkCount > 1) s" $chunkIndex/$chunkCount" else ""
-        StatusActor.SyncingFile("Syncing file chunk[", s"$chunkMsg]:\n$subPath$suffix")
+        val chunkMsg = if (chunkCount > 1) s" chunk [$chunkIndex/$chunkCount]" else ""
+        StatusActor.SyncingFile("Syncing path [", s"]$chunkMsg:\n$subPath$suffix")
     })
   }
   def sendRpcFor(buffer: Vector[SyncFiles.Msg],
                  retryCount: Int,
                  msg: SyncFiles.Msg) = {
     msg match{
+      case SyncFiles.StartFile(_, _) => sendRpc(buffer, retryCount, Rpc.Complete())
       case SyncFiles.Complete() => sendRpc(buffer, retryCount, Rpc.Complete())
       case SyncFiles.RemoteScan(paths) => sendRpc(buffer, retryCount, Rpc.FullScan(paths))
       case SyncFiles.RpcMsg(rpc) => sendRpc(buffer, retryCount, rpc)
@@ -183,7 +185,7 @@ class AgentReadWriteActor(agent: AgentApi,
             chunkIndex * Util.blockSize,
             new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
           )
-          statusActor.send(StatusActor.FilesAndBytes(1, n))
+          statusActor.send(StatusActor.FilesAndBytes(0, 0, n))
           sendRpc(buffer, retryCount, msg)
         }
     }
@@ -274,7 +276,7 @@ object SyncActor{
   case class ScanComplete(vfsArr: Seq[Vfs[Signature]]) extends Msg
 
   case class Events(paths: Map[os.Path, Set[os.SubPath]]) extends Msg
-  case class LocalScanned(scanRoot: os.Path, sub: os.SubPath, index: Int) extends Msg
+  case class LocalScanned(scanRoot: os.Path, sub: os.SubPath) extends Msg
   case class Debounced(debounceId: Object) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
   case class Retry() extends Msg
@@ -293,6 +295,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
   def initialState = RemoteScanning(
     Map(),
     Map(),
+    0, 0,
     mapping.map(_._2 -> new Vfs[Signature](Signature.Dir(0))),
     0
   )
@@ -305,26 +308,28 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
 
   case class RemoteScanning(localPaths: Map[os.Path, Set[os.SubPath]],
                             remotePaths: Map[os.RelPath, Set[os.SubPath]],
+                            localPathCount: Int,
+                            remotePathCount: Int,
                             vfsArr: Seq[(os.RelPath, Vfs[Signature])],
                             scansComplete: Int) extends State({
-    case SyncActor.LocalScanned(base, sub, i) =>
-      logger.progress(s"Scanned local path [$i]", sub.toString())
-      RemoteScanning(joinMaps(localPaths, Map(base -> Set(sub))), remotePaths, vfsArr, scansComplete)
+    case SyncActor.LocalScanned(base, sub) =>
+      logger.progress(s"Scanning local [${localPathCount + 1}] remote [$remotePathCount]", sub.toString())
+      RemoteScanning(joinMaps(localPaths, Map(base -> Set(sub))), remotePaths, localPathCount + 1, remotePathCount, vfsArr, scansComplete)
 
     case SyncActor.Events(paths) =>
-      RemoteScanning(joinMaps(localPaths, paths), remotePaths, vfsArr, scansComplete)
+      RemoteScanning(joinMaps(localPaths, paths), remotePaths, localPathCount, remotePathCount, vfsArr, scansComplete)
 
-    case SyncActor.Receive(Response.Scanned(base, subPath, sig, i)) =>
+    case SyncActor.Receive(Response.Scanned(base, subPath, sig)) =>
       vfsArr.collectFirst{case (b, vfs) if b == base =>
         Vfs.overwriteUpdateVfs(subPath, sig, vfs)
       }
-      logger.progress(s"Scanned remote path [$i]", (base / subPath).toString())
+      logger.progress(s"Scanning local [$localPathCount] remote [${remotePathCount + 1}]", (base / subPath).toString())
       val newRemotePaths = joinMaps(remotePaths, Map(base -> Set(subPath)))
-      RemoteScanning(localPaths, newRemotePaths, vfsArr, scansComplete)
+      RemoteScanning(localPaths, newRemotePaths, localPathCount, remotePathCount + 1, vfsArr, scansComplete)
 
     case SyncActor.Receive(Response.Ack()) | SyncActor.LocalScanComplete() =>
       scansComplete match{
-        case 0 => RemoteScanning(localPaths, remotePaths, vfsArr, scansComplete + 1)
+        case 0 => RemoteScanning(localPaths, remotePaths,localPathCount, remotePathCount,  vfsArr, scansComplete + 1)
         case 1 =>
           logger.info(
             s"Initial Scans Complete",
@@ -374,7 +379,7 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
   def run(msg: SkipActor.Msg) = msg match{
     case SkipActor.Scan() =>
       common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
-        (scanRoot, sub, sig, i) => sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub, i))
+        (scanRoot, sub, sig) => sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub))
       }.foreach{ _ =>
         sendToSyncActor(SyncActor.LocalScanComplete())
       }
@@ -457,7 +462,7 @@ object StatusActor{
   sealed trait StatusMsg extends Msg
   case class Syncing(msg: String) extends StatusMsg
   case class SyncingFile(prefix: String, suffix: String) extends StatusMsg
-  case class FilesAndBytes(files: Int, bytes: Long) extends Msg
+  case class FilesAndBytes(files: Int, totalFiles: Int, bytes: Long) extends Msg
   case class Done() extends StatusMsg
   case class Error(msg: String) extends StatusMsg
   case class Greyed(msg: String) extends StatusMsg
@@ -467,12 +472,12 @@ class StatusActor(setImage: String => Unit,
                   setTooltip: String => Unit)
                  (implicit ac: ActorContext) extends StateMachineActor[StatusActor.Msg]{
 
-  val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
-    .withZone(ZoneId.systemDefault())
+
 
   def initialState = StatusState(
     IconState("blue-tick", "Devbox initializing"),
     DebounceIdle(),
+    0,
     0,
     0
   )
@@ -485,59 +490,61 @@ class StatusActor(setImage: String => Unit,
   case class StatusState(icon: IconState,
                          debouncedNext: DebounceState,
                          syncFiles: Int,
+                         totalFiles: Int,
                          syncBytes: Long) extends State({
     case StatusActor.Syncing(msg) =>
-      debounceReceive(icon, debouncedNext, StatusActor.Syncing(msg), syncFiles, syncBytes)
+      debounceReceive(icon, debouncedNext, StatusActor.Syncing(msg), syncFiles, totalFiles, syncBytes)
 
     case StatusActor.SyncingFile(prefix, suffix) =>
-      debounceReceive(icon, debouncedNext, StatusActor.SyncingFile(prefix, suffix), syncFiles, syncBytes)
+      debounceReceive(icon, debouncedNext, StatusActor.SyncingFile(prefix, suffix), syncFiles, totalFiles, syncBytes)
 
-    case StatusActor.FilesAndBytes(nFiles, nBytes) =>
-      StatusState(icon, debouncedNext, syncFiles + nFiles, syncBytes + nBytes)
+    case StatusActor.FilesAndBytes(nFiles, nTotalFiles, nBytes) =>
+      StatusState(icon, debouncedNext, syncFiles + nFiles, totalFiles + nTotalFiles, syncBytes + nBytes)
 
     case StatusActor.Done() =>
-      debounceReceive(icon, debouncedNext, StatusActor.Done() , syncFiles, syncBytes)
+      debounceReceive(icon, debouncedNext, StatusActor.Done() , syncFiles, totalFiles, syncBytes)
 
     case StatusActor.Error(msg) =>
-      debounceReceive(icon, debouncedNext, StatusActor.Error(msg), syncFiles, syncBytes)
+      debounceReceive(icon, debouncedNext, StatusActor.Error(msg), syncFiles, totalFiles, syncBytes)
 
     case StatusActor.Greyed(msg) =>
-      debounceReceive(icon, debouncedNext, StatusActor.Greyed(msg), syncFiles, syncBytes)
+      debounceReceive(icon, debouncedNext, StatusActor.Greyed(msg), syncFiles, totalFiles, syncBytes)
 
     case StatusActor.Debounce() =>
       debouncedNext match{
-        case DebounceFull(n) => statusMsgToState(icon, DebounceIdle(), n, syncFiles, syncBytes)
-        case ds => StatusState(icon, DebounceIdle(), syncFiles, syncBytes)
+        case DebounceFull(n) => statusMsgToState(icon, DebounceIdle(), n, syncFiles, totalFiles, syncBytes)
+        case ds => StatusState(icon, DebounceIdle(), syncFiles, totalFiles, syncBytes)
       }
   })
 
 
   def syncCompleteMsg(syncFiles: Int, syncBytes: Long) = {
     s"Syncing Complete\n" +
-    s"$syncFiles files $syncBytes bytes\n" +
-    s"${formatter.format(java.time.Instant.now())}"
+    s"${Util.formatInt(syncFiles)} files ${Util.readableBytesSize(syncBytes)}\n" +
+    s"${Util.timeFormatter.format(java.time.Instant.now())}"
   }
 
   def statusMsgToState(icon: IconState,
                        debounceState: DebounceState,
                        statusMsg: StatusActor.StatusMsg,
                        syncFiles: Int,
+                       totalFiles: Int,
                        syncBytes: Long): StatusState = {
     val statusState = statusMsg match {
       case StatusActor.Syncing(msg) =>
-        StatusState(IconState("blue-sync", msg), debounceState, syncFiles, syncBytes)
+        StatusState(IconState("blue-sync", msg), debounceState, syncFiles, totalFiles, syncBytes)
 
       case StatusActor.SyncingFile(prefix, suffix) =>
-        StatusState(IconState("blue-sync", s"$prefix$syncFiles$suffix"), debounceState, syncFiles, syncBytes)
+        StatusState(IconState("blue-sync", s"$prefix$syncFiles/$totalFiles$suffix"), debounceState, syncFiles, totalFiles, syncBytes)
 
       case StatusActor.Done() =>
-        StatusState(IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)), debounceState, 0, 0)
+        StatusState(IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)), debounceState, 0, 0, 0)
 
       case StatusActor.Error(msg) =>
-        StatusState(IconState("red-cross", msg), debounceState, syncFiles, syncBytes)
+        StatusState(IconState("red-cross", msg), debounceState, syncFiles, totalFiles, syncBytes)
 
       case StatusActor.Greyed(msg) =>
-        StatusState(IconState("grey-dash", msg), debounceState, syncFiles, syncBytes)
+        StatusState(IconState("grey-dash", msg), debounceState, syncFiles, totalFiles, syncBytes)
     }
 
     setIcon(icon, statusState.icon)
@@ -547,12 +554,13 @@ class StatusActor(setImage: String => Unit,
                       debouncedNext: DebounceState,
                       statusMsg: StatusActor.StatusMsg,
                       syncFiles: Int,
+                      totalFiles: Int,
                       syncBytes: Long): State = {
     if (debouncedNext == DebounceIdle()) {
       ac.scheduleMsg(this, StatusActor.Debounce(), Duration.ofMillis(100))
-      statusMsgToState(icon, DebounceCooldown(), statusMsg, syncFiles, syncBytes)
+      statusMsgToState(icon, DebounceCooldown(), statusMsg, syncFiles, totalFiles, syncBytes)
     } else {
-      StatusState(icon, DebounceFull(statusMsg), syncFiles, syncBytes)
+      StatusState(icon, DebounceFull(statusMsg), syncFiles, totalFiles, syncBytes)
     }
   }
 

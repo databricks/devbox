@@ -1,5 +1,8 @@
 package devbox.common
 
+import java.time.ZoneId
+import java.time.format.{DateTimeFormatter, FormatStyle}
+
 object Util {
   val blockSize = 4 * 1024 * 1024
 
@@ -38,4 +41,19 @@ object Util {
     finally x.close()
   }
 
+  val timeFormatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
+    .withZone(ZoneId.systemDefault())
+
+  def formatInt(number: Int) = {
+    val numberFormat = java.text.NumberFormat.getNumberInstance(java.util.Locale.US)
+    numberFormat.format(number)
+  }
+
+  val bytesFormatter = new java.text.DecimalFormat("#,##0.#")
+  def readableBytesSize(size: Long): String = {
+    if (size <= 0) return "0"
+    val units = Array[String]("B", "kB", "MB", "GB", "TB")
+    val digitGroups = (Math.log10(size) / Math.log10(1024)).toInt
+    bytesFormatter.format(size / Math.pow(1024, digitGroups)) + " " + units(digitGroups)
+  }
 }

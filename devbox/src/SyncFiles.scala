@@ -12,6 +12,7 @@ object SyncFiles {
 
   sealed trait Msg
   case class Complete() extends Msg
+  case class StartFile(files: Int, totalFiles: Int) extends Msg
   case class RemoteScan(paths: Seq[os.RelPath]) extends Msg
   case class RpcMsg(value: Rpc with PathRpc) extends Msg
   case class SendChunkMsg(src: os.Path,
@@ -146,13 +147,14 @@ object SyncFiles {
       Vfs.updateVfs(rpc, vfs)
     }
     val total = signatureMapping.length
+    send(StartFile(0, total))
     for ((subPath, localSig, remoteSig) <- signatureMapping) {
-
-      syncFileMetadata(dest, client, total, subPath, localSig, remoteSig)
+      send(StartFile(1, 0))
+      syncFileMetadata(dest, client, subPath, localSig, remoteSig)
 
       localSig match{
         case Some(Signature.File(_, blockHashes, size)) =>
-          syncFileChunks(vfs, send, src, dest, logger, total, subPath, remoteSig, blockHashes, size)
+          syncFileChunks(vfs, send, src, dest, logger, subPath, remoteSig, blockHashes, size)
         case _ =>
       }
 
@@ -165,7 +167,6 @@ object SyncFiles {
                      src: Path,
                      dest: RelPath,
                      logger: SyncLogger,
-                     total: Int,
                      subPath: SubPath,
                      remoteSig: Option[Signature],
                      blockHashes: Seq[Bytes],
@@ -198,7 +199,6 @@ object SyncFiles {
 
   def syncFileMetadata(dest: RelPath,
                        client: Rpc with Action with PathRpc => Unit,
-                       total: Int,
                        subPath: SubPath,
                        localSig: Option[Signature],
                        remoteSig: Option[Signature]): Unit = {
