@@ -239,14 +239,12 @@ object DevboxTests extends TestSuite{
     println("Validating...")
     val skipSrc = Skipper.fromString(ignoreStrategy)
     val skipDest = Skipper.fromString(ignoreStrategy)
-    val srcPaths = skipSrc.process(
-      src,
-      os.walk.attrs(src).map{case (p, attrs) => (p.subRelativeTo(src), attrs.isDir)}.toSet
-    )
-    val destPaths = skipDest.process(
-      dest,
-      os.walk.attrs(dest).map{case (p, attrs) => (p.subRelativeTo(dest), attrs.isDir)}.toSet
-    )
+    val srcRawPaths = os.walk.attrs(src).map{case (p, attrs) => (p.subRelativeTo(src), attrs.isDir)}.toSet
+    val destRawPaths = os.walk.attrs(dest).map{case (p, attrs) => (p.subRelativeTo(dest), attrs.isDir)}.toSet
+    val srcPaths = skipSrc.process(src, srcRawPaths)
+    val destPaths = skipDest.process(dest, destRawPaths)
+    pprint.log(srcRawPaths)
+    pprint.log(destRawPaths)
 
     if (srcPaths != destPaths){
       throw new Exception(
