@@ -64,6 +64,7 @@ class Syncer(agent: AgentApi,
     paths => skipActor.send(SkipActor.Paths(paths)),
     statusActor,
     debounceMillis,
+    500,
     logger
   )
 

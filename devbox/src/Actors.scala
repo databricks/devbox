@@ -5,7 +5,20 @@ import java.time.{Duration, ZoneId}
 import java.time.format.{DateTimeFormatter, FormatStyle}
 import java.util.concurrent.ScheduledExecutorService
 
-import devbox.common.{ActorContext, Bytes, Response, Rpc, RpcClient, Signature, SimpleActor, Skipper, StateMachineActor, SyncLogger, Util, Vfs}
+import devbox.common.{
+  ActorContext,
+  Bytes,
+  Response,
+  Rpc,
+  RpcClient,
+  Signature,
+  SimpleActor,
+  Skipper,
+  StateMachineActor,
+  SyncLogger,
+  Util,
+  Vfs
+}
 
 
 object AgentReadWriteActor{
@@ -383,6 +396,7 @@ object DebounceActor{
 class DebounceActor(handle: Set[os.Path] => Unit,
                     statusActor: => StatusActor,
                     debounceMillis: Int,
+                    pathsFlushCount: Int,
                     logger: SyncLogger)
                    (implicit ac: ActorContext)
   extends StateMachineActor[DebounceActor.Msg]{
@@ -392,17 +406,13 @@ class DebounceActor(handle: Set[os.Path] => Unit,
 
   case class Idle() extends State({
     case DebounceActor.Paths(paths) =>
-      if (!paths.exists(p => p.last != "index.lock")) Idle()
-      else {
-        logChanges(paths, "Detected")
-        val count = paths.size
-        ac.scheduleMsg(
-          this,
-          DebounceActor.Trigger(count),
-          Duration.ofMillis(debounceMillis)
-        )
-        Debouncing(paths)
-      }
+      logChanges(paths, "Detected")
+      ac.scheduleMsg(
+        this,
+        DebounceActor.Trigger(paths.size),
+        Duration.ofMillis(debounceMillis)
+      )
+      Debouncing(paths)
     case DebounceActor.Trigger(count) => Idle()
   })
 
@@ -410,16 +420,15 @@ class DebounceActor(handle: Set[os.Path] => Unit,
     case DebounceActor.Paths(morePaths) =>
       logChanges(morePaths, "Ongoing")
       val allPaths = paths ++ morePaths
-      val count = allPaths.size
 
       ac.scheduleMsg(
         this,
-        DebounceActor.Trigger(count),
+        DebounceActor.Trigger(allPaths.size),
         Duration.ofMillis(debounceMillis)
       )
       Debouncing(allPaths)
     case DebounceActor.Trigger(count) =>
-      if (count != paths.size) Debouncing(paths)
+      if (count != paths.size && paths.size < pathsFlushCount) Debouncing(paths)
       else{
         logChanges(paths, "Syncing")
         handle(paths)
@@ -437,11 +446,12 @@ class DebounceActor(handle: Set[os.Path] => Unit,
 
 object StatusActor{
   sealed trait Msg
-  case class Syncing(msg: String) extends Msg
+  sealed trait StatusMsg extends Msg
+  case class Syncing(msg: String) extends StatusMsg
   case class FilesAndBytes(files: Int, bytes: Long) extends Msg
-  case class Done() extends Msg
-  case class Error(msg: String) extends Msg
-  case class Greyed(msg: String) extends Msg
+  case class Done() extends StatusMsg
+  case class Error(msg: String) extends StatusMsg
+  case class Greyed(msg: String) extends StatusMsg
   case class Debounce() extends Msg
 }
 class StatusActor(setImage: String => Unit,
@@ -451,38 +461,44 @@ class StatusActor(setImage: String => Unit,
   val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
     .withZone(ZoneId.systemDefault())
 
-  def initialState = StatusState(IconState("blue-tick", "Devbox initializing"), None, 0, 0)
+  def initialState = StatusState(
+    IconState("blue-tick", "Devbox initializing"),
+    DebounceIdle(),
+    0,
+    0
+  )
   case class IconState(image: String, tooltip: String)
 
+  sealed trait DebounceState
+  case class DebounceIdle() extends DebounceState
+  case class DebounceCooldown() extends DebounceState
+  case class DebounceFull(value: StatusActor.StatusMsg) extends DebounceState
   case class StatusState(icon: IconState,
-                         debouncedNextIcon: Option[IconState],
+                         debouncedNext: DebounceState,
                          syncFiles: Int,
                          syncBytes: Long) extends State({
     case StatusActor.Syncing(msg) =>
-      debounce(icon, debouncedNextIcon.isDefined, IconState("blue-sync", msg), syncFiles, syncBytes)
+      debounceReceive(icon, debouncedNext, StatusActor.Syncing(msg), syncFiles, syncBytes)
 
     case StatusActor.FilesAndBytes(nFiles, nBytes) =>
-      StatusState(icon, debouncedNextIcon, syncFiles + nFiles, syncBytes + nBytes)
+      StatusState(icon, debouncedNext, syncFiles + nFiles, syncBytes + nBytes)
 
     case StatusActor.Done() =>
-      debounce(
-        icon,
-        debouncedNextIcon.isDefined,
-        IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)),
-        syncFiles = 0,
-        syncBytes = 0
-      )
+      debounceReceive(icon, debouncedNext, StatusActor.Done() , syncFiles, syncBytes)
 
     case StatusActor.Error(msg) =>
-      debounce(icon, debouncedNextIcon.isDefined, IconState("red-cross", msg), syncFiles, syncBytes)
+      debounceReceive(icon, debouncedNext, StatusActor.Error(msg), syncFiles, syncBytes)
 
     case StatusActor.Greyed(msg) =>
-      debounce(icon, debouncedNextIcon.isDefined, IconState("grey-dash", msg), syncFiles, syncBytes)
+      debounceReceive(icon, debouncedNext, StatusActor.Greyed(msg), syncFiles, syncBytes)
 
     case StatusActor.Debounce() =>
-      setIcon(icon, debouncedNextIcon.get)
-      StatusState(debouncedNextIcon.get, None, syncFiles, syncBytes)
+      debouncedNext match{
+        case DebounceFull(n) => statusMsgToState(icon, DebounceIdle(), n, syncFiles, syncBytes)
+        case ds => StatusState(icon, DebounceIdle(), syncFiles, syncBytes)
+      }
   })
+
 
   def syncCompleteMsg(syncFiles: Int, syncBytes: Long) = {
     s"Syncing Complete\n" +
@@ -490,24 +506,38 @@ class StatusActor(setImage: String => Unit,
     s"${formatter.format(java.time.Instant.now())}"
   }
 
-  def debounce(icon: IconState,
-               debouncing: Boolean,
-               nextIcon: IconState,
-               syncFiles: Int,
-               syncBytes: Long): State = {
-    if (debouncing) StatusState(icon, Some(nextIcon), syncFiles, syncBytes)
-    else{
-      setIcon(icon, nextIcon)
-      if (icon == nextIcon) StatusState(icon, None, syncFiles, syncBytes)
-      else {
-        ac.scheduleMsg(
-          this,
-          StatusActor.Debounce(),
-          Duration.ofMillis(100)
-        )
+  def statusMsgToState(icon: IconState,
+                       debounceState: DebounceState,
+                       statusMsg: StatusActor.StatusMsg,
+                       syncFiles: Int,
+                       syncBytes: Long): StatusState = {
+    val statusState = statusMsg match {
+      case StatusActor.Syncing(msg) =>
+        StatusState(IconState("blue-sync", msg), debounceState, syncFiles, syncBytes)
 
-        StatusState(nextIcon, Some(nextIcon), syncFiles, syncBytes)
-      }
+      case StatusActor.Done() =>
+        StatusState(IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)), debounceState, 0, 0)
+
+      case StatusActor.Error(msg) =>
+        StatusState(IconState("red-cross", msg), debounceState, syncFiles, syncBytes)
+
+      case StatusActor.Greyed(msg) =>
+        StatusState(IconState("grey-dash", msg), debounceState, syncFiles, syncBytes)
+    }
+
+    setIcon(icon, statusState.icon)
+    statusState
+  }
+  def debounceReceive(icon: IconState,
+                      debouncedNext: DebounceState,
+                      statusMsg: StatusActor.StatusMsg,
+                      syncFiles: Int,
+                      syncBytes: Long): State = {
+    if (debouncedNext == DebounceIdle()) {
+      ac.scheduleMsg(this, StatusActor.Debounce(), Duration.ofMillis(100))
+      statusMsgToState(icon, DebounceCooldown(), statusMsg, syncFiles, syncBytes)
+    } else {
+      StatusState(icon, DebounceFull(statusMsg), syncFiles, syncBytes)
     }
   }
 
