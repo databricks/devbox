@@ -1,25 +1,24 @@
 package devbox
 
 import java.io.{PrintWriter, StringWriter}
-import java.nio.file.{Files, LinkOption}
-import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.{Action, Bytes, Logger, Rpc, RpcException, Signature, Skipper, SyncLogger, Util, Vfs}
+import devbox.common.{Action, Bytes, Logger, PathRpc, Rpc, RpcException, Signature, SyncLogger, Util, Vfs}
 import os.{Path, RelPath, SubPath}
 
-import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future}
 
 object SyncFiles {
 
-  sealed trait Msg{def logged: String}
-  case class RpcMsg(value: Rpc, logged: String) extends Msg
+  sealed trait Msg
+  case class Complete() extends Msg
+  case class RemoteScan(paths: Seq[os.RelPath]) extends Msg
+  case class RpcMsg(value: Rpc with PathRpc) extends Msg
   case class SendChunkMsg(src: os.Path,
                           dest: os.RelPath,
                           subPath: os.SubPath,
                           chunkIndex: Int,
-                          logged: String) extends Msg
+                          chunkCount: Int) extends Msg
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
@@ -142,8 +141,8 @@ object SyncFiles {
                    logger: SyncLogger): Unit = {
 
     logger.apply("SYNC META", signatureMapping)
-    def client(rpc: Rpc with Action, logged: String) = {
-      send(RpcMsg(rpc, logged))
+    def client(rpc: Rpc with Action with PathRpc) = {
+      send(RpcMsg(rpc))
       Vfs.updateVfs(rpc, vfs)
     }
     val total = signatureMapping.length
@@ -187,64 +186,54 @@ object SyncFiles {
       i
     }
     for (chunkIndex <- chunkIndices) {
-      val hashMsg = if (blockHashes.size > 1) s" $chunkIndex/${blockHashes.size}" else ""
-      send(
-        SendChunkMsg(
-          src,
-          dest,
-          subPath,
-          chunkIndex,
-          s"Syncing file chunk [$total$hashMsg]:\n$subPath"
-        )
-      )
+      send(SendChunkMsg(src, dest, subPath, chunkIndex, blockHashes.size))
     }
 
     if (size != otherSize) {
       val msg = Rpc.SetSize(dest, subPath, size)
       Vfs.updateVfs(msg, vfs)
-      send(RpcMsg(msg, s"Syncing file chunk [$total]:\n$subPath"))
     }
   }
 
   def syncFileMetadata(dest: RelPath,
-                       client: (Rpc with Action, String) => Unit,
+                       client: Rpc with Action with PathRpc => Unit,
                        total: Int,
                        subPath: SubPath,
                        localSig: Option[Signature],
                        remoteSig: Option[Signature]): Unit = {
-    val logged = s"Syncing path [$total]:\n$subPath"
+
     (localSig, remoteSig) match {
       case (None, _) =>
-        client(Rpc.Remove(dest, subPath), logged)
+        client(Rpc.Remove(dest, subPath))
       case (Some(Signature.Dir(perms)), remote) =>
         remote match {
           case None =>
-            client(Rpc.PutDir(dest, subPath, perms), logged)
+            client(Rpc.PutDir(dest, subPath, perms))
           case Some(Signature.Dir(remotePerms)) =>
-            client(Rpc.SetPerms(dest, subPath, perms), logged)
+            client(Rpc.SetPerms(dest, subPath, perms))
           case Some(_) =>
-            client(Rpc.Remove(dest, subPath), logged)
-            client(Rpc.PutDir(dest, subPath, perms), logged)
+            client(Rpc.Remove(dest, subPath))
+            client(Rpc.PutDir(dest, subPath, perms))
         }
 
       case (Some(Signature.Symlink(target)), remote) =>
         remote match {
           case None =>
-            client(Rpc.PutLink(dest, subPath, target), logged)
+            client(Rpc.PutLink(dest, subPath, target))
           case Some(_) =>
-            client(Rpc.Remove(dest, subPath), logged)
-            client(Rpc.PutLink(dest, subPath, target), logged)
+            client(Rpc.Remove(dest, subPath))
+            client(Rpc.PutLink(dest, subPath, target))
         }
       case (Some(Signature.File(perms, blockHashes, size)), remote) =>
         if (remote.exists(!_.isInstanceOf[Signature.File])) {
-          client(Rpc.Remove(dest, subPath), logged)
+          client(Rpc.Remove(dest, subPath))
         }
 
         remote match {
           case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
-            if (perms != otherPerms) client(Rpc.SetPerms(dest, subPath, perms), logged)
+            if (perms != otherPerms) client(Rpc.SetPerms(dest, subPath, perms))
 
-          case _ => client(Rpc.PutFile(dest, subPath, perms), logged)
+          case _ => client(Rpc.PutFile(dest, subPath, perms))
         }
     }
   }

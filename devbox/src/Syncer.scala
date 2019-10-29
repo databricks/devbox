@@ -108,10 +108,7 @@ class Syncer(agent: AgentApi,
 
     agentReadWriter.send(
       AgentReadWriteActor.Send(
-        SyncFiles.RpcMsg(
-          Rpc.FullScan(mapping.map(_._2)),
-          "Remote Scanning " + mapping.map(_._2).mkString(", ")
-        )
+        SyncFiles.RemoteScan(mapping.map(_._2))
       )
     )
     skipActor.send(SkipActor.Scan())

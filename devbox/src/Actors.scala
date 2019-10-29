@@ -42,8 +42,9 @@ class AgentReadWriteActor(agent: AgentApi,
   case class Active(buffer: Vector[SyncFiles.Msg]) extends State({
     case AgentReadWriteActor.Send(msg) =>
       ac.reportSchedule()
-      statusActor.send(StatusActor.Syncing(msg.logged))
+
       val newBuffer = buffer :+ msg
+      logStatusMsgForRpc(msg)
       sendRpcFor(newBuffer, 0, msg).getOrElse(Active(newBuffer))
 
     case AgentReadWriteActor.ReadFailed() =>
@@ -60,10 +61,8 @@ class AgentReadWriteActor(agent: AgentApi,
         ac.reportComplete()
 
         val msg = buffer.head
-        statusActor.send(
-          if (buffer.tail.nonEmpty) StatusActor.Syncing(msg.logged + "\n" + "(Complete)")
-          else StatusActor.Done()
-        )
+        if (buffer.tail.nonEmpty) logStatusMsgForRpc(msg, "(Complete)")
+        else statusActor.send(StatusActor.Done())
         Active(buffer.tail)
       }
 
@@ -99,14 +98,14 @@ class AgentReadWriteActor(agent: AgentApi,
           if (buffer.nonEmpty) None
           else{
             ac.reportSchedule()
-            Some(SyncFiles.RpcMsg(Rpc.Complete(), "Re-connection Re-sync"))
+            Some(SyncFiles.Complete())
           }
 
         val newBuffer = buffer ++ newMsg
         val failState = newBuffer.foldLeft(Option.empty[State]){
           case (Some(end), _) => Some(end)
           case (None, msg) =>
-            statusActor.send(StatusActor.Syncing(msg.logged))
+            logStatusMsgForRpc(msg, "(Replaying)")
             sendRpcFor(newBuffer, retryCount, msg)
         }
 
@@ -141,37 +140,53 @@ class AgentReadWriteActor(agent: AgentApi,
   })
   val client = new RpcClient(agent.stdin, agent.stdout, logger.apply(_, _))
 
+  def logStatusMsgForRpc(msg: SyncFiles.Msg, suffix0: String = "") = {
+    val suffix = if (suffix0 == "") "" else "\n" + suffix0
+    statusActor.send(msg match{
+      case SyncFiles.Complete() => StatusActor.Syncing("Syncing Complete, waiting for confirmation")
+      case SyncFiles.RemoteScan(paths) => StatusActor.Syncing("Remote scanning paths:\n" + paths.mkString("\n"))
+      case SyncFiles.RpcMsg(rpc) => StatusActor.SyncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
+      case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
+        val chunkMsg = if (chunkCount > 1) s" $chunkIndex/$chunkCount" else ""
+        StatusActor.SyncingFile("Syncing file chunk[", s"$chunkMsg]:\n$subPath$suffix")
+    })
+  }
   def sendRpcFor(buffer: Vector[SyncFiles.Msg],
                  retryCount: Int,
-                 msg: SyncFiles.Msg) = msg match{
-    case SyncFiles.RpcMsg(rpc, logged) => sendRpc(buffer, retryCount, rpc)
-    case SyncFiles.SendChunkMsg(src, dest, segments, chunkIndex, logged) =>
-      val byteArr = new Array[Byte](Util.blockSize)
-      val buf = ByteBuffer.wrap(byteArr)
+                 msg: SyncFiles.Msg) = {
+    msg match{
+      case SyncFiles.Complete() => sendRpc(buffer, retryCount, Rpc.Complete())
+      case SyncFiles.RemoteScan(paths) => sendRpc(buffer, retryCount, Rpc.FullScan(paths))
+      case SyncFiles.RpcMsg(rpc) => sendRpc(buffer, retryCount, rpc)
 
-      Util.autoclose(os.read.channel(src / segments)) { channel =>
-        buf.rewind()
-        channel.position(chunkIndex * Util.blockSize)
-        var n = 0
-        while ( {
-          if (n == Util.blockSize) false
-          else channel.read(buf) match {
-            case -1 => false
-            case d =>
-              n += d
-              true
-          }
-        }) ()
+      case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
+        val byteArr = new Array[Byte](Util.blockSize)
+        val buf = ByteBuffer.wrap(byteArr)
 
-        val msg = Rpc.WriteChunk(
-          dest,
-          segments,
-          chunkIndex * Util.blockSize,
-          new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
-        )
-        statusActor.send(StatusActor.FilesAndBytes(1, n))
-        sendRpc(buffer, retryCount, msg)
-      }
+        Util.autoclose(os.read.channel(src / subPath)) { channel =>
+          buf.rewind()
+          channel.position(chunkIndex * Util.blockSize)
+          var n = 0
+          while ( {
+            if (n == Util.blockSize) false
+            else channel.read(buf) match {
+              case -1 => false
+              case d =>
+                n += d
+                true
+            }
+          }) ()
+
+          val msg = Rpc.WriteChunk(
+            dest,
+            subPath,
+            chunkIndex * Util.blockSize,
+            new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
+          )
+          statusActor.send(StatusActor.FilesAndBytes(1, n))
+          sendRpc(buffer, retryCount, msg)
+        }
+    }
   }
 
   def spawnReaderThread() = {
@@ -339,14 +354,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       m => agentReadWriter.send(AgentReadWriteActor.Send(m))
     ).map{failures =>
       if (failures.nonEmpty) this.send(SyncActor.Events(failures.reduceLeft(joinMaps(_, _))))
-      else agentReadWriter.send(
-        AgentReadWriteActor.Send(
-          SyncFiles.RpcMsg(
-            Rpc.Complete(),
-            "Sync Complete\nwaiting for confirmation from Devbox"
-          )
-        )
-      )
+      else agentReadWriter.send(AgentReadWriteActor.Send(SyncFiles.Complete()))
     }
     Waiting(vfsArr)
   }
@@ -448,6 +456,7 @@ object StatusActor{
   sealed trait Msg
   sealed trait StatusMsg extends Msg
   case class Syncing(msg: String) extends StatusMsg
+  case class SyncingFile(prefix: String, suffix: String) extends StatusMsg
   case class FilesAndBytes(files: Int, bytes: Long) extends Msg
   case class Done() extends StatusMsg
   case class Error(msg: String) extends StatusMsg
@@ -479,6 +488,9 @@ class StatusActor(setImage: String => Unit,
                          syncBytes: Long) extends State({
     case StatusActor.Syncing(msg) =>
       debounceReceive(icon, debouncedNext, StatusActor.Syncing(msg), syncFiles, syncBytes)
+
+    case StatusActor.SyncingFile(prefix, suffix) =>
+      debounceReceive(icon, debouncedNext, StatusActor.SyncingFile(prefix, suffix), syncFiles, syncBytes)
 
     case StatusActor.FilesAndBytes(nFiles, nBytes) =>
       StatusState(icon, debouncedNext, syncFiles + nFiles, syncBytes + nBytes)
@@ -514,6 +526,9 @@ class StatusActor(setImage: String => Unit,
     val statusState = statusMsg match {
       case StatusActor.Syncing(msg) =>
         StatusState(IconState("blue-sync", msg), debounceState, syncFiles, syncBytes)
+
+      case StatusActor.SyncingFile(prefix, suffix) =>
+        StatusState(IconState("blue-sync", s"$prefix$syncFiles$suffix"), debounceState, syncFiles, syncBytes)
 
       case StatusActor.Done() =>
         StatusState(IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)), debounceState, 0, 0)
