@@ -45,16 +45,18 @@ object Logger{
 
   sealed trait Msg
   case class PPrinted(tag: String, value: Any) extends Msg
-  case class Info(title: String, body: String, color: Option[String]) extends Msg
-  case class Progress(title: String, body: String) extends Msg
+  case class Info(chunks: Seq[String]) extends Msg
+  case class Progress(chunks: Seq[String]) extends Msg
   case class Close() extends Msg
 
 }
 
 trait SyncLogger{
   def apply(tag: String, x: Any = Logger.NoOp): Unit
-  def info(title: String, body: String, color: Option[String] = None): Unit
-  def progress(title: String, body: String): Unit
+  def info(chunks: String*): Unit
+  def error(chunks: String*): Unit
+  def grey(chunks: String*): Unit
+  def progress(chunks: String*): Unit
 }
 object SyncLogger{
 
@@ -66,11 +68,17 @@ object SyncLogger{
     def logOut(s: String) = {}
     def apply(tag: String, x: Any = Logger.NoOp): Unit = this.send(Logger.PPrinted(tag, x))
 
-    def info(title: String, body: String, color: Option[String] = None): Unit = {
-      this.send(Logger.Info(title, body, color))
+    def info(chunks: String*): Unit = {
+      this.send(Logger.Info(chunks))
     }
-    def progress(title: String, body: String): Unit = {
-      this.send(Logger.Progress(title, body))
+    def error(chunks: String*): Unit = {
+      this.send(Logger.Info(chunks))
+    }
+    def grey(chunks: String*): Unit = {
+      this.send(Logger.Info(chunks))
+    }
+    def progress(chunks: String*): Unit = {
+      this.send(Logger.Progress(chunks))
     }
 
     def run(msg: Logger.Msg): Unit = msg match{
@@ -83,19 +91,14 @@ object SyncLogger{
 
         write(msgStr.toString().replace("\n", Logger.marginStr))
 
-      case Logger.Info(title, body, color) =>
-        val title0 = title
-        color match {
-          case Some(c) => println(s"${Console.RESET}$c$title0: $body${Console.RESET}")
-          case None => println(s"$title0: $body")
-        }
+      case Logger.Info(chunks) =>
+        println(chunks.mkString(", "))
         lastProgressTimestamp = System.currentTimeMillis()
 
-      case Logger.Progress(title, body) =>
+      case Logger.Progress(chunks) =>
         val now = System.currentTimeMillis()
         if (now - lastProgressTimestamp > 5000){
-          val title0 = title
-          println(s"$title0: $body")
+          println(chunks.mkString(", "))
           lastProgressTimestamp = now
         }
     }

@@ -62,7 +62,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
         val msg = buffer.head
         if (buffer.tail.nonEmpty) logStatusMsgForRpc(msg, "(Complete)")
-        else statusActor.send(StatusActor.Done())
+        else if (buffer.head == SyncFiles.Complete()) statusActor.send(StatusActor.Done())
         Active(buffer.tail)
       }
 
@@ -118,10 +118,10 @@ class AgentReadWriteActor(agent: AgentApi,
   case class GivenUp(buffer: Vector[SyncFiles.Msg]) extends State({
     case AgentReadWriteActor.Send(msg) =>
       ac.reportSchedule()
-      statusActor.send(StatusActor.Greyed(
-        "Unable to connect to devbox, gave up after 5 attempts;\n" +
+      logger.grey(
+        "Unable to connect to devbox, gave up after 5 attempts;",
         "click on this logo to try again"
-      ))
+      )
       GivenUp(buffer :+ msg)
 
     case AgentReadWriteActor.ForceRestart() =>
@@ -142,16 +142,20 @@ class AgentReadWriteActor(agent: AgentApi,
     val suffix = if (suffix0 == "") "" else "\n" + suffix0
     msg match{
       case SyncFiles.Complete() =>
-        logger.info("Syncing Complete", "waiting for confirmation from Devbox")
+        logger.progress("Syncing Complete", "waiting for confirmation from Devbox")
       case SyncFiles.RemoteScan(paths) =>
         logger.info("Scanning directories", paths.mkString("\n"))
       case SyncFiles.StartFile(files, totalFiles) =>
         statusActor.send(StatusActor.FilesAndBytes(files, totalFiles, 0))
       case SyncFiles.RpcMsg(rpc) =>
-        StatusActor.SyncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
+        statusActor.send(
+          StatusActor.SyncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
+        )
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
         val chunkMsg = if (chunkCount > 1) s" chunk [$chunkIndex/$chunkCount]" else ""
-        StatusActor.SyncingFile("Syncing path [", s"]$chunkMsg:\n$subPath$suffix")
+        statusActor.send(
+          StatusActor.SyncingFile("Syncing path [", s"]$chunkMsg:\n$subPath$suffix")
+        )
     }
   }
   def sendRpcFor(buffer: Vector[SyncFiles.Msg],
@@ -252,9 +256,10 @@ class AgentReadWriteActor(agent: AgentApi,
 
     if (retryCount < 5) {
       val seconds = math.pow(2, retryCount).toInt
-      statusActor.send(StatusActor.Error(
-        s"Unable to connect to devbox, trying again after $seconds seconds"
-      ))
+      logger.error(
+        s"Unable to connect to devbox",
+        "trying again after $seconds seconds"
+      )
       ac.scheduleMsg(
         this,
         AgentReadWriteActor.AttemptReconnect(),
@@ -263,10 +268,10 @@ class AgentReadWriteActor(agent: AgentApi,
 
       RestartSleeping(buffer, retryCount + 1)
     } else {
-      statusActor.send(StatusActor.Greyed(
-        "Unable to connect to devbox, gave up after 5 attempts;\n" +
-          "click on this logo to try again"
-      ))
+      logger.grey(
+        "Unable to connect to devbox, gave up after 5 attempts;",
+        "click on this logo to try again"
+      )
 
       GivenUp(buffer)
     }
@@ -455,7 +460,7 @@ class DebounceActor(handle: Set[os.Path] => Unit,
       else s"\nand ${paths.size - 1} other files"
 
     logger("Debounce " + verb, paths)
-    logger.info(s"$verb changes to", s"${paths.head.relativeTo(os.pwd)}$suffix")
+    logger.progress(s"$verb changes to", s"${paths.head.relativeTo(os.pwd)}$suffix")
   }
 }
 
@@ -501,13 +506,13 @@ class StatusActor(setImage: String => Unit,
       case msg: StatusActor.Greyed => debounceReceive(msg)
 
       case msg: StatusActor.Done =>
-        val Array(header, body) = syncCompleteMsg(syncFiles, syncBytes).split("\n", 2)
-        logger.info(header, body)
+
+        logger.progress(syncCompleteMsg(syncFiles, syncBytes).split("\n"):_*)
         debounceReceive(msg)
 
       case msg: StatusActor.SyncingFile =>
-        val Array(header, body) = s"${msg.prefix}$syncFiles/$totalFiles${msg.suffix}".split("\n", 2)
-        logger.progress(header, body)
+
+        logger.progress(s"${msg.prefix}$syncFiles/$totalFiles${msg.suffix}".split("\n"):_*)
         debounceReceive(msg)
 
       case StatusActor.FilesAndBytes(nFiles, nTotalFiles, nBytes) =>
