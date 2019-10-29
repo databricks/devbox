@@ -246,7 +246,7 @@ object SyncActor{
   case class ScanComplete(vfsArr: Seq[Vfs[Signature]]) extends Msg
 
   case class Events(paths: Map[os.Path, Set[os.SubPath]]) extends Msg
-  case class LocalScanned(scanRoot: os.Path, sub: os.SubPath, index: Int, total: Int) extends Msg
+  case class LocalScanned(scanRoot: os.Path, sub: os.SubPath, index: Int) extends Msg
   case class Debounced(debounceId: Object) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
   case class Retry() extends Msg
@@ -279,18 +279,18 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
                             remotePaths: Map[os.RelPath, Set[os.SubPath]],
                             vfsArr: Seq[(os.RelPath, Vfs[Signature])],
                             scansComplete: Int) extends State({
-    case SyncActor.LocalScanned(base, sub, i, total) =>
-      logger.progress(s"Scanned local path [$i/$total]", sub.toString())
+    case SyncActor.LocalScanned(base, sub, i) =>
+      logger.progress(s"Scanned local path [$i]", sub.toString())
       RemoteScanning(joinMaps(localPaths, Map(base -> Set(sub))), remotePaths, vfsArr, scansComplete)
 
     case SyncActor.Events(paths) =>
       RemoteScanning(joinMaps(localPaths, paths), remotePaths, vfsArr, scansComplete)
 
-    case SyncActor.Receive(Response.Scanned(base, subPath, sig, i, total)) =>
+    case SyncActor.Receive(Response.Scanned(base, subPath, sig, i)) =>
       vfsArr.collectFirst{case (b, vfs) if b == base =>
         Vfs.overwriteUpdateVfs(subPath, sig, vfs)
       }
-      logger.progress(s"Scanned remote path [$i/$total]", (base / subPath).toString())
+      logger.progress(s"Scanned remote path [$i]", (base / subPath).toString())
       val newRemotePaths = joinMaps(remotePaths, Map(base -> Set(subPath)))
       RemoteScanning(localPaths, newRemotePaths, vfsArr, scansComplete)
 
@@ -353,13 +353,7 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
   def run(msg: SkipActor.Msg) = msg match{
     case SkipActor.Scan() =>
       common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
-        (scanRoot, sub, sig, i, total) => {
-          logger.progress(
-            s"Scanned local path [$i/$total]",
-            sub.toString()
-          )
-          sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub, i, total))
-        }
+        (scanRoot, sub, sig, i) => sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub, i))
       }.foreach{ _ =>
         sendToSyncActor(SyncActor.LocalScanComplete())
       }

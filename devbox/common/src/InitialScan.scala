@@ -7,7 +7,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object InitialScan {
   def initialSkippedScan(scanRoots: Seq[os.Path], skippers: Seq[Skipper])
-                        (f: (os.Path, os.SubPath, Signature, Int, Int) => Unit)
+                        (f: (os.Path, os.SubPath, Signature, Int) => Unit)
                         (implicit ec: ExecutionContext): Future[Unit] = {
     val buffers = new LinkedBlockingQueue[Array[Byte]]()
     for(i <- 0 until 6) buffers.add(new Array[Byte](Util.blockSize))
@@ -15,22 +15,24 @@ object InitialScan {
 
       if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
 
-      val fileStream = os.walk.attrs(
+      val fileStream = os.walk.stream.attrs(
         scanRoot,
-        (p, attrs) => {
-          skipper.process(scanRoot, Set(p.subRelativeTo(scanRoot) -> attrs.isDir)).isEmpty
-        }
+        (p, attrs) => skipper.processSingle(scanRoot, p.subRelativeTo(scanRoot), attrs.isDir)
       )
 
-      val total = fileStream.size
       Future.foldLeft(
-        for(((p, attrs), i) <- fileStream.zipWithIndex) yield Future {
-          val buffer = buffers.take()
-          try (scanRoot, p.subRelativeTo(scanRoot), Signature.compute(p, buffer, attrs.fileType), i, total)
-          finally buffers.put(buffer)
-        }
+        fileStream
+          .zipWithIndex
+          .map { case ((p, attrs), i) =>
+            Future {
+              val buffer = buffers.take()
+              try (scanRoot, p.subRelativeTo(scanRoot), Signature.compute(p, buffer, attrs.fileType), i)
+              finally buffers.put(buffer)
+            }
+          }
+          .toVector
       )(()) {
-        case (_, (p, s, Some(sig), i, t)) => f(p, s, sig, i, t)
+        case (_, (p, s, Some(sig), i)) => f(p, s, sig, i)
         case _ => ()
       }.map(_ => ())
     }

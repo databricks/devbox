@@ -104,9 +104,9 @@ object DevboxAgentMain {
 
 
           Await.result(
-            InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig, i, total) =>
+            InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig, i) =>
               client.writeMsg(
-                Response.Scanned(scanRoot.relativeTo(wd), p, sig, i, total)
+                Response.Scanned(scanRoot.relativeTo(wd), p, sig, i)
               )
             }(ExecutionContext.global),
             Duration.Inf

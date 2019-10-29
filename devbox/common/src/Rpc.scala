@@ -44,7 +44,7 @@ object Rpc{
 }
 sealed trait Response
 object Response{
-  case class Scanned(base: os.RelPath, p: os.SubPath, s: Signature, index: Int, total: Int) extends Response
+  case class Scanned(base: os.RelPath, p: os.SubPath, s: Signature, index: Int) extends Response
   object Scanned{ implicit val rw: ReadWriter[Scanned] = macroRW }
 
   case class Ack() extends Response
