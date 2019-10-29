@@ -39,7 +39,7 @@ object Skipper{
           ignorePaths.remove(p)
           ignoreCache.clear()
         } else if (isFile) {
-          val lines = os.read.lines(base / p)
+          val lines = try os.read.lines(base / p) catch{case e: Throwable => Nil }
           val linesHash = lines.hashCode
           if (!ignorePaths.get(p).exists(_._1 == linesHash)){
 
@@ -47,7 +47,7 @@ object Skipper{
 
             val n = new IgnoreNode(
               lines
-                .filter(l => l(0) != '#' && l != "/")
+                .filter(l => l != "" && l(0) != '#' && l != "/")
                 .map(new FastIgnoreRule(_))
                 .asJava
             )
