@@ -31,7 +31,7 @@ object Skipper{
       Boolean
     ]
 
-    var gitIndexCache = Option.empty[org.eclipse.jgit.dircache.DirCache]
+    var gitIndexCache = Option.empty[Set[os.SubPath]]
 
     def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
       val newIgnorePaths = paths.filter(_._1.last == ".gitignore").map(_._1)
@@ -63,14 +63,21 @@ object Skipper{
 
       paths.find(_._1 == os.sub / ".git" / "index").foreach{ case (indexFile, _) =>
         val repo = new FileRepository((base / ".git").toIO)
-        gitIndexCache = Some(org.eclipse.jgit.dircache.DirCache.read(repo))
+        gitIndexCache = Some(
+          org.eclipse.jgit.dircache.DirCache.read(repo)
+            .getEntriesWithin("")
+            .flatMap(_.getPathString.split('/').inits)
+            .map(_.toIndexedSeq)
+            .toSet
+            .map((x: IndexedSeq[String]) => os.SubPath(x))
+        )
         repo.close()
       }
 
 
       paths
         .filter{ case (p, isDir) =>
-          lazy val indexed = gitIndexCache.exists(_.findEntry(p.toString) >= 0)
+          lazy val indexed = gitIndexCache.exists(_.contains(p))
           lazy val ignoredEntries = for {
             (enclosingPartialPath, i) <- p.segments.inits.zipWithIndex
             if enclosingPartialPath.nonEmpty
