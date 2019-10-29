@@ -144,7 +144,7 @@ class AgentReadWriteActor(agent: AgentApi,
     val suffix = if (suffix0 == "") "" else "\n" + suffix0
     statusActor.send(msg match{
       case SyncFiles.Complete() => StatusActor.Syncing("Syncing Complete, waiting for confirmation")
-      case SyncFiles.RemoteScan(paths) => StatusActor.Syncing("Remote scanning paths:\n" + paths.mkString("\n"))
+      case SyncFiles.RemoteScan(paths) => StatusActor.Syncing("Scanning directories:\n" + paths.mkString("\n"))
       case SyncFiles.StartFile(files, totalFiles) => StatusActor.FilesAndBytes(files, totalFiles, 0)
       case SyncFiles.RpcMsg(rpc) => StatusActor.SyncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
