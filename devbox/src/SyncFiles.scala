@@ -192,6 +192,7 @@ object SyncFiles {
     if (size != otherSize) {
       val msg = Rpc.SetSize(dest, subPath, size)
       Vfs.updateVfs(msg, vfs)
+      send(RpcMsg(msg))
     }
   }
 

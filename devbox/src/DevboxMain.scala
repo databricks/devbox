@@ -83,7 +83,7 @@ object DevboxMain {
             config.ignoreStrategy,
             config.debounceMillis,
             new SyncLogger.Impl(
-              n => logFileBase / s"$logFileName-$n.$logFileExt",
+              n => logFileBase / s"$logFileName$n.$logFileExt",
               50 * 1024 * 1024,
               truncate = true
             ),

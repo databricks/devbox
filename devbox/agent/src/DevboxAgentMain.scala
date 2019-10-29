@@ -61,7 +61,7 @@ object DevboxAgentMain {
           ExecutionContext.Implicits.global,
           _.printStackTrace()
         )
-        val logger = new AgentLogger(n => os.home / ".devbox" / s"log-$n.txt", 5 * 1024 * 1024)
+        val logger = new AgentLogger(n => os.home / ".devbox" / s"log$n.txt", 5 * 1024 * 1024)
         logger("AGNT START", config.workingDir)
 
 

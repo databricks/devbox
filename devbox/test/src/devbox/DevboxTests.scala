@@ -73,7 +73,7 @@ object DevboxTests extends TestSuite{
         _.printStackTrace()
       )
       val logger = new SyncLogger.Impl(
-        n => logFileBase / s"$logFileName-$n.$logFileExt",
+        n => logFileBase / s"$logFileName$n.$logFileExt",
         5 * 1024 * 1024,
         truncate = false
       )
@@ -102,9 +102,9 @@ object DevboxTests extends TestSuite{
         // changes and put the events back into our ActorSystem. Otherwise if we
         // waitForInactivity too early, we may stop waiting too early as the
         // system is inactive since the filesystem events haven't occurred yet
-        Thread.sleep(100)
-        logger("TEST CHECKOUT DONE", commit.getShortMessage)
 
+        logger("TEST CHECKOUT DONE", commit.getShortMessage)
+        Thread.sleep(100)
         if (syncer == null) {
           logger("TEST RESTART SYNCER")
           val (newLogger, newAc, newSyncer) = createSyncer()

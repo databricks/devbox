@@ -15,10 +15,10 @@ trait BaseLogger extends AutoCloseable{
 
     if (output == null || size > rotationSize) {
       if (output != null) output.close()
-      os.remove.all(dest("old"))
-      os.copy(dest("current"), dest("old"))
+      os.remove.all(dest("-old"))
+      if (os.exists(dest(""))) os.copy(dest(""), dest("-old"))
       output = os.write.outputStream(
-        dest("current"),
+        dest(""),
         openOptions =
           if (truncate) Seq(CREATE, WRITE, TRUNCATE_EXISTING)
           else Seq(CREATE, WRITE, APPEND)
