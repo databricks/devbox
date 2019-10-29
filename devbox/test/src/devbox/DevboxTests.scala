@@ -65,8 +65,8 @@ object DevboxTests extends TestSuite{
                    restartSyncerEvery: Option[Int] = None,
                    randomKill: Option[Int] = None) = {
 
-    val (src, dest, log, commits, skipper, commitsIndicesToCheck, repo) =
-      initializeWalk(label, uri, stride, commitIndicesToCheck0, ignoreStrategy)
+    val (src, dest, log, commits, commitsIndicesToCheck, repo) =
+      initializeWalk(label, uri, stride, commitIndicesToCheck0)
 
     val s"$logFileName.$logFileExt" = log.last
     val logFileBase = log / os.up
@@ -84,7 +84,7 @@ object DevboxTests extends TestSuite{
       )
 
       (logger, ac, instantiateSyncer(
-        src, dest, skipper, 50,
+        src, dest, 50,
         logger, ignoreStrategy,
         exitOnError = true,
         signatureMapping = (_, sig) => sig,
@@ -134,7 +134,7 @@ object DevboxTests extends TestSuite{
         // validation anyway.
         if (count % stride == 0) {
           logger("TEST VALIDATE")
-          validate(src, dest, skipper)
+          validate(src, dest, ignoreStrategy)
         }
       }
     }catch{case e =>
@@ -152,8 +152,7 @@ object DevboxTests extends TestSuite{
   def initializeWalk(label: String,
                      uri: String,
                      stride: Int,
-                     commitIndicesToCheck0: Seq[Int],
-                     ignoreStrategy: String) = {
+                     commitIndicesToCheck0: Seq[Int]) = {
     val (src, dest, log) = prepareFolders(label)
     val repo = Git.cloneRepository()
       .setURI(uri)
@@ -177,8 +176,7 @@ object DevboxTests extends TestSuite{
         // huge edits modifying lots of different files
         (0 until 10 * stride).map(_ => random.nextInt(commits.length))
 
-    val skipper = Skipper.fromString(ignoreStrategy)
-    (src, dest, log, commits, skipper, commitsIndicesToCheck, repo)
+    (src, dest, log, commits, commitsIndicesToCheck, repo)
   }
 
   def prepareFolders(label: String, preserve: Boolean = false) = {
@@ -204,7 +202,6 @@ object DevboxTests extends TestSuite{
 
   def instantiateSyncer(src: os.Path,
                         dest: os.Path,
-                        skipper: Skipper,
                         debounceMillis: Int,
                         logger: SyncLogger,
                         ignoreStrategy: String,
@@ -230,7 +227,7 @@ object DevboxTests extends TestSuite{
         dest
       ),
       Seq(src -> os.rel),
-      skipper,
+      ignoreStrategy,
       debounceMillis,
       logger,
       signatureMapping
@@ -238,29 +235,32 @@ object DevboxTests extends TestSuite{
     syncer
   }
 
-  def validate(src: os.Path, dest: os.Path, skipper: Skipper) = {
+  def validate(src: os.Path, dest: os.Path, ignoreStrategy: String) = {
     println("Validating...")
-    val skipSrc = skipper.prepare(src)
-    val skipDest = skipper.prepare(dest)
-    val srcPaths = os.walk.attrs(src, (p, attrs) => skipSrc(p.relativeTo(src), attrs.isDir))
-    val destPaths = os.walk.attrs(dest, (p, attrs) => skipDest(p.relativeTo(dest), attrs.isDir))
+    val skipSrc = Skipper.fromString(ignoreStrategy)
+    val skipDest = Skipper.fromString(ignoreStrategy)
+    val srcPaths = skipSrc.process(
+      src,
+      os.walk.attrs(src).map{case (p, attrs) => (p.subRelativeTo(src), attrs.isDir)}.toSet
+    )
+    val destPaths = skipDest.process(
+      dest,
+      os.walk.attrs(dest).map{case (p, attrs) => (p.subRelativeTo(dest), attrs.isDir)}.toSet
+    )
 
-    val srcRelPaths = srcPaths.map(_._1.relativeTo(src)).toSet
-    val destRelPaths = destPaths.map(_._1.relativeTo(dest)).toSet
-
-    if (srcRelPaths != destRelPaths){
+    if (srcPaths != destPaths){
       throw new Exception(
-        "Path list difference, src: " + (srcRelPaths -- destRelPaths) + ", dest: " + (destRelPaths -- srcRelPaths)
+        "Path list difference, src: " + (srcPaths -- destPaths) + ", dest: " + (destPaths -- srcPaths)
       )
     }
     val buffer = new Array[Byte](Util.blockSize)
 
-    val differentSigs = srcPaths.zip(destPaths).flatMap{ case ((s, sAttrs), (d, dAttrs)) =>
-      val srcSig = Signature.compute(s, buffer, sAttrs.fileType)
-      val destSig = Signature.compute(d, buffer, dAttrs.fileType)
+    val differentSigs = srcPaths.zip(destPaths).flatMap{ case (s, d) =>
+      val srcSig = Signature.compute(src / s, buffer, os.stat(src / s).fileType)
+      val destSig = Signature.compute(dest / d, buffer, os.stat(dest / d).fileType)
 
       if(srcSig == destSig) None
-      else Some((s.relativeTo(src), srcSig, destSig))
+      else Some((s, srcSig, destSig))
     }
 
     if (differentSigs.nonEmpty){

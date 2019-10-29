@@ -12,7 +12,7 @@ import devbox.common._
   */
 class Syncer(agent: AgentApi,
              mapping: Seq[(os.Path, os.RelPath)],
-             skipper: Skipper,
+             ignoreStrategy: String = "dotgit",
              debounceMillis: Int,
              logger: SyncLogger,
              signatureTransformer: (os.SubPath, Signature) => Signature)
@@ -39,7 +39,7 @@ class Syncer(agent: AgentApi,
       }
     },
     signatureTransformer,
-    skipper,
+    ignoreStrategy,
     Executors.newSingleThreadScheduledExecutor(),
     statusActor
   )

@@ -20,10 +20,11 @@ object devbox extends DevboxModule{
       ivy"com.lihaoyi::os-lib-watch:0.4.2",
       ivy"com.lihaoyi::upickle:0.8.0",
       ivy"com.google.re2j:re2j:1.2",
-      ivy"com.lihaoyi::pprint:0.5.5",
+      ivy"com.lihaoyi::pprint:0.5.6",
       ivy"com.github.scopt::scopt:3.7.1",
       ivy"net.java.dev.jna:jna:5.0.0",
-      ivy"org.slf4j:slf4j-simple:1.7.25"
+      ivy"org.slf4j:slf4j-simple:1.7.25",
+      ivy"org.eclipse.jgit:org.eclipse.jgit:5.5.1.201910021850-r",
     )
   }
 
@@ -62,8 +63,7 @@ object devbox extends DevboxModule{
 
     def testFrameworks = Seq("devbox.UTestFramework")
     def ivyDeps = Agg(
-      ivy"com.lihaoyi::utest:0.7.1",
-      ivy"org.eclipse.jgit:org.eclipse.jgit:5.1.3.201810200350-r",
+      ivy"com.lihaoyi::utest:0.7.1"
     )
     def forkEnv = Map(
       "AGENT_EXECUTABLE" -> agent.assembly().path.toString,

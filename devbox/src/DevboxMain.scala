@@ -68,7 +68,6 @@ object DevboxMain {
           val leftMargin = signature.map(showArg(_).length).max + 2
           System.out.println(Cli.formatBlock(signature, leftMargin).mkString("\n"))
         }else {
-          val skipper = Skipper.fromString(config.ignoreStrategy)
 
           implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
           val (prep, connect) = remaining.splitAt(remaining.indexOf("--"))
@@ -81,7 +80,7 @@ object DevboxMain {
               case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
               case Array(src, dest) => (os.Path(src, os.pwd), os.rel / dest.split('/'))
             },
-            skipper,
+            config.ignoreStrategy,
             config.debounceMillis,
             new SyncLogger.Impl(
               n => logFileBase / s"$logFileName-$n.$logFileExt",

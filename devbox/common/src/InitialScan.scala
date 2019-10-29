@@ -1,17 +1,17 @@
 package devbox.common
 object InitialScan {
-
-
-  def initialSkippedScan(scanRoots: Seq[os.Path], skipper: Skipper)
+  def initialSkippedScan(scanRoots: Seq[os.Path], skippers: Seq[Skipper])
                         (f: (os.Path, os.Path, Signature, Int, Int) => Unit) = {
     val buffer = new Array[Byte](Util.blockSize)
-    for(scanRoot <- scanRoots) {
-      val skip = skipper.prepare(scanRoot)
+    for((scanRoot, skipper) <- scanRoots.zip(skippers)) {
+
       if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
 
       val fileStream = os.walk.stream.attrs(
         scanRoot,
-        (p, attrs) => skip(p.relativeTo(scanRoot), attrs.isDir) && !attrs.isDir
+        (p, attrs) => {
+          skipper.process(scanRoot, Set(p.subRelativeTo(scanRoot) -> attrs.isDir)).isEmpty
+        }
       )
 
       val total = fileStream.count()

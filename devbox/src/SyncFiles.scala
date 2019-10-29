@@ -23,9 +23,9 @@ object SyncFiles {
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
-                  skipper: Skipper,
+                  skippers: Seq[Skipper],
                   signatureTransformer: (os.SubPath, Signature) => Signature,
-                  changedPaths: Set[os.Path],
+                  changedPaths0: Set[os.Path],
                   vfsArr: Seq[Vfs[Signature]],
                   logger: SyncLogger,
                   send: Msg => Unit
@@ -34,16 +34,20 @@ object SyncFiles {
     // We need to .distinct after we convert the strings to paths, in order
     // to ensure the inputs are canonicalized and don't have meaningless
     // differences such as trailing slashes
-    logger("SYNC EVENTS", changedPaths)
+    logger("SYNC EVENTS", changedPaths0)
 
     val failed = Future.sequence(
       for (((src, dest), i) <- mapping.zipWithIndex) yield {
         logger.info("Analyzing ignored files", src.toString())
-        val skip = skipper.prepare(src)
-        val eventPaths = changedPaths
-          .filter(p => p.startsWith(src) && !skip(p.relativeTo(src), true))
+
+        val eventPaths0 = changedPaths0
+          .filter(p => p.startsWith(src))
           .map(p => p.subRelativeTo(src))
 
+        val eventPaths = skippers(i).process(
+          src,
+          eventPaths0.map(p => (p, os.isDir(src / p))).toSet
+        )
         logger("SYNC BASE", eventPaths)
 
         val exitCode =

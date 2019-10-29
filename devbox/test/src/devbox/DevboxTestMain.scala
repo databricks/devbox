@@ -95,10 +95,8 @@ object DevboxTestMain {
               5 * 1024 * 1024,
               truncate = true
             )
-            val skip = Skipper.fromString(config.ignoreStrategy)
             val syncer = instantiateSyncer(
               src, dest,
-              skip,
               config.debounceMillis,
               logger,
               config.ignoreStrategy,

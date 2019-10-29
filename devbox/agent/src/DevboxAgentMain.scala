@@ -63,27 +63,27 @@ object DevboxAgentMain {
         val logger = new AgentLogger(n => os.home / ".devbox" / s"log-$n.txt", 5 * 1024 * 1024)
         logger("AGNT START", config.workingDir)
 
-        val skipper = Skipper.fromString(config.ignoreStrategy)
+
         val client = new RpcClient(
           new DataOutputStream(System.out),
           new DataInputStream(System.in),
           (tag, t) => logger("AGNT " + tag, t))
         mainLoop(
           logger,
-          skipper,
           client,
           os.Path(config.workingDir, os.pwd),
           config.exitOnError,
-          config.randomKill
+          config.randomKill,
+          config.ignoreStrategy
         )
     }
   }
   def mainLoop(logger: AgentLogger,
-               skipper: Skipper,
                client: RpcClient,
                wd: os.Path,
                exitOnError: Boolean,
-               randomKill: Option[Int]) = {
+               randomKill: Option[Int],
+               ignoreStrategy: String) = {
 
 
     var count = 0
@@ -96,7 +96,12 @@ object DevboxAgentMain {
       count += 1
       try client.readMsg[Rpc]() match {
         case Rpc.FullScan(paths) =>
-          InitialScan.initialSkippedScan(paths.map(wd / _), skipper){ (scanRoot, p, sig, i, total) =>
+          val skippers = collection.mutable.Map.empty[os.RelPath, Skipper]
+          val newSkippers =
+            for(p <- paths)
+            yield skippers.getOrElseUpdate(p, Skipper.fromString(ignoreStrategy))
+
+          InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig, i, total) =>
             client.writeMsg(
               Response.Scanned(scanRoot.relativeTo(wd), p.subRelativeTo(scanRoot), sig, i, total)
             )

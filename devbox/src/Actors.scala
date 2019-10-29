@@ -262,7 +262,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
                 mapping: Seq[(os.Path, os.RelPath)],
                 logger: SyncLogger,
                 signatureTransformer: (os.SubPath, Signature) => Signature,
-                skipper: Skipper,
+                ignoreStrategy: String,
                 scheduledExecutorService: ScheduledExecutorService,
                 statusActor: => StatusActor)
                (implicit ac: ActorContext)
@@ -270,6 +270,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
 
   def initialState = Initializing(Set())
 
+  val skippers = mapping.map(_ => Skipper.fromString(ignoreStrategy))
   case class Initializing(changedPaths: Set[os.Path]) extends State({
     case SyncActor.Events(paths) => Initializing(changedPaths ++ paths)
     case SyncActor.Scan() =>
@@ -283,8 +284,8 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       )
       scala.concurrent.Future{
         try{
-          common.InitialScan.initialSkippedScan(mapping.map(_._1), skipper){ (scanRoot, p, sig, i, total) =>
-            this.send(SyncActor.LocalScanned(p, i, total))
+          common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
+            (scanRoot, p, sig, i, total) => this.send(SyncActor.LocalScanned(p, i, total))
           }
           this.send(SyncActor.LocalScanComplete())
         }catch{case e: Throwable =>
@@ -339,7 +340,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
   def executeSync(paths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]) = {
     SyncFiles.executeSync(
       mapping,
-      skipper,
+      skippers,
       signatureTransformer,
       paths,
       vfsArr,
