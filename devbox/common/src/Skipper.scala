@@ -1,7 +1,6 @@
 package devbox.common
 
-import devbox.common
-import org.eclipse.jgit.ignore.IgnoreNode
+import org.eclipse.jgit.ignore.{FastIgnoreRule, IgnoreNode}
 
 
 trait Skipper {
@@ -24,42 +23,63 @@ object Skipper{
   }
 
   class GitIgnore() extends Skipper {
-    val ignoreTree = new Vfs[Option[IgnoreNode]](None)
+    val ignorePaths = collection.mutable.Map.empty[os.SubPath, (Int, IgnoreNode)]
+
+    val ignoreCache = collection.mutable.Map.empty[
+      (IndexedSeq[String], Int, Boolean),
+      Boolean
+    ]
 
     def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
-      val gitIgnorePaths = paths.filter(_._1.last == ".gitignore")
-      for((gitIgnore, _) <- gitIgnorePaths){
-        var current = ignoreTree.root
-        for(segment <- gitIgnore.segments.dropRight(1)){
-          current = current.children.get(segment) match {
-            case Some(d: Vfs.Dir[Option[IgnoreNode]]) => d
-            case _=> new common.Vfs.Dir[Option[IgnoreNode]](None, collection.mutable.Map())
+      val newIgnorePaths = paths.filter(_._1.last == ".gitignore").map(_._1)
+
+      for(p <- ignorePaths.keySet | newIgnorePaths){
+        val isFile = os.isFile(base / p, followLinks = false)
+        if (!isFile && ignorePaths.contains(p)) {
+          ignorePaths.remove(p)
+          ignoreCache.clear()
+        } else if (isFile) {
+          val lines = os.read.lines(base / p)
+          val linesHash = lines.hashCode
+          if (!ignorePaths.get(p).exists(_._1 == linesHash)){
+
+            import collection.JavaConverters._
+
+            val n = new IgnoreNode(
+              lines
+                .filter(l => l(0) != '#' && l != "/")
+                .map(new FastIgnoreRule(_))
+                .asJava
+            )
+
+            ignorePaths(p) = (linesHash, n)
+            ignoreCache.clear()
           }
         }
-        current.value =
-          if (!os.exists(base / gitIgnore)) None
-          else {
-            val n = new IgnoreNode()
-            n.parse(os.read.inputStream(base / gitIgnore))
-            Some(n)
-          }
       }
 
       paths
         .filter{ case (p, isDir) =>
-          var current = ignoreTree.root
-          var done = false
-          var ignored = false
-          for((segment, i) <- p.segments.dropRight(1).zipWithIndex if !done){
-            if (current.value.exists(_.checkIgnored(p.segments.drop(i).mkString("/"), isDir))){
-              ignored = true
-            }
-            current.children.get(segment) match {
-              case Some(d: Vfs.Dir[Option[IgnoreNode]]) => current = d
-              case _=> done = true
-            }
+          val ignored = for {
+            (enclosingPartialPath, i) <- p.segments.inits.zipWithIndex
+            if enclosingPartialPath.nonEmpty
+            gitIgnoreRoot <- enclosingPartialPath.inits.drop(1)
+            (linesHash, ignoreNode) <- ignorePaths.get(os.sub / gitIgnoreRoot / ".gitignore")
+          } yield {
+            ignoreCache.getOrElseUpdate(
+              (enclosingPartialPath, gitIgnoreRoot.length, isDir),
+              ignoreNode.isIgnored(
+                enclosingPartialPath.drop(gitIgnoreRoot.length).mkString("/"),
+                if (i == 0) isDir else true
+              )  match{
+                case IgnoreNode.MatchResult.IGNORED => true
+                case IgnoreNode.MatchResult.NOT_IGNORED => false
+                case _ => false
+              }
+            )
+
           }
-          !ignored
+          !ignored.exists(identity)
         }
         .map(_._1)
     }

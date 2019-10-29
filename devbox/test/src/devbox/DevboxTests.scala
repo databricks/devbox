@@ -48,11 +48,6 @@ object DevboxTests extends TestSuite{
       * - walkValidate("mill", cases("mill"), 4, 0)
       'restart - walkValidate("mill-restart", cases("mill"), 4, 0, restartSyncerEvery = Some(64))
     }
-    'ammonite - {
-//      * - walkValidate("ammonite", cases("ammonite"), 5, 200, 0)
-//      'reconnect - walkValidate("ammonite-reconnect", cases("ammonite"), 1, 500, 0, randomKillConnection = true)
-//      'restart - walkValidate("ammonite-restart", cases("ammonite"), 5, 200, 0, restartSyncer = true)
-    }
   }
 
 
@@ -137,7 +132,7 @@ object DevboxTests extends TestSuite{
           validate(src, dest, ignoreStrategy)
         }
       }
-    }catch{case e =>
+    }catch{case e: Throwable =>
       e.printStackTrace()
       throw e
     }finally{
@@ -195,9 +190,16 @@ object DevboxTests extends TestSuite{
     (src, dest, log)
   }
 
-  def printBanner(commitIndex: Int, commitCount: Int, trialIndex: Int, trialCount: Int, commit: RevCommit) = {
+  def printBanner(commitIndex: Int,
+                  commitCount: Int,
+                  trialIndex: Int,
+                  trialCount: Int,
+                  commit: RevCommit) = {
     println("=" * 80)
-    println(s"[$commitIndex/$commitCount $trialIndex/$trialCount] Checking ${commit.getName.take(8)} ${commit.getShortMessage}")
+    println(
+      s"[$commitIndex/$commitCount $trialIndex/$trialCount] "+
+      "Checking ${commit.getName.take(8)} ${commit.getShortMessage}"
+    )
   }
 
   def instantiateSyncer(src: os.Path,
@@ -235,16 +237,26 @@ object DevboxTests extends TestSuite{
     syncer
   }
 
+  def walkNonSkipped(base: os.Path, ignoreStrategy: String) = {
+    val skip = Skipper.fromString(ignoreStrategy)
+    val rawPaths = os
+      .walk
+      .attrs(base)
+      .map{case (p, attrs) => (p.subRelativeTo(base), attrs.isDir)}
+      .toSet
+
+    skip.process(base, rawPaths)
+  }
+
+  def computeSig(p: os.Path, buffer: Array[Byte]) = {
+    Signature.compute(p, buffer, os.stat(p, followLinks = false).fileType)
+  }
   def validate(src: os.Path, dest: os.Path, ignoreStrategy: String) = {
     println("Validating...")
-    val skipSrc = Skipper.fromString(ignoreStrategy)
-    val skipDest = Skipper.fromString(ignoreStrategy)
-    val srcRawPaths = os.walk.attrs(src).map{case (p, attrs) => (p.subRelativeTo(src), attrs.isDir)}.toSet
-    val destRawPaths = os.walk.attrs(dest).map{case (p, attrs) => (p.subRelativeTo(dest), attrs.isDir)}.toSet
-    val srcPaths = skipSrc.process(src, srcRawPaths)
-    val destPaths = skipDest.process(dest, destRawPaths)
-    pprint.log(srcRawPaths)
-    pprint.log(destRawPaths)
+
+
+    val srcPaths = walkNonSkipped(src, ignoreStrategy)
+    val destPaths = walkNonSkipped(dest, ignoreStrategy)
 
     if (srcPaths != destPaths){
       throw new Exception(
@@ -253,9 +265,9 @@ object DevboxTests extends TestSuite{
     }
     val buffer = new Array[Byte](Util.blockSize)
 
-    val differentSigs = srcPaths.zip(destPaths).flatMap{ case (s, d) =>
-      val srcSig = Signature.compute(src / s, buffer, os.stat(src / s).fileType)
-      val destSig = Signature.compute(dest / d, buffer, os.stat(dest / d).fileType)
+    val differentSigs = srcPaths.toSeq.sorted.zip(destPaths.toSeq.sorted).flatMap{ case (s, d) =>
+      val srcSig = computeSig(src / s, buffer)
+      val destSig = computeSig(dest / d, buffer)
 
       if(srcSig == destSig) None
       else Some((s, srcSig, destSig))
