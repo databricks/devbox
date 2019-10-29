@@ -1,6 +1,7 @@
 package devbox.common
 
 import org.eclipse.jgit.ignore.{FastIgnoreRule, IgnoreNode}
+import org.eclipse.jgit.internal.storage.file.FileRepository
 
 
 trait Skipper {
@@ -30,6 +31,8 @@ object Skipper{
       Boolean
     ]
 
+    var gitIndexCache = Option.empty[org.eclipse.jgit.dircache.DirCache]
+
     def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
       val newIgnorePaths = paths.filter(_._1.last == ".gitignore").map(_._1)
 
@@ -58,28 +61,40 @@ object Skipper{
         }
       }
 
+      paths.find(_._1 == os.sub / ".git" / "index").foreach{ case (indexFile, _) =>
+        val repo = new FileRepository((base / ".git").toIO)
+        gitIndexCache = Some(org.eclipse.jgit.dircache.DirCache.read(repo))
+        repo.close()
+      }
+
+
       paths
         .filter{ case (p, isDir) =>
-          val ignored = for {
+          lazy val indexed = gitIndexCache.exists(_.findEntry(p.toString) >= 0)
+          lazy val ignoredEntries = for {
             (enclosingPartialPath, i) <- p.segments.inits.zipWithIndex
             if enclosingPartialPath.nonEmpty
             gitIgnoreRoot <- enclosingPartialPath.inits.drop(1)
             (linesHash, ignoreNode) <- ignorePaths.get(os.sub / gitIgnoreRoot / ".gitignore")
           } yield {
-            ignoreCache.getOrElseUpdate(
+            val enclosedPartialPathStr = enclosingPartialPath.drop(gitIgnoreRoot.length).mkString("/")
+
+            val ignored = ignoreCache.getOrElseUpdate(
               (enclosingPartialPath, gitIgnoreRoot.length, isDir),
-              ignoreNode.isIgnored(
-                enclosingPartialPath.drop(gitIgnoreRoot.length).mkString("/"),
-                if (i == 0) isDir else true
-              )  match{
+              ignoreNode.isIgnored(enclosedPartialPathStr, if (i == 0) isDir else true) match{
                 case IgnoreNode.MatchResult.IGNORED => true
                 case IgnoreNode.MatchResult.NOT_IGNORED => false
                 case _ => false
               }
             )
+            ignored
 
           }
-          !ignored.exists(identity)
+
+          lazy val notIgnored = !ignoredEntries.exists(identity)
+          val res = indexed || notIgnored
+          if (!res) pprint.log((p, isDir, indexed, notIgnored))
+          res
         }
         .map(_._1)
     }
