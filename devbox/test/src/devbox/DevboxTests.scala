@@ -198,7 +198,7 @@ object DevboxTests extends TestSuite{
     println("=" * 80)
     println(
       s"[$commitIndex/$commitCount $trialIndex/$trialCount] "+
-      "Checking ${commit.getName.take(8)} ${commit.getShortMessage}"
+      s"Checking ${commit.getName.take(8)} ${commit.getShortMessage}"
     )
   }
 

@@ -1,7 +1,7 @@
 package devbox.common
 object InitialScan {
   def initialSkippedScan(scanRoots: Seq[os.Path], skippers: Seq[Skipper])
-                        (f: (os.Path, os.Path, Signature, Int, Int) => Unit) = {
+                        (f: (os.Path, os.SubPath, Signature, Int, Int) => Unit) = {
     val buffer = new Array[Byte](Util.blockSize)
     for((scanRoot, skipper) <- scanRoots.zip(skippers)) {
 
@@ -18,7 +18,7 @@ object InitialScan {
       for {
         ((p, attrs), i) <- fileStream.zipWithIndex
         sig <- Signature.compute(p, buffer, attrs.fileType)
-      } f(scanRoot, p, sig, i, total)
+      } f(scanRoot, p.subRelativeTo(scanRoot), sig, i, total)
     }
   }
 }

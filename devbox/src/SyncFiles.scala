@@ -23,13 +23,12 @@ object SyncFiles {
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
-                  skippers: Seq[Skipper],
                   signatureTransformer: (os.SubPath, Signature) => Signature,
-                  changedPaths0: Set[os.Path],
+                  changedPaths0: Map[os.Path, Set[os.SubPath]],
                   vfsArr: Seq[Vfs[Signature]],
                   logger: SyncLogger,
-                  send: Msg => Unit
-                 )(implicit ec: ExecutionContext) = {
+                  send: Msg => Unit)
+                 (implicit ec: ExecutionContext) = {
 
     // We need to .distinct after we convert the strings to paths, in order
     // to ensure the inputs are canonicalized and don't have meaningless
@@ -37,17 +36,10 @@ object SyncFiles {
     logger("SYNC EVENTS", changedPaths0)
 
     val failed = Future.sequence(
-      for (((src, dest), i) <- mapping.zipWithIndex) yield {
-        logger.info("Analyzing ignored files", src.toString())
-
-        val eventPaths0 = changedPaths0
-          .filter(p => p.startsWith(src))
-          .map(p => p.subRelativeTo(src))
-
-        val eventPaths = skippers(i).process(
-          src,
-          eventPaths0.map(p => (p, os.isDir(src / p))).toSet
-        )
+      for {
+        ((src, dest), i) <- mapping.zipWithIndex
+        eventPaths <- changedPaths0.get(src)
+      } yield {
         logger("SYNC BASE", eventPaths)
 
         val exitCode =
@@ -59,19 +51,19 @@ object SyncFiles {
           )
 
         exitCode.map{
-          case Right(_) => Set()
-          case Left(SyncFiles.NoOp) => Set()
+          case Right(_) => Map.empty[os.Path, Set[os.SubPath]]
+          case Left(SyncFiles.NoOp) => Map.empty[os.Path, Set[os.SubPath]]
           case Left(SyncFiles.SyncFail(value)) =>
             val x = new StringWriter()
             val p = new PrintWriter(x)
             value.printStackTrace(p)
             logger("SYNC FAILED", x.toString)
-            eventPaths.map(src / _)
+            Map(src -> eventPaths)
         }
       }
     )
 
-    failed.map(_.flatten)
+    failed
   }
 
   /**

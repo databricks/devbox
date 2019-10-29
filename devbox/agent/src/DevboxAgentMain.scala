@@ -103,7 +103,7 @@ object DevboxAgentMain {
 
           InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig, i, total) =>
             client.writeMsg(
-              Response.Scanned(scanRoot.relativeTo(wd), p.subRelativeTo(scanRoot), sig, i, total)
+              Response.Scanned(scanRoot.relativeTo(wd), p, sig, i, total)
             )
           }
 

@@ -1,17 +1,12 @@
 package devbox
 
-import java.awt.event.{ActionEvent, ActionListener, MouseEvent, MouseListener}
-import java.io.{PrintWriter, StringWriter}
 import java.nio.ByteBuffer
 import java.time.{Duration, ZoneId}
 import java.time.format.{DateTimeFormatter, FormatStyle}
 import java.util.concurrent.ScheduledExecutorService
 
-import devbox.common.SyncLogger
-import devbox.common.{Bytes, Logger, Response, Rpc, RpcClient, Signature, Skipper, Util, Vfs}
+import devbox.common.{ActorContext, Bytes, Response, Rpc, RpcClient, Signature, SimpleActor, Skipper, StateMachineActor, SyncLogger, Util, Vfs}
 
-import scala.collection.mutable
-import devbox.common.{ActorContext, BatchActor, StateMachineActor}
 
 object AgentReadWriteActor{
   sealed trait Msg
@@ -248,11 +243,10 @@ class AgentReadWriteActor(agent: AgentApi,
 
 object SyncActor{
   sealed trait Msg
-  case class Scan() extends Msg
   case class ScanComplete(vfsArr: Seq[Vfs[Signature]]) extends Msg
 
-  case class Events(paths: Set[os.Path]) extends Msg
-  case class LocalScanned(paths: os.Path, index: Int, total: Int) extends Msg
+  case class Events(paths: Map[os.Path, Set[os.SubPath]]) extends Msg
+  case class LocalScanned(scanRoot: os.Path, sub: os.SubPath, index: Int, total: Int) extends Msg
   case class Debounced(debounceId: Object) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
   case class Retry() extends Msg
@@ -268,55 +262,36 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
                (implicit ac: ActorContext)
   extends StateMachineActor[SyncActor.Msg]() {
 
-  def initialState = Initializing(Set())
+  def initialState = RemoteScanning(
+    Map(),
+    Map(),
+    mapping.map(_._2 -> new Vfs[Signature](Signature.Dir(0))),
+    0
+  )
 
-  val skippers = mapping.map(_ => Skipper.fromString(ignoreStrategy))
-  case class Initializing(changedPaths: Set[os.Path]) extends State({
-    case SyncActor.Events(paths) => Initializing(changedPaths ++ paths)
-    case SyncActor.Scan() =>
-      agentReadWriter.send(
-        AgentReadWriteActor.Send(
-          SyncFiles.RpcMsg(
-            Rpc.FullScan(mapping.map(_._2)),
-            "Remote Scanning " + mapping.map(_._2).mkString(", ")
-          )
-        )
-      )
-      scala.concurrent.Future{
-        try{
-          common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
-            (scanRoot, p, sig, i, total) => this.send(SyncActor.LocalScanned(p, i, total))
-          }
-          this.send(SyncActor.LocalScanComplete())
-        }catch{case e: Throwable =>
-          ac.reportFailure(e)
-        }
-      }
-      RemoteScanning(
-        Set.empty,
-        Set.empty,
-        mapping.map(_._2 -> new Vfs[Signature](Signature.Dir(0))),
-        0
-      )
-  })
+  def joinMaps[K, V](left: Map[K, Set[V]], right: Map[K, Set[V]]) = {
+    (left.keySet ++ right.keySet)
+      .map{k => (k, left.getOrElse(k, Set()) ++ right.getOrElse(k, Set()))}
+      .toMap
+  }
 
-  case class RemoteScanning(localPaths: Set[os.Path],
-                            remotePaths: Set[os.Path],
+  case class RemoteScanning(localPaths: Map[os.Path, Set[os.SubPath]],
+                            remotePaths: Map[os.RelPath, Set[os.SubPath]],
                             vfsArr: Seq[(os.RelPath, Vfs[Signature])],
                             scansComplete: Int) extends State({
-    case SyncActor.Events(paths) =>
-      RemoteScanning(localPaths ++ paths, remotePaths, vfsArr, scansComplete)
+    case SyncActor.LocalScanned(base, sub, i, total) =>
+      logger.progress(s"Scanned local path [$i/$total]", sub.toString())
+      RemoteScanning(joinMaps(localPaths, Map(base -> Set(sub))), remotePaths, vfsArr, scansComplete)
 
-    case SyncActor.LocalScanned(path, i, total) =>
-      logger.progress(s"Scanned local path [$i/$total]", path.toString())
-      RemoteScanning(localPaths ++ Seq(path), remotePaths, vfsArr, scansComplete)
+    case SyncActor.Events(paths) =>
+      RemoteScanning(joinMaps(localPaths, paths), remotePaths, vfsArr, scansComplete)
 
     case SyncActor.Receive(Response.Scanned(base, subPath, sig, i, total)) =>
       vfsArr.collectFirst{case (b, vfs) if b == base =>
         Vfs.overwriteUpdateVfs(subPath, sig, vfs)
       }
       logger.progress(s"Scanned remote path [$i/$total]", (base / subPath).toString())
-      val newRemotePaths = remotePaths ++ mapping.find(_._2 == base).map(_._1 / subPath)
+      val newRemotePaths = joinMaps(remotePaths, Map(base -> Set(subPath)))
       RemoteScanning(localPaths, newRemotePaths, vfsArr, scansComplete)
 
     case SyncActor.Receive(Response.Ack()) | SyncActor.LocalScanComplete() =>
@@ -327,7 +302,11 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
             s"Initial Scans Complete",
             s"${localPaths.size} local paths, ${remotePaths.size} remote paths"
           )
-          executeSync(localPaths ++ remotePaths, vfsArr.map(_._2))
+          val mappingMap = mapping.map(_.swap).toMap
+          executeSync(
+            joinMaps(localPaths, remotePaths.map{case (k, v) => (mappingMap(k), v)}),
+            vfsArr.map(_._2)
+          )
       }
   })
 
@@ -337,17 +316,16 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
     case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
   })
 
-  def executeSync(paths: Set[os.Path], vfsArr: Seq[Vfs[Signature]]) = {
+  def executeSync(paths: Map[os.Path, Set[os.SubPath]], vfsArr: Seq[Vfs[Signature]]) = {
     SyncFiles.executeSync(
       mapping,
-      skippers,
       signatureTransformer,
       paths,
       vfsArr,
       logger,
       m => agentReadWriter.send(AgentReadWriteActor.Send(m))
     ).map{failures =>
-      if (failures.nonEmpty) this.send(SyncActor.Events(failures.toSet))
+      if (failures.nonEmpty) this.send(SyncActor.Events(failures.reduceLeft(joinMaps(_, _))))
       else agentReadWriter.send(
         AgentReadWriteActor.Send(
           SyncFiles.RpcMsg(
@@ -358,6 +336,46 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       )
     }
     Waiting(vfsArr)
+  }
+}
+
+object SkipActor{
+  sealed trait Msg
+  case class Paths(values: Set[os.Path]) extends Msg
+  case class Scan() extends Msg
+}
+class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
+                ignoreStrategy: String,
+                sendToSyncActor: SyncActor.Msg => Unit,
+                logger: SyncLogger)
+               (implicit ac: ActorContext) extends SimpleActor[SkipActor.Msg]{
+  val skippers = mapping.map(_ => Skipper.fromString(ignoreStrategy))
+  def run(msg: SkipActor.Msg) = msg match{
+    case SkipActor.Scan() =>
+      common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
+        (scanRoot, sub, sig, i, total) => {
+          logger.progress(
+            s"Scanned local path [$i/$total]",
+            sub.toString()
+          )
+          sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub, i, total))
+        }
+      }
+      sendToSyncActor(SyncActor.LocalScanComplete())
+
+    case SkipActor.Paths(values) =>
+
+      val grouped = for(((src, dest), skipper) <- mapping.zip(skippers)) yield (
+        src,
+        skipper.process(
+          src,
+          for{
+            value <- values
+            if value.startsWith(src)
+          } yield (value.subRelativeTo(src), os.isDir(value))
+        )
+      )
+      sendToSyncActor(SyncActor.Events(grouped.toMap))
   }
 }
 

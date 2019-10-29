@@ -24,20 +24,23 @@ class Syncer(agent: AgentApi,
     logger.apply(_, _)
   )
 
+
+
+  val statusLogger = new SyncLogger{
+    def apply(tag: String, x: Any = Logger.NoOp): Unit = logger.apply(tag, x)
+    def info(title: String, body: String, color: Option[String]) = {
+      statusActor.send(StatusActor.Syncing(s"$title:\n$body"))
+      logger.info(title, body, color)
+    }
+    def progress(title: String, body: String) = {
+      statusActor.send(StatusActor.Syncing(s"$title:\n$body"))
+      logger.progress(title, body)
+    }
+  }
   val syncer: SyncActor = new SyncActor(
     agentReadWriter,
     mapping,
-    new SyncLogger{
-      def apply(tag: String, x: Any = Logger.NoOp): Unit = logger.apply(tag, x)
-      def info(title: String, body: String, color: Option[String]) = {
-        statusActor.send(StatusActor.Syncing(s"$title:\n$body"))
-        logger.info(title, body, color)
-      }
-      def progress(title: String, body: String) = {
-        statusActor.send(StatusActor.Syncing(s"$title:\n$body"))
-        logger.progress(title, body)
-      }
-    },
+    statusLogger,
     signatureTransformer,
     ignoreStrategy,
     Executors.newSingleThreadScheduledExecutor(),
@@ -50,8 +53,15 @@ class Syncer(agent: AgentApi,
     logger
   )
 
+  val skipActor = new SkipActor(
+    mapping,
+    ignoreStrategy,
+    syncer.send(_),
+    statusLogger
+  )
+
   val debouncer = new DebounceActor(
-    paths => syncer.send(SyncActor.Events(paths)),
+    paths => skipActor.send(SkipActor.Paths(paths)),
     statusActor,
     debounceMillis,
     logger
@@ -95,8 +105,15 @@ class Syncer(agent: AgentApi,
     )
     agentReadWriter.spawnReaderThread()
 
-    syncer.send(SyncActor.Scan())
-
+    agentReadWriter.send(
+      AgentReadWriteActor.Send(
+        SyncFiles.RpcMsg(
+          Rpc.FullScan(mapping.map(_._2)),
+          "Remote Scanning " + mapping.map(_._2).mkString(", ")
+        )
+      )
+    )
+    skipActor.send(SkipActor.Scan())
   }
 
   def close() = {
