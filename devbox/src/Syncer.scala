@@ -50,7 +50,7 @@ class Syncer(agent: AgentApi,
     agent,
     syncer,
     statusActor,
-    logger
+    statusLogger
   )
 
   val skipActor = new SkipActor(
@@ -62,16 +62,16 @@ class Syncer(agent: AgentApi,
 
   val debouncer = new DebounceActor(
     paths => skipActor.send(SkipActor.Paths(paths)),
-    statusActor,
     debounceMillis,
     500,
-    logger
+    statusLogger
   )
 
   val statusActor = new StatusActor(
 //    _ => (), _ => (),
     imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
     tooltip => IconHandler.icon.setToolTip(tooltip),
+    logger
   )
 
   var running = false
