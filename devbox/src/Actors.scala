@@ -360,8 +360,9 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
           )
           sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub, i, total))
         }
+      }.foreach{ _ =>
+        sendToSyncActor(SyncActor.LocalScanComplete())
       }
-      sendToSyncActor(SyncActor.LocalScanComplete())
 
     case SkipActor.Paths(values) =>
 

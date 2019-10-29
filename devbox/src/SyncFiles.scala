@@ -259,7 +259,7 @@ object SyncFiles {
       .toMap
 
     val buffers = new LinkedBlockingQueue[Array[Byte]]()
-    for(i <- 0 until 4) buffers.add(new Array[Byte](Util.blockSize))
+    for(i <- 0 until 6) buffers.add(new Array[Byte](Util.blockSize))
     val count = new java.util.concurrent.atomic.AtomicInteger(0)
     val total = eventPathsLinks.size
     val futures = eventPathsLinks

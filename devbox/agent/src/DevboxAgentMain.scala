@@ -11,7 +11,8 @@ import Cli.pathScoptRead
 import Util.relpathRw
 import devbox.common
 
-import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, ExecutionContext}
 object DevboxAgentMain {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
@@ -101,11 +102,15 @@ object DevboxAgentMain {
             for(p <- paths)
             yield skippers.getOrElseUpdate(p, Skipper.fromString(ignoreStrategy))
 
-          InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig, i, total) =>
-            client.writeMsg(
-              Response.Scanned(scanRoot.relativeTo(wd), p, sig, i, total)
-            )
-          }
+
+          Await.result(
+            InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig, i, total) =>
+              client.writeMsg(
+                Response.Scanned(scanRoot.relativeTo(wd), p, sig, i, total)
+              )
+            }(ExecutionContext.global),
+            Duration.Inf
+          )
 
           client.writeMsg(Response.Ack())
 
