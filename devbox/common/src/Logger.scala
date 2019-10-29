@@ -3,10 +3,9 @@ package devbox.common
 import java.nio.file.StandardOpenOption.{CREATE, WRITE, TRUNCATE_EXISTING, APPEND}
 trait BaseLogger extends AutoCloseable{
   def rotationSize: Long
-  def dest: Int => os.Path
+  def dest: String => os.Path
   def truncate: Boolean
 
-  var n = 0
   var size = 0L
   var output: java.io.OutputStream = _
 
@@ -15,16 +14,17 @@ trait BaseLogger extends AutoCloseable{
     logOut(s)
 
     if (output == null || size > rotationSize) {
-      n += 1
       if (output != null) output.close()
+      os.remove.all(dest("old"))
+      os.copy(dest("current"), dest("old"))
       output = os.write.outputStream(
-        dest(n),
+        dest("current"),
         openOptions =
           if (truncate) Seq(CREATE, WRITE, TRUNCATE_EXISTING)
           else Seq(CREATE, WRITE, APPEND)
       )
-      size = os.size(dest(n))
-      os.remove.all(dest(n - 2))
+      size = 0
+
     }
     val bytes = fansi.Str(s).plainText.getBytes("UTF-8")
     output.write(bytes)
@@ -58,7 +58,7 @@ trait SyncLogger{
 }
 object SyncLogger{
 
-  class Impl(val dest: Int => os.Path, val rotationSize: Long, val truncate: Boolean)
+  class Impl(val dest: String => os.Path, val rotationSize: Long, val truncate: Boolean)
             (implicit ac: ActorContext) extends SimpleActor[Logger.Msg] with BaseLogger with SyncLogger{
 
     var lastProgressTimestamp = 0L
@@ -103,7 +103,7 @@ object SyncLogger{
   }
 }
 
-class AgentLogger(val dest: Int => os.Path, val rotationSize: Long)
+class AgentLogger(val dest: String => os.Path, val rotationSize: Long)
                  (implicit ac: ActorContext) extends SimpleActor[Logger.PPrinted] with BaseLogger{
 
   def truncate = true
