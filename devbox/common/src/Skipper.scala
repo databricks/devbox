@@ -3,6 +3,8 @@ package devbox.common
 import org.eclipse.jgit.ignore.{FastIgnoreRule, IgnoreNode}
 import org.eclipse.jgit.internal.storage.file.FileRepository
 
+import scala.collection.mutable
+
 
 trait Skipper {
   def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]): Set[os.SubPath]
@@ -31,7 +33,25 @@ object Skipper{
       Boolean
     ]
 
-    var gitIndexCache = Option.empty[Set[os.SubPath]]
+    case class GitIndexTree(value: mutable.LinkedHashMap[String, GitIndexTree] = mutable.LinkedHashMap.empty){
+      def containsPath(segments: Seq[String]): Boolean = {
+        segments
+          .foldLeft(Option(this)) {
+            case (None, _) => None
+            case (Some(node), segment) => node.value.get(segment)
+          }
+          .nonEmpty
+      }
+
+      def createPath(segments: Seq[String]): Unit = {
+        var current = this
+        for(segment <- segments){
+          current = current.value.getOrElseUpdate(segment, GitIndexTree())
+        }
+      }
+    }
+
+    val gitIndexCache = GitIndexTree()
 
     def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
       val newIgnorePaths = paths.filter(_._1.last == ".gitignore").map(_._1)
@@ -63,21 +83,17 @@ object Skipper{
 
       paths.find(_._1 == os.sub / ".git" / "index").foreach{ case (indexFile, _) =>
         val repo = new FileRepository((base / ".git").toIO)
-        gitIndexCache = Some(
-          org.eclipse.jgit.dircache.DirCache.read(repo)
-            .getEntriesWithin("")
-            .flatMap(_.getPathString.split('/').inits)
-            .map(_.toIndexedSeq)
-            .toSet
-            .map((x: IndexedSeq[String]) => os.SubPath(x))
-        )
+        gitIndexCache.value.clear()
+
+        for(e <- org.eclipse.jgit.dircache.DirCache.read(repo).getEntriesWithin("")){
+          gitIndexCache.createPath(e.getPathString.split('/'))
+        }
         repo.close()
       }
 
-
       paths
         .filter{ case (p, isDir) =>
-          lazy val indexed = gitIndexCache.exists(_.contains(p))
+          lazy val indexed = gitIndexCache.containsPath(p.segments)
           lazy val ignoredEntries = for {
             (enclosingPartialPath, i) <- p.segments.inits.zipWithIndex
             if enclosingPartialPath.nonEmpty
@@ -99,9 +115,7 @@ object Skipper{
           }
 
           lazy val notIgnored = !ignoredEntries.exists(identity)
-          val res = indexed || notIgnored
-          if (!res) pprint.log((p, isDir, indexed, notIgnored))
-          res
+          indexed || notIgnored
         }
         .map(_._1)
     }
