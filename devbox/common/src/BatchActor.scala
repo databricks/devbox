@@ -143,7 +143,10 @@ abstract class SimpleActor[T]()(implicit ac: ActorContext) extends BatchActor[T]
 
 abstract class StateMachineActor[T]()
                                    (implicit ac: ActorContext) extends SimpleActor[T]() {
-  class State(val run: T => State)
+
+  class State(run0: T => State = null) {
+    def run = run0
+  }
   protected[this] def initialState: State
   protected[this] var state: State = initialState
   def run(msg: T): Unit = {

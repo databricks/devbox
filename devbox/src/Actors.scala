@@ -491,32 +491,55 @@ class StatusActor(setImage: String => Unit,
                          debouncedNext: DebounceState,
                          syncFiles: Int,
                          totalFiles: Int,
-                         syncBytes: Long) extends State({
-    case StatusActor.Syncing(msg) =>
-      debounceReceive(icon, debouncedNext, StatusActor.Syncing(msg), syncFiles, totalFiles, syncBytes)
+                         syncBytes: Long) extends State{
+    override def run = {
+      case msg: StatusActor.Syncing => debounceReceive(msg)
+      case msg: StatusActor.Done => debounceReceive(msg)
+      case msg: StatusActor.Error => debounceReceive(msg)
+      case msg: StatusActor.Greyed => debounceReceive(msg)
+      case msg: StatusActor.SyncingFile => debounceReceive(msg)
 
-    case StatusActor.SyncingFile(prefix, suffix) =>
-      debounceReceive(icon, debouncedNext, StatusActor.SyncingFile(prefix, suffix), syncFiles, totalFiles, syncBytes)
+      case StatusActor.FilesAndBytes(nFiles, nTotalFiles, nBytes) =>
+        this.copy(
+          syncFiles = syncFiles + nFiles,
+          totalFiles = totalFiles + nTotalFiles,
+          syncBytes = syncBytes + nBytes
+        )
 
-    case StatusActor.FilesAndBytes(nFiles, nTotalFiles, nBytes) =>
-      StatusState(icon, debouncedNext, syncFiles + nFiles, totalFiles + nTotalFiles, syncBytes + nBytes)
+      case StatusActor.Debounce() =>
+        debouncedNext match{
+          case DebounceFull(n) => statusMsgToState(DebounceIdle(), n)
+          case ds => this.copy(debouncedNext = DebounceIdle())
+        }
+    }
 
-    case StatusActor.Done() =>
-      debounceReceive(icon, debouncedNext, StatusActor.Done() , syncFiles, totalFiles, syncBytes)
-
-    case StatusActor.Error(msg) =>
-      debounceReceive(icon, debouncedNext, StatusActor.Error(msg), syncFiles, totalFiles, syncBytes)
-
-    case StatusActor.Greyed(msg) =>
-      debounceReceive(icon, debouncedNext, StatusActor.Greyed(msg), syncFiles, totalFiles, syncBytes)
-
-    case StatusActor.Debounce() =>
-      debouncedNext match{
-        case DebounceFull(n) => statusMsgToState(icon, DebounceIdle(), n, syncFiles, totalFiles, syncBytes)
-        case ds => StatusState(icon, DebounceIdle(), syncFiles, totalFiles, syncBytes)
+    def debounceReceive(statusMsg: StatusActor.StatusMsg): State = {
+      if (debouncedNext == DebounceIdle()) {
+        ac.scheduleMsg(StatusActor.this, StatusActor.Debounce(), Duration.ofMillis(100))
+        statusMsgToState(DebounceCooldown(), statusMsg)
+      } else {
+        StatusState(icon, DebounceFull(statusMsg), syncFiles, totalFiles, syncBytes)
       }
-  })
+    }
 
+    def statusMsgToState(debounceState: DebounceState,
+                         statusMsg: StatusActor.StatusMsg): StatusState = {
+      val statusState = statusMsg match {
+        case StatusActor.Syncing(msg) => this.copy(icon = IconState("blue-sync", msg))
+        case StatusActor.Error(msg) => this.copy(icon = IconState("red-cross", msg))
+        case StatusActor.Greyed(msg) => this.copy(icon = IconState("grey-dash", msg))
+
+        case StatusActor.SyncingFile(prefix, suffix) =>
+          this.copy(icon = IconState("blue-sync", s"$prefix$syncFiles/$totalFiles$suffix"))
+
+        case StatusActor.Done() =>
+          StatusState(IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)), debounceState, 0, 0, 0)
+      }
+
+      setIcon(icon, statusState.icon)
+      statusState
+    }
+  }
 
   def syncCompleteMsg(syncFiles: Int, syncBytes: Long) = {
     s"Syncing Complete\n" +
@@ -524,45 +547,6 @@ class StatusActor(setImage: String => Unit,
     s"${Util.timeFormatter.format(java.time.Instant.now())}"
   }
 
-  def statusMsgToState(icon: IconState,
-                       debounceState: DebounceState,
-                       statusMsg: StatusActor.StatusMsg,
-                       syncFiles: Int,
-                       totalFiles: Int,
-                       syncBytes: Long): StatusState = {
-    val statusState = statusMsg match {
-      case StatusActor.Syncing(msg) =>
-        StatusState(IconState("blue-sync", msg), debounceState, syncFiles, totalFiles, syncBytes)
-
-      case StatusActor.SyncingFile(prefix, suffix) =>
-        StatusState(IconState("blue-sync", s"$prefix$syncFiles/$totalFiles$suffix"), debounceState, syncFiles, totalFiles, syncBytes)
-
-      case StatusActor.Done() =>
-        StatusState(IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)), debounceState, 0, 0, 0)
-
-      case StatusActor.Error(msg) =>
-        StatusState(IconState("red-cross", msg), debounceState, syncFiles, totalFiles, syncBytes)
-
-      case StatusActor.Greyed(msg) =>
-        StatusState(IconState("grey-dash", msg), debounceState, syncFiles, totalFiles, syncBytes)
-    }
-
-    setIcon(icon, statusState.icon)
-    statusState
-  }
-  def debounceReceive(icon: IconState,
-                      debouncedNext: DebounceState,
-                      statusMsg: StatusActor.StatusMsg,
-                      syncFiles: Int,
-                      totalFiles: Int,
-                      syncBytes: Long): State = {
-    if (debouncedNext == DebounceIdle()) {
-      ac.scheduleMsg(this, StatusActor.Debounce(), Duration.ofMillis(100))
-      statusMsgToState(icon, DebounceCooldown(), statusMsg, syncFiles, totalFiles, syncBytes)
-    } else {
-      StatusState(icon, DebounceFull(statusMsg), syncFiles, totalFiles, syncBytes)
-    }
-  }
 
   def setIcon(icon: IconState, nextIcon: IconState) = {
     if (icon.image != nextIcon.image) setImage(nextIcon.image)
