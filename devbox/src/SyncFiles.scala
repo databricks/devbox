@@ -12,7 +12,8 @@ object SyncFiles {
 
   sealed trait Msg
   case class Complete() extends Msg
-  case class StartFile(files: Int, totalFiles: Int) extends Msg
+  case class IncrementFileTotal(totalFiles: Int, example: os.SubPath) extends Msg
+  case class StartFile() extends Msg
   case class RemoteScan(paths: Seq[os.RelPath]) extends Msg
   case class RpcMsg(value: Rpc with PathRpc) extends Msg
   case class SendChunkMsg(src: os.Path,
@@ -89,16 +90,14 @@ object SyncFiles {
                       signatureTransformer: (os.SubPath, Signature) => Signature,
                       send: Msg => Unit)
                      (implicit ec: ExecutionContext): Future[Either[ExitCode, Unit]] = {
-    logger.info("Checking for changes", s"in ${eventPaths.size} paths")
+
     computeSignatures(eventPaths, vfs, src, logger, signatureTransformer).transform{
       case scala.util.Success(signatureMapping) =>
         if (signatureMapping.isEmpty) scala.util.Success(Left(NoOp))
         else {
           logger("SYNC SIGNATURE", signatureMapping)
-
+          send(IncrementFileTotal(signatureMapping.size, signatureMapping.head._1))
           val sortedSignatures = sortSignatureChanges(signatureMapping)
-
-          logger.info(s"${sortedSignatures.length} paths changed", s"$src")
 
           syncAllFiles(vfs, send, sortedSignatures, src, dest, logger)
           scala.util.Success(Right(()))
@@ -147,9 +146,9 @@ object SyncFiles {
       Vfs.updateVfs(rpc, vfs)
     }
     val total = signatureMapping.length
-    send(StartFile(0, total))
+
     for ((subPath, localSig, remoteSig) <- signatureMapping) {
-      send(StartFile(1, 0))
+      send(StartFile())
       syncFileMetadata(dest, client, subPath, localSig, remoteSig)
 
       localSig match{

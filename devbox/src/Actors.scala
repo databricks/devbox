@@ -41,11 +41,14 @@ class AgentReadWriteActor(agent: AgentApi,
 
   case class Active(buffer: Vector[SyncFiles.Msg]) extends State({
     case AgentReadWriteActor.Send(msg) =>
-      ac.reportSchedule()
-
-      val newBuffer = buffer :+ msg
       logStatusMsgForRpc(msg)
-      sendRpcFor(newBuffer, 0, msg).getOrElse(Active(newBuffer))
+      getRpcFor(msg) match{
+        case None => Active(buffer)
+        case Some(rpc) =>
+          val newBuffer = buffer :+ msg
+          ac.reportSchedule()
+          sendRpc(newBuffer, 0, rpc).getOrElse(Active(newBuffer))
+      }
 
     case AgentReadWriteActor.ReadFailed() =>
       restart(buffer, 0)
@@ -104,7 +107,7 @@ class AgentReadWriteActor(agent: AgentApi,
           case (Some(end), _) => Some(end)
           case (None, msg) =>
             logStatusMsgForRpc(msg, "(Replaying)")
-            sendRpcFor(newBuffer, retryCount, msg)
+            sendRpc(newBuffer, retryCount, getRpcFor(msg).get)
         }
 
         failState.getOrElse(Active(newBuffer))
@@ -145,8 +148,11 @@ class AgentReadWriteActor(agent: AgentApi,
         logger.progress("Syncing Complete", "waiting for confirmation from Devbox")
       case SyncFiles.RemoteScan(paths) =>
         logger.info("Scanning directories", paths.mkString("\n"))
-      case SyncFiles.StartFile(files, totalFiles) =>
-        statusActor.send(StatusActor.FilesAndBytes(files, totalFiles, 0))
+
+      case SyncFiles.IncrementFileTotal(totalFiles, example) =>
+        statusActor.send(StatusActor.IncrementFileTotal(totalFiles, example))
+      case SyncFiles.StartFile() => statusActor.send(StatusActor.FilesAndBytes(1, 0))
+
       case SyncFiles.RpcMsg(rpc) =>
         statusActor.send(
           StatusActor.SyncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
@@ -158,14 +164,13 @@ class AgentReadWriteActor(agent: AgentApi,
         )
     }
   }
-  def sendRpcFor(buffer: Vector[SyncFiles.Msg],
-                 retryCount: Int,
-                 msg: SyncFiles.Msg) = {
+  def getRpcFor(msg: SyncFiles.Msg): Option[Rpc] = {
     msg match{
-      case SyncFiles.StartFile(_, _) => sendRpc(buffer, retryCount, Rpc.Complete())
-      case SyncFiles.Complete() => sendRpc(buffer, retryCount, Rpc.Complete())
-      case SyncFiles.RemoteScan(paths) => sendRpc(buffer, retryCount, Rpc.FullScan(paths))
-      case SyncFiles.RpcMsg(rpc) => sendRpc(buffer, retryCount, rpc)
+      case SyncFiles.IncrementFileTotal(_, _) => None
+      case SyncFiles.StartFile() => None
+      case SyncFiles.Complete() => Some(Rpc.Complete())
+      case SyncFiles.RemoteScan(paths) => Some(Rpc.FullScan(paths))
+      case SyncFiles.RpcMsg(rpc) => Some(rpc)
 
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
         val byteArr = new Array[Byte](Util.blockSize)
@@ -191,8 +196,8 @@ class AgentReadWriteActor(agent: AgentApi,
             chunkIndex * Util.blockSize,
             new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
           )
-          statusActor.send(StatusActor.FilesAndBytes(0, 0, n))
-          sendRpc(buffer, retryCount, msg)
+          statusActor.send(StatusActor.FilesAndBytes(0, n))
+          Some(msg)
         }
     }
   }
@@ -469,7 +474,8 @@ object StatusActor{
   sealed trait StatusMsg extends Msg
   case class Syncing(msg: String) extends StatusMsg
   case class SyncingFile(prefix: String, suffix: String) extends StatusMsg
-  case class FilesAndBytes(files: Int, totalFiles: Int, bytes: Long) extends Msg
+  case class IncrementFileTotal(total: Int, example: os.SubPath) extends Msg
+  case class FilesAndBytes(files: Int, bytes: Long) extends Msg
   case class Done() extends StatusMsg
   case class Error(msg: String) extends StatusMsg
   case class Greyed(msg: String) extends StatusMsg
@@ -515,10 +521,15 @@ class StatusActor(setImage: String => Unit,
         logger.progress(s"${msg.prefix}$syncFiles/$totalFiles${msg.suffix}".split("\n"):_*)
         debounceReceive(msg)
 
-      case StatusActor.FilesAndBytes(nFiles, nTotalFiles, nBytes) =>
+      case StatusActor.IncrementFileTotal(nTotal, example) =>
+        val newTotal = totalFiles + nTotal
+        logger.info(s"$newTotal paths changed", example.toString())
+        this.copy(totalFiles = totalFiles + newTotal)
+
+
+      case StatusActor.FilesAndBytes(nFiles, nBytes) =>
         this.copy(
           syncFiles = syncFiles + nFiles,
-          totalFiles = totalFiles + nTotalFiles,
           syncBytes = syncBytes + nBytes
         )
 
