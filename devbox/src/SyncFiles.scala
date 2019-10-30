@@ -11,16 +11,19 @@ import scala.concurrent.{ExecutionContext, Future}
 object SyncFiles {
 
   sealed trait Msg
-  case class Complete() extends Msg
+
   case class IncrementFileTotal(totalFiles: Int, example: os.SubPath) extends Msg
   case class StartFile() extends Msg
-  case class RemoteScan(paths: Seq[os.RelPath]) extends Msg
-  case class RpcMsg(value: Rpc with PathRpc) extends Msg
+
+  sealed trait RemoteMsg extends Msg
+  case class Complete() extends RemoteMsg
+  case class RemoteScan(paths: Seq[os.RelPath]) extends RemoteMsg
+  case class RpcMsg(value: Rpc with PathRpc) extends RemoteMsg
   case class SendChunkMsg(src: os.Path,
                           dest: os.RelPath,
                           subPath: os.SubPath,
                           chunkIndex: Int,
-                          chunkCount: Int) extends Msg
+                          chunkCount: Int) extends RemoteMsg
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
