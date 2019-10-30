@@ -20,11 +20,13 @@ class Syncer(agent: AgentApi,
 
   private[this] val watcher = os.watch.watch(
     mapping.map(_._1),
-    events => skipActor.send(SkipActor.Paths(events)),
+    events => skipActor.send(
+      SkipActor.Paths(
+        new PathSet().withPaths(events.iterator.map(_.segments))
+      )
+    ),
     logger.apply(_, _)
   )
-
-
 
   val statusLogger = new SyncLogger{
     def apply(tag: String, x: Any = Logger.NoOp): Unit = logger.apply(tag, x)

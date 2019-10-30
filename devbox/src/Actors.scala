@@ -397,6 +397,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       if (bufferedPaths.isEmpty) Waiting(vfsArr)
       else executeSync(bufferedPaths, vfsArr)
 
+
     case SyncActor.Receive(Response.Ack()) => Syncing(bufferedPaths, vfsArr) // do nothing
   })
 
@@ -416,7 +417,9 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
             send(SyncActor.Events(failures.reduceLeft(_ ++ _)))
           }
           else agentReadWriter.send(AgentReadWriteActor.Send(SyncFiles.Complete()))
-        case scala.util.Failure(_) => send(SyncActor.Events(paths))
+        case scala.util.Failure(e) =>
+          e.printStackTrace()
+          send(SyncActor.Events(paths))
       }
     }
 
@@ -426,7 +429,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
 
 object SkipActor{
   sealed trait Msg
-  case class Paths(values: Set[os.Path]) extends Msg
+  case class Paths(values: PathSet) extends Msg
   case class Scan() extends Msg
   case class Scanned() extends Msg
 }
@@ -436,9 +439,9 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
                 logger: SyncLogger)
                (implicit ac: ActorContext) extends StateMachineActor[SkipActor.Msg]{
 
-  def initialState = Scanning(Set(), mapping.map(_ => Skipper.fromString(ignoreStrategy)))
+  def initialState = Scanning(new PathSet(), mapping.map(_ => Skipper.fromString(ignoreStrategy)))
 
-  case class Scanning(buffered: Set[os.Path], skippers: Seq[Skipper]) extends State({
+  case class Scanning(buffered: PathSet, skippers: Seq[Skipper]) extends State({
     case SkipActor.Scan() =>
       common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
         (scanRoot, sub, sig) => sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub))
@@ -446,9 +449,12 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
       this.send(SkipActor.Scanned())
       Scanning(buffered, skippers)
 
-    case SkipActor.Paths(values) => Scanning(buffered | values, skippers)
+    case SkipActor.Paths(values) =>
+      val newBuffered = buffered.withPaths(values.walk(Nil))
+      Scanning(newBuffered, skippers)
+
     case SkipActor.Scanned() =>
-      if (buffered.nonEmpty){
+      if (buffered.getSize > 0){
         val grouped =
           for(((src, paths), skipper) <- group(buffered).zip(skippers))
           yield (src, skipper.processBatch(src, paths))
@@ -471,14 +477,17 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
       Active(skippers)
   })
 
-  def group(paths: Set[os.Path]) = {
+  def group(paths: PathSet) = {
     for((src, dest) <- mapping)
     yield (
       src,
-      for{
-        value <- paths
-        if value.startsWith(src)
-      } yield (value.subRelativeTo(src), os.isDir(value))
+      paths
+        .walkSubPaths(src.segments)
+        .map{ subSegments =>
+          val sub = os.SubPath(subSegments)
+          (sub, os.isDir(src / sub))
+        }
+        .toSet
     )
   }
 }
@@ -536,19 +545,17 @@ class StatusActor(setImage: String => Unit,
         debounceReceive(msg)
 
       case StatusActor.IncrementFileTotal(base, subs) =>
-        for(sub <- subs){
-          totalFiles.add((base / sub).segments)
-        }
+
         logger.info(s"${totalFiles.getSize} paths changed", subs.head.toString())
-        this
+        this.copy(
+          totalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))
+        )
 
 
       case StatusActor.FilesAndBytes(nFiles, nBytes) =>
-        for(p <- nFiles){
-          syncFiles.add(p.segments)
-        }
         this.copy(
-          syncBytes = syncBytes + nBytes
+          syncBytes = syncBytes + nBytes,
+          syncFiles = syncFiles.withPaths(nFiles.map(_.segments))
         )
 
       case StatusActor.Debounce() =>
@@ -580,7 +587,7 @@ class StatusActor(setImage: String => Unit,
         case StatusActor.Done() =>
           StatusState(
             IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)),
-            newDebounced, syncFiles.clear(), totalFiles.clear(), 0
+            newDebounced, new PathSet(), new PathSet(), 0
           )
       }
 

@@ -41,7 +41,7 @@ object Skipper{
     ]
 
 
-    val gitIndexCache = new PathSet()
+    val gitIndexCache = new MutablePathSet()
 
     def updateIgnoreCache(base: os.Path, path: os.SubPath) = {
       if (os.isFile(base / path, followLinks = false)){
@@ -77,7 +77,7 @@ object Skipper{
     }
 
     def checkFileSkipped(base: os.Path, path: os.SubPath, isDir: Boolean) = {
-      lazy val indexed = gitIndexCache.contains(path.segments)
+      lazy val indexed = gitIndexCache.containsPathPrefix(path.segments)
       lazy val ignoredEntries = for {
         (enclosingPartialPath, i) <- path.segments.inits.zipWithIndex
         if enclosingPartialPath.nonEmpty
