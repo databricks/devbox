@@ -9,7 +9,7 @@ object BasePathSet{
   }
 }
 /**
-  * A simple high-performance mutable Set of path segments, implemented as a tree.
+  * A compact, high-performance mutable Set of path segments, implemented as a tree.
   *
   * Comes in both mutable and immutable flavors. Generally append-only, with no
   * provision for removing elements from the set except by throwing away the whole thing

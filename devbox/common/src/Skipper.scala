@@ -122,7 +122,7 @@ object Skipper{
       }
 
       for((p, isDir) <- paths if !isDir){
-        updateIgnoreCache(base, p)
+        if (p.last == ".gitignore") updateIgnoreCache(base, p)
         updateIndexCache(base, p)
       }
 

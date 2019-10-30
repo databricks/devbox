@@ -546,10 +546,9 @@ class StatusActor(setImage: String => Unit,
 
       case StatusActor.IncrementFileTotal(base, subs) =>
 
-        logger.info(s"${totalFiles.getSize} paths changed", subs.head.toString())
-        this.copy(
-          totalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))
-        )
+        val newTotalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))
+        logger.info(s"${newTotalFiles.getSize} paths changed", subs.head.toString())
+        this.copy(totalFiles = newTotalFiles)
 
 
       case StatusActor.FilesAndBytes(nFiles, nBytes) =>
