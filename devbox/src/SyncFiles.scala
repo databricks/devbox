@@ -36,7 +36,7 @@ object SyncFiles {
     // differences such as trailing slashes
     logger("SYNC EVENTS", changedPaths0)
 
-    val failed = Future.sequence(
+    Future.sequence(
       for {
         ((src, dest), i) <- mapping.zipWithIndex
         eventPaths <- changedPaths0.get(src)
@@ -63,8 +63,6 @@ object SyncFiles {
         }
       }
     )
-
-    failed
   }
 
   /**
@@ -93,9 +91,10 @@ object SyncFiles {
 
     computeSignatures(eventPaths, vfs, src, logger, signatureTransformer).transform{
       case scala.util.Success(signatureMapping) =>
+        logger("SYNC SIGNATURE", signatureMapping)
         if (signatureMapping.isEmpty) scala.util.Success(Left(NoOp))
         else {
-          logger("SYNC SIGNATURE", signatureMapping)
+
           send(IncrementFileTotal(signatureMapping.size, signatureMapping.head._1))
           val sortedSignatures = sortSignatureChanges(signatureMapping)
 
@@ -140,14 +139,12 @@ object SyncFiles {
                    dest: os.RelPath,
                    logger: SyncLogger): Unit = {
 
-    logger.apply("SYNC META", signatureMapping)
     def client(rpc: Rpc with Action with PathRpc) = {
       send(RpcMsg(rpc))
       Vfs.updateVfs(rpc, vfs)
     }
-    val total = signatureMapping.length
-
     for ((subPath, localSig, remoteSig) <- signatureMapping) {
+      logger.apply("SYNC PATH", (subPath, localSig, remoteSig))
       send(StartFile())
       syncFileMetadata(dest, client, subPath, localSig, remoteSig)
 
@@ -156,6 +153,7 @@ object SyncFiles {
           syncFileChunks(vfs, send, src, dest, logger, subPath, remoteSig, blockHashes, size)
         case _ =>
       }
+      logger.apply("SYNC PATH END")
 
     }
   }

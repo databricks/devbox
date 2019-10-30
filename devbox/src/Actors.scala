@@ -77,7 +77,7 @@ class AgentReadWriteActor(agent: AgentApi,
   case class RestartSleeping(buffer: Vector[SyncFiles.Msg], retryCount: Int) extends State({
     case AgentReadWriteActor.Send(msg) =>
       ac.reportSchedule()
-      RestartSleeping(buffer :+ msg, retryCount)
+      RestartSleeping(buffer ++ getRpcFor(msg).map(_ => msg), retryCount)
 
     case AgentReadWriteActor.ReadFailed() => RestartSleeping(buffer, retryCount)
 
@@ -130,6 +130,8 @@ class AgentReadWriteActor(agent: AgentApi,
     case AgentReadWriteActor.ForceRestart() =>
       logger.info("Syncing Restarted", "")
       restart(buffer, 0)
+
+    case AgentReadWriteActor.ReadFailed() => GivenUp(buffer)
 
     case AgentReadWriteActor.Close() =>
       agent.destroy()
@@ -263,7 +265,7 @@ class AgentReadWriteActor(agent: AgentApi,
       val seconds = math.pow(2, retryCount).toInt
       logger.error(
         s"Unable to connect to devbox",
-        "trying again after $seconds seconds"
+        s"trying again after $seconds seconds"
       )
       ac.scheduleMsg(
         this,
@@ -287,9 +289,11 @@ object SyncActor{
   sealed trait Msg
   case class ScanComplete(vfsArr: Seq[Vfs[Signature]]) extends Msg
 
-  case class Events(paths: Map[os.Path, Set[os.SubPath]]) extends Msg
+  case class Events(paths: Map[os.Path, Set[os.SubPath]]) extends Msg{
+    assert(paths.nonEmpty)
+  }
   case class LocalScanned(scanRoot: os.Path, sub: os.SubPath) extends Msg
-  case class Debounced(debounceId: Object) extends Msg
+  case class Synced() extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
   case class Retry() extends Msg
   case class LocalScanComplete() extends Msg
@@ -358,7 +362,15 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
   case class Waiting(vfsArr: Seq[Vfs[Signature]]) extends State({
     case SyncActor.Events(paths) => executeSync(paths, vfsArr)
     case SyncActor.Receive(Response.Ack()) => Waiting(vfsArr) // do nothing
-    case SyncActor.Debounced(debounceToken2) => Waiting(vfsArr) // do nothing
+  })
+
+  case class Syncing(bufferedPaths: Map[os.Path, Set[os.SubPath]], vfsArr: Seq[Vfs[Signature]]) extends State({
+    case SyncActor.Events(paths) => Syncing(joinMaps(paths, bufferedPaths), vfsArr)
+    case SyncActor.Synced() =>
+      if (bufferedPaths.isEmpty) Waiting(vfsArr)
+      else executeSync(bufferedPaths, vfsArr)
+
+    case SyncActor.Receive(Response.Ack()) => Syncing(bufferedPaths, vfsArr) // do nothing
   })
 
   def executeSync(paths: Map[os.Path, Set[os.SubPath]], vfsArr: Seq[Vfs[Signature]]) = {
@@ -369,11 +381,19 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       vfsArr,
       logger,
       m => agentReadWriter.send(AgentReadWriteActor.Send(m))
-    ).map{failures =>
-      if (failures.nonEmpty) this.send(SyncActor.Events(failures.reduceLeft(joinMaps(_, _))))
-      else agentReadWriter.send(AgentReadWriteActor.Send(SyncFiles.Complete()))
+    ).onComplete{ res =>
+      send(SyncActor.Synced())
+      res match {
+        case scala.util.Success(failures) =>
+          if (failures.exists(_.nonEmpty)) {
+            send(SyncActor.Events(failures.reduceLeft(_ ++ _)))
+          }
+          else agentReadWriter.send(AgentReadWriteActor.Send(SyncFiles.Complete()))
+        case scala.util.Failure(_) => send(SyncActor.Events(paths))
+      }
     }
-    Waiting(vfsArr)
+
+    Syncing(Map(), vfsArr)
   }
 }
 
@@ -381,91 +401,60 @@ object SkipActor{
   sealed trait Msg
   case class Paths(values: Set[os.Path]) extends Msg
   case class Scan() extends Msg
+  case class Scanned() extends Msg
 }
 class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
                 ignoreStrategy: String,
                 sendToSyncActor: SyncActor.Msg => Unit,
                 logger: SyncLogger)
-               (implicit ac: ActorContext) extends SimpleActor[SkipActor.Msg]{
-  val skippers = mapping.map(_ => Skipper.fromString(ignoreStrategy))
-  def run(msg: SkipActor.Msg) = msg match{
+               (implicit ac: ActorContext) extends StateMachineActor[SkipActor.Msg]{
+
+
+  def initialState = Scanning(Set(), mapping.map(_ => Skipper.fromString(ignoreStrategy)))
+  case class Scanning(buffered: Set[os.Path], skippers: Seq[Skipper]) extends State({
     case SkipActor.Scan() =>
+      ac.reportSchedule()
       common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
         (scanRoot, sub, sig) => sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub))
-      }.foreach{ _ =>
-        sendToSyncActor(SyncActor.LocalScanComplete())
+      }.onComplete{ t =>
+        this.send(SkipActor.Scanned())
+        ac.reportComplete()
       }
+      Scanning(buffered, skippers)
 
+    case SkipActor.Paths(values) => Scanning(buffered | values, skippers)
+    case SkipActor.Scanned() =>
+      if (buffered.nonEmpty){
+        val grouped =
+          for(((src, paths), skipper) <- group(buffered).zip(skippers))
+          yield (src, skipper.process(src, paths))
+
+        sendToSyncActor(SyncActor.Events(grouped.toMap))
+      }
+      sendToSyncActor(SyncActor.LocalScanComplete())
+      Active(skippers)
+  })
+
+  case class Active(skippers: Seq[Skipper]) extends State({
     case SkipActor.Paths(values) =>
 
-      val grouped = for(((src, dest), skipper) <- mapping.zip(skippers)) yield (
-        src,
-        skipper.process(
-          src,
-          for{
-            value <- values
-            if value.startsWith(src)
-          } yield (value.subRelativeTo(src), os.isDir(value))
-        )
-      )
+      val grouped =
+        for(((src, paths), skipper) <- group(values).zip(skippers))
+        yield (src, skipper.process(src, paths))
+
       sendToSyncActor(SyncActor.Events(grouped.toMap))
-  }
-}
 
-object DebounceActor{
-  sealed trait Msg
-  case class Paths(values: Set[os.Path]) extends Msg
-  case class Trigger(count: Int) extends Msg
-}
-
-class DebounceActor(handle: Set[os.Path] => Unit,
-                    debounceMillis: Int,
-                    pathsFlushCount: Int,
-                    logger: SyncLogger)
-                   (implicit ac: ActorContext)
-  extends StateMachineActor[DebounceActor.Msg]{
-
-  def initialState: State = Idle()
-
-
-  case class Idle() extends State({
-    case DebounceActor.Paths(paths) =>
-      logChanges(paths, "Detected")
-      ac.scheduleMsg(
-        this,
-        DebounceActor.Trigger(paths.size),
-        Duration.ofMillis(debounceMillis)
-      )
-      Debouncing(paths)
-    case DebounceActor.Trigger(count) => Idle()
+      Active(skippers)
   })
-
-  case class Debouncing(paths: Set[os.Path]) extends State({
-    case DebounceActor.Paths(morePaths) =>
-      logChanges(morePaths, "Ongoing")
-      val allPaths = paths ++ morePaths
-
-      ac.scheduleMsg(
-        this,
-        DebounceActor.Trigger(allPaths.size),
-        Duration.ofMillis(debounceMillis)
-      )
-      Debouncing(allPaths)
-    case DebounceActor.Trigger(count) =>
-      if (count != paths.size && paths.size < pathsFlushCount) Debouncing(paths)
-      else{
-        logChanges(paths, "Syncing")
-        handle(paths)
-        Idle()
-      }
-  })
-  def logChanges(paths: Iterable[os.Path], verb: String) = {
-    val suffix =
-      if (paths.size == 1) ""
-      else s"\nand ${paths.size - 1} other files"
-
-    logger("Debounce " + verb, paths)
-    logger.progress(s"$verb changes to", s"${paths.head.relativeTo(os.pwd)}$suffix")
+  def group(paths: Set[os.Path]) = {
+    for((src, dest) <- mapping)
+    yield (
+      src,
+      for{
+        value <- paths
+        if value.startsWith(src)
+      } yield (value.subRelativeTo(src), os.isDir(value))
+    )
   }
 }
 

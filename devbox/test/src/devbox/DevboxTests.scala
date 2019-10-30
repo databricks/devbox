@@ -37,7 +37,7 @@ object DevboxTests extends TestSuite{
       * - walkValidate("oslib", cases("oslib"), 1, 0)
       'git - walkValidate("oslib-git", cases("oslib"), 1, 0, ignoreStrategy = "")
       'restart - walkValidate("oslib-restart", cases("oslib"), 1, 0, restartSyncerEvery = Some(4))
-      'reconnect - walkValidate("oslib", cases("oslib"), 1, 0, randomKill = Some(50))
+      'reconnect - walkValidate("oslib-reconnect", cases("oslib"), 1, 0, randomKill = Some(50))
     }
 
     'scalatags - {
@@ -68,8 +68,8 @@ object DevboxTests extends TestSuite{
 
     def createSyncer() = {
       implicit val ac = new ActorContext.Test(
-//        ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
-        ExecutionContext.global,
+        ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
+//        ExecutionContext.global,
         _.printStackTrace()
       )
       val logger = new SyncLogger.Impl(
@@ -116,7 +116,7 @@ object DevboxTests extends TestSuite{
 
 
         ac.waitForInactivity()
-
+        logger("TEST INACTIVE")
         if (restartSyncerEvery.exists(count % _ == 0)) {
           logger("TEST STOP SYNCER")
           syncer.close()
@@ -219,7 +219,8 @@ object DevboxTests extends TestSuite{
         Seq(
           System.getenv("AGENT_EXECUTABLE"),
           "--ignore-strategy", ignoreStrategy,
-          "--working-dir", dest.toString
+          "--working-dir", dest.toString,
+          "--log-path", (dest / os.up / "agent-log.txt").toString(),
         ) ++
         (if (exitOnError) Seq("--exit-on-error") else Nil) ++
         (randomKill match{

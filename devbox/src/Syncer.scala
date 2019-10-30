@@ -20,7 +20,7 @@ class Syncer(agent: AgentApi,
 
   private[this] val watcher = os.watch.watch(
     mapping.map(_._1),
-    events => debouncer.send(DebounceActor.Paths(events)),
+    events => skipActor.send(SkipActor.Paths(events)),
     logger.apply(_, _)
   )
 
@@ -65,13 +65,6 @@ class Syncer(agent: AgentApi,
     mapping,
     ignoreStrategy,
     syncer.send(_),
-    statusLogger
-  )
-
-  val debouncer = new DebounceActor(
-    paths => skipActor.send(SkipActor.Paths(paths)),
-    debounceMillis,
-    500,
     statusLogger
   )
 

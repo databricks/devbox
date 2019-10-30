@@ -25,13 +25,14 @@ object InitialScan {
           .map { case (p, attrs) =>
             Future {
               val buffer = buffers.take()
-              try (scanRoot, p.subRelativeTo(scanRoot), Signature.compute(p, buffer, attrs.fileType))
+              try Signature.compute(p, buffer, attrs.fileType).map((scanRoot, p.subRelativeTo(scanRoot), _))
+              catch{case e: Throwable => None}
               finally buffers.put(buffer)
             }
           }
           .toVector
       )(()) {
-        case (_, (p, s, Some(sig))) => f(p, s, sig)
+        case (_, Some((p, s, sig))) => f(p, s, sig)
         case _ => ()
       }.map(_ => ())
     }

@@ -8,20 +8,34 @@ trait ActorContext extends ExecutionContext {
   def executionContext: ExecutionContext
   def reportFailure(t: Throwable): Unit
 
-  def reportSchedule(): Unit
-  def reportSchedule(a: Actor[_], msg: Any): Unit
+  def reportSchedule()
+                    (implicit fileName: sourcecode.FileName,
+                     line: sourcecode.Line): Unit
 
-  def reportComplete(): Unit
-  def reportComplete(a: Actor[_], msg: Any): Unit
+  def reportSchedule(a: Actor[_], msg: Any)
+                    (implicit fileName: sourcecode.FileName,
+                     line: sourcecode.Line): Unit = reportSchedule()
 
-  def scheduleMsg[T](a: Actor[T], msg: T, time: java.time.Duration): Unit
+  def reportComplete()
+                    (implicit fileName: sourcecode.FileName,
+                     line: sourcecode.Line): Unit
+
+  def reportComplete(a: Actor[_], msg: Any)
+                    (implicit fileName: sourcecode.FileName,
+                     line: sourcecode.Line): Unit = reportComplete()
+
+  def scheduleMsg[T](a: Actor[T], msg: T, time: java.time.Duration)
+                    (implicit fileName: sourcecode.FileName,
+                     line: sourcecode.Line): Unit
 
   def execute(runnable: Runnable): Unit = {
-    reportSchedule()
+    val fileName = sourcecode.FileName()
+    val line = sourcecode.Line()
+    reportSchedule()(fileName, line)
     executionContext.execute(new Runnable {
       def run(): Unit = {
         try runnable.run()
-        finally reportComplete()
+        finally reportComplete()(fileName, line)
       }
     })
   }
@@ -39,7 +53,9 @@ object ActorContext{
       }
     )
 
-    def scheduleMsg[T](a: Actor[T], msg: T, delay: java.time.Duration) = {
+    def scheduleMsg[T](a: Actor[T], msg: T, delay: java.time.Duration)
+                      (implicit fileName: sourcecode.FileName,
+                       line: sourcecode.Line)= {
       reportSchedule(a, msg)
       scheduler.schedule[Unit](
         () => {
@@ -56,11 +72,13 @@ object ActorContext{
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
 
-    def reportSchedule() = ()
-    def reportSchedule(a: Actor[_], msg: Any) = ()
+    def reportSchedule()
+                      (implicit fileName: sourcecode.FileName,
+                       line: sourcecode.Line)= ()
 
-    def reportComplete() = ()
-    def reportComplete(a: Actor[_], msg: Any) = ()
+    def reportComplete()
+                      (implicit fileName: sourcecode.FileName,
+                       line: sourcecode.Line)= ()
   }
 
   class Test(ec: ExecutionContext, logEx: Throwable => Unit) extends ActorContext.Scheduler {
@@ -70,7 +88,10 @@ object ActorContext{
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
 
-    def reportSchedule() = this.synchronized{
+    def reportSchedule()
+                      (implicit fileName: sourcecode.FileName,
+                       line: sourcecode.Line) = this.synchronized{
+//      println(s"reportSchedule (${fileName.value}:${line.value}) $active -> ${active + 1}")
       if (active == 0) {
         assert(promise.isCompleted)
         promise = concurrent.Promise[Unit]
@@ -78,15 +99,36 @@ object ActorContext{
       active += 1
     }
 
-    def reportSchedule(a: Actor[_], msg: Any) = reportSchedule()
+    override def reportSchedule(a: Actor[_], msg: Any)
+                               (implicit fileName: sourcecode.FileName,
+                                line: sourcecode.Line) = this.synchronized{
+//      println(s"reportSchedule (${fileName.value}:${line.value}) ($a, $msg) $active -> ${active + 1}")
+      if (active == 0) {
+        assert(promise.isCompleted)
+        promise = concurrent.Promise[Unit]
+      }
+      active += 1
+    }
 
 
-    def reportComplete() = this.synchronized{
+    def reportComplete()
+                      (implicit fileName: sourcecode.FileName,
+                       line: sourcecode.Line) = this.synchronized{
+//      println(s"reportComplete (${fileName.value}:${line.value}) $active -> ${active - 1}")
+      assert(active > 0)
       active -= 1
+
       if (active == 0) promise.success(())
     }
 
-    def reportComplete(a: Actor[_], msg: Any) = reportComplete()
+    override def reportComplete(a: Actor[_], msg: Any)
+                               (implicit fileName: sourcecode.FileName,
+                                line: sourcecode.Line) = this.synchronized{
+//      println(s"reportComplete (${fileName.value}:${line.value}) ($a, $msg) $active -> ${active - 1}")
+      assert(active > 0)
+      active -= 1
+      if (active == 0) promise.success(())
+    }
 
     def waitForInactivity(timeout: Option[java.time.Duration] = None) = {
       Await.result(
@@ -101,18 +143,22 @@ object ActorContext{
 }
 
 trait Actor[T]{
-  def send(t: T): Unit
+  def send(t: T)
+          (implicit fileName: sourcecode.FileName,
+           line: sourcecode.Line): Unit
 }
 
 abstract class BatchActor[T]()(implicit ac: ActorContext) extends Actor[T]{
   def runBatch(msgs: Seq[T]): Unit
 
-  private val queue = new mutable.Queue[T]()
+  private val queue = new mutable.Queue[(T, sourcecode.FileName, sourcecode.Line)]()
   private var scheduled = false
 
-  def send(t: T): Unit = synchronized{
+  def send(t: T)
+          (implicit fileName: sourcecode.FileName,
+           line: sourcecode.Line): Unit = synchronized{
     ac.reportSchedule(this, t)
-    queue.enqueue(t)
+    queue.enqueue((t, fileName, line))
     if (!scheduled){
       scheduled = true
       ac.execute(() => runWithItems())
@@ -121,9 +167,9 @@ abstract class BatchActor[T]()(implicit ac: ActorContext) extends Actor[T]{
 
   private[this] def runWithItems(): Unit = {
     val msgs = synchronized(queue.dequeueAll(_ => true))
-    try runBatch(msgs)
+    try runBatch(msgs.map(_._1))
     catch{case e: Throwable => ac.reportFailure(e)}
-    finally msgs.foreach(m => ac.reportComplete(this, m))
+    finally msgs.foreach(m => ac.reportComplete(this, m._1)(m._2, m._3))
     synchronized{
       if (queue.nonEmpty) ac.execute(() => runWithItems())
       else{

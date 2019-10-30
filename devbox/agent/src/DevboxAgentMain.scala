@@ -38,6 +38,11 @@ object DevboxAgentMain {
         "",
         (c, v) => c.copy(workingDir = v)
       ),
+      Arg[Config, os.Path](
+        "log-path", None,
+        "",
+        (c, v) => c.copy(logFile = Some(v))
+      ),
       Arg[Config, Unit](
         "exit-on-error", None,
         "",
@@ -47,7 +52,7 @@ object DevboxAgentMain {
         "random-kill", None,
         "",
         (c, v) => c.copy(randomKill = Some(v))
-      )
+      ),
     )
 
     Cli.groupArgs(args.toList, signature, Config()) match {
@@ -61,7 +66,14 @@ object DevboxAgentMain {
           ExecutionContext.Implicits.global,
           _.printStackTrace()
         )
-        val logger = new AgentLogger(n => os.home / ".devbox" / s"log$n.txt", 5 * 1024 * 1024)
+        val logger = new AgentLogger(
+          n => {
+            val logPath = os.Path(config.logFile.get, os.pwd)
+            val s"$logFileName.$logFileExt" = logPath.last
+            logPath / os.up / s"$logFileName$n.$logFileExt"
+          },
+          5 * 1024 * 1024
+        )
         logger("AGNT START", config.workingDir)
 
 
@@ -121,7 +133,7 @@ object DevboxAgentMain {
         case Rpc.PutFile(root, path, perms) =>
           val targetPath = wd / root / path
 
-          if (!os.exists(targetPath)) {
+          if (!os.exists(targetPath, followLinks = false)) {
             os.write(targetPath, "", perms)
           }
           client.writeMsg(Response.Ack())
