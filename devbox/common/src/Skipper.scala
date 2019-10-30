@@ -7,8 +7,8 @@ import scala.collection.mutable
 
 
 trait Skipper {
-  def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]): Set[os.SubPath]
-  def processSingle(base: os.Path, path: os.SubPath, isDir: Boolean): Boolean
+  def processBatch(base: os.Path, paths: Set[(os.SubPath, Boolean)]): Set[os.SubPath]
+  def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean): Boolean
 }
 
 object Skipper{
@@ -19,16 +19,16 @@ object Skipper{
   }
 
   object Null extends Skipper {
-    def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = paths.map(_._1)
-    def processSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = false
+    def processBatch(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = paths.map(_._1)
+    def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = false
   }
 
   object DotGit extends Skipper {
-    def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
-      paths.map(_._1).filter(_.segments(0) != ".git")
+    def processBatch(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
+      paths.map(_._1).filter(!_.segments.lift(0).contains(".git"))
     }
-    def processSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = {
-      path.segments(0) == ".git"
+    def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = {
+      path.segments.lift(0).contains(".git")
     }
   }
 
@@ -61,10 +61,10 @@ object Skipper{
     val gitIndexCache = GitIndexTree()
 
     def updateIgnoreCache(base: os.Path, path: os.SubPath) = {
-      if (os.isFile(base / path /  ".gitignore", followLinks = false)){
-        val lines = try os.read.lines(base / path / ".gitignore") catch{case e: Throwable => Nil }
+      if (os.isFile(base / path, followLinks = false)){
+        val lines = try os.read.lines(base / path) catch{case e: Throwable => Nil }
         val linesHash = lines.hashCode
-        if (!ignorePaths.get(path).exists(_._1 == linesHash)) {
+        if (!ignorePaths.get(path / os.up).exists(_._1 == linesHash)) {
 
           import collection.JavaConverters._
 
@@ -75,14 +75,14 @@ object Skipper{
               .asJava
           )
 
-          ignorePaths(path) = (linesHash, n)
+          ignorePaths(path / os.up) = (linesHash, n)
           ignoreCache.clear()
         }
       }
     }
 
     def updateIndexCache(base: os.Path, path: os.SubPath) = {
-      if (path.segments.isEmpty && os.isFile(base / path /  ".git" / "index", followLinks = false)){
+      if (path == os.sub / ".git" / "index" && os.isFile(base / path, followLinks = false)){
         val repo = new FileRepository((base / ".git").toIO)
         gitIndexCache.value.clear()
 
@@ -118,13 +118,19 @@ object Skipper{
       lazy val notIgnored = !ignoredEntries.exists(identity)
       indexed || notIgnored
     }
-    def processSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = {
-      updateIgnoreCache(base, path)
-      updateIndexCache(base, path)
+
+    def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = {
+      // During the initial scan, we want to look up the git index and gitignore
+      // files early, rather than waiting for them to turn up in our folder walk,
+      // so we can get an up to date skipper as soon as possible. Otherwise we
+      // might end up walking tons of files we do not care about only to realize
+      // later that they are all ignored
+      if (isDir) updateIgnoreCache(base, path / ".gitignore")
+      if (path == os.sub) updateIndexCache(base, os.sub / ".git" / "index")
       !checkFileSkipped(base, path, isDir)
     }
 
-    def process(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
+    def processBatch(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
       for(p <- ignorePaths.keySet){
         if (!os.isFile(base / p) && ignorePaths.contains(p)) {
           ignorePaths.remove(p)
@@ -132,7 +138,7 @@ object Skipper{
         }
       }
 
-      for((p, isDir) <- paths){
+      for((p, isDir) <- paths if !isDir){
         updateIgnoreCache(base, p)
         updateIndexCache(base, p)
       }

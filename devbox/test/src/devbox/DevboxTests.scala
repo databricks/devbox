@@ -9,67 +9,118 @@ import os.Path
 
 import collection.JavaConverters._
 import utest._
+import utest.framework.TestPath
 
 import scala.concurrent.ExecutionContext
 
 object DevboxTests extends TestSuite{
 
   val cases = Map(
-    "edge" -> getClass.getResource("/edge-cases.bundle").toURI.toString,
+    "simple" -> getClass.getResource("/edge-cases.bundle").toURI.toString,
     "oslib" -> System.getenv("OSLIB_BUNDLE"),
     "scalatags" -> System.getenv("SCALATAGS_BUNDLE"),
     "mill" -> System.getenv("MILL_BUNDLE"),
     "ammonite" -> System.getenv("AMMONITE_BUNDLE")
   )
 
-  def tests = Tests{
+  def tests = Tests {
     // A few example repositories to walk through and make sure the delta syncer
     // can function on every change of commit. Ordered by increasing levels of
     // complexity
-    'edge - {
-      * - walkValidate("edge", cases("edge"), 1, 0)
-      'git - walkValidate("edge-git", cases("edge"), 1, 0, ignoreStrategy = "")
-      'restart - walkValidate("edge-restart", cases("edge"), 1, 0, restartSyncerEvery = Some(1))
-      'reconnect - walkValidate("edge-reconnect", cases("edge"), 1, 0, randomKill = Some(20))
+    test("simple") {
+      test - testCase(1)
+      test("git") - testCase(1, ignoreStrategy = "")
+      test("restart") - testCase(1, restartInterval = Some(1))
+      test("reconnect") - testCase(1, randomKillInterval = Some(50))
     }
 
-    'oslib - {
-      * - walkValidate("oslib", cases("oslib"), 1, 0)
-      'git - walkValidate("oslib-git", cases("oslib"), 1, 0, ignoreStrategy = "")
-      'restart - walkValidate("oslib-restart", cases("oslib"), 1, 0, restartSyncerEvery = Some(4))
-      'reconnect - walkValidate("oslib-reconnect", cases("oslib"), 1, 0, randomKill = Some(50))
+    test("oslib") {
+      test - testCase(2)
+      test("git") - testCase(2, ignoreStrategy = "")
+      test("restart") - testCase(2, restartInterval = Some(4))
+      test("reconnect") - testCase(2, randomKillInterval = Some(200))
     }
 
-    'scalatags - {
-      * - walkValidate("scalatags", cases("scalatags"), 1, 0)
-      'restart - walkValidate("scalatags-restart", cases("scalatags"), 1, 0, restartSyncerEvery = Some(16))
+    test("scalatags") {
+      test - testCase(3)
+      test("git") - testCase(3, ignoreStrategy = "")
+      test("restart") - testCase(3, restartInterval = Some(16))
+      //      test("reconnect") testCase(3, randomKillInterval = Some(800))
     }
-    'mill - {
-      * - walkValidate("mill", cases("mill"), 4, 0)
-      'restart - walkValidate("mill-restart", cases("mill"), 4, 0, restartSyncerEvery = Some(64))
+    test("mill") {
+      test - testCase(4)
+      test("git") - testCase(4, ignoreStrategy = "")
+      test("restart") - testCase(4, restartInterval = Some(64))
+      //      test("reconnect") testCase(4, randomKillInterval = Some(3200))
+    }
+    test("parallel") {
+      test("simple") {
+        test - testCase(1)
+        test("git") - testCase(1, ignoreStrategy = "")
+        test("restart") - testCase(1, restartInterval = Some(1))
+        test("reconnect") - testCase(1, randomKillInterval = Some(50))
+      }
+
+      test("oslib") {
+        test - testCase(2)
+        test("git") - testCase(2, ignoreStrategy = "")
+        test("restart") - testCase(2, restartInterval = Some(4))
+        test("reconnect") - testCase(2, randomKillInterval = Some(200))
+      }
+
+      test("scalatags") {
+        test - testCase(3)
+        test("git") - testCase(3, ignoreStrategy = "")
+        test("restart") - testCase(3, restartInterval = Some(16))
+        //      test("reconnect") testCase(3, randomKillInterval = Some(800))
+      }
+      test("mill") {
+        test - testCase(4)
+        test("git") - testCase(4, ignoreStrategy = "")
+        test("restart") - testCase(4, restartInterval = Some(64))
+        //      'reconnect - testCase(4, randomKillInterval = Some(3200))
+      }
     }
   }
 
 
+  def testCase(validateInterval: Int,
+               ignoreStrategy: String = "dotgit",
+               restartInterval: Option[Int] = None,
+               randomKillInterval: Option[Int] = None,
+               parallel: Boolean = true)
+              (implicit tp: TestPath) = {
+    walkValidate(
+      tp.value.mkString("-"),
+      cases(tp.value.dropWhile(_ == "parallel").head),
+      validateInterval,
+      0,
+      ignoreStrategy = ignoreStrategy,
+      restartInterval = restartInterval,
+      randomKillInterval = randomKillInterval,
+      parallel = parallel
+    )
+  }
   def walkValidate(label: String,
                    uri: String,
-                   stride: Int,
+                   validateInterval: Int,
                    initialCommit: Int,
                    commitIndicesToCheck0: Seq[Int] = Nil,
                    ignoreStrategy: String = "dotgit",
-                   restartSyncerEvery: Option[Int] = None,
-                   randomKill: Option[Int] = None) = {
+                   restartInterval: Option[Int] = None,
+                   randomKillInterval: Option[Int] = None,
+                   parallel: Boolean = true) = {
 
     val (src, dest, log, commits, commitsIndicesToCheck, repo) =
-      initializeWalk(label, uri, stride, commitIndicesToCheck0)
+      initializeWalk(label, uri, validateInterval, commitIndicesToCheck0)
 
     val s"$logFileName.$logFileExt" = log.last
     val logFileBase = log / os.up
 
     def createSyncer() = {
       implicit val ac = new ActorContext.Test(
-        ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
-//        ExecutionContext.global,
+        if (parallel) ExecutionContext.global
+        else ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
         _.printStackTrace()
       )
       val logger = new SyncLogger.Impl(
@@ -83,7 +134,7 @@ object DevboxTests extends TestSuite{
         logger, ignoreStrategy,
         exitOnError = true,
         signatureMapping = (_, sig) => sig,
-        randomKill = randomKill
+        randomKill = randomKillInterval
       ))
     }
     var (logger, ac, syncer) = createSyncer()
@@ -104,7 +155,7 @@ object DevboxTests extends TestSuite{
         // system is inactive since the filesystem events haven't occurred yet
 
         logger("TEST CHECKOUT DONE", commit.getShortMessage)
-        Thread.sleep(100)
+        Thread.sleep(50)
         if (syncer == null) {
           logger("TEST RESTART SYNCER")
           val (newLogger, newAc, newSyncer) = createSyncer()
@@ -117,7 +168,7 @@ object DevboxTests extends TestSuite{
 
         ac.waitForInactivity()
         logger("TEST INACTIVE")
-        if (restartSyncerEvery.exists(count % _ == 0)) {
+        if (restartInterval.exists(count % _ == 0)) {
           logger("TEST STOP SYNCER")
           syncer.close()
           syncer = null
@@ -127,7 +178,7 @@ object DevboxTests extends TestSuite{
         // Allow validation not-every-commit, because validation is really slow
         // and hopefully if something gets messed up it'll get caught in a later
         // validation anyway.
-        if (count % stride == 0) {
+        if (count % validateInterval == 0) {
           logger("TEST VALIDATE")
           validate(src, dest, ignoreStrategy)
         }
@@ -246,7 +297,7 @@ object DevboxTests extends TestSuite{
       .map{case (p, attrs) => (p.subRelativeTo(base), attrs.isDir)}
       .toSet
 
-    skip.process(base, rawPaths)
+    skip.processBatch(base, rawPaths)
   }
 
   def computeSig(p: os.Path, buffer: Array[Byte]) = {

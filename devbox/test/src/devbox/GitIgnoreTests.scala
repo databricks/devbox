@@ -10,10 +10,10 @@ object GitIgnoreTests extends TestSuite {
       for((p, attrs) <- os.walk.attrs(base))
       yield (p.subRelativeTo(base), attrs.isDir)
 
-    skip.process(base, existingFiles.toSet)
+    skip.processBatch(base, existingFiles.toSet)
 
     def apply(p: os.SubPath, isDir: Boolean): Boolean = {
-      skip.process(base, Set(p -> isDir)).isEmpty
+      skip.processBatch(base, Set(p -> isDir)).isEmpty
     }
   }
 
@@ -52,9 +52,9 @@ object GitIgnoreTests extends TestSuite {
       val base = os.temp.dir()
       val gitIgnorePath = os.SubPath(gitIgnorePrefix) / ".gitignore"
       os.write(base / gitIgnorePath, gitIgnoreLine, createFolders = true)
-      skip.process(base, Set(gitIgnorePath -> false))
+      skip.processBatch(base, Set(gitIgnorePath -> false))
 
-      skip.process(base, Set(os.SubPath(path) -> (path.last == '/'))).isEmpty
+      skip.processBatch(base, Set(os.SubPath(path) -> (path.last == '/'))).isEmpty
     }
 
     'simple - {

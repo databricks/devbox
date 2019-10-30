@@ -44,9 +44,13 @@ class AgentReadWriteActor(agent: AgentApi,
       logStatusMsgForRpc(msg)
       msg match{
         case r: SyncFiles.RemoteMsg =>
-          val newBuffer = buffer :+ r
-          ac.reportSchedule()
-          sendRpc(newBuffer, 0, getRpcFor(r)).getOrElse(Active(newBuffer))
+          getRpcFor(r) match{
+            case None => Active(buffer)
+            case Some(rpc) =>
+              val newBuffer = buffer :+ r
+              ac.reportSchedule()
+              sendRpc(newBuffer, 0, rpc).getOrElse(Active(newBuffer))
+          }
 
         case _ => Active(buffer)
       }
@@ -116,7 +120,10 @@ class AgentReadWriteActor(agent: AgentApi,
           case (Some(end), _) => Some(end)
           case (None, msg) =>
             logStatusMsgForRpc(msg, "(Replaying)")
-            sendRpc(newBuffer, retryCount, getRpcFor(msg))
+            getRpcFor(msg) match{
+              case None => None
+              case Some(rpc) => sendRpc(newBuffer, retryCount, rpc)
+            }
         }
 
         failState.getOrElse(Active(newBuffer))
@@ -177,38 +184,42 @@ class AgentReadWriteActor(agent: AgentApi,
         )
     }
   }
-  def getRpcFor(msg: SyncFiles.RemoteMsg): Rpc = {
+  def getRpcFor(msg: SyncFiles.RemoteMsg): Option[Rpc] = {
     msg match{
-      case SyncFiles.Complete() => Rpc.Complete()
-      case SyncFiles.RemoteScan(paths) => Rpc.FullScan(paths)
-      case SyncFiles.RpcMsg(rpc) => rpc
+      case SyncFiles.Complete() => Some(Rpc.Complete())
+      case SyncFiles.RemoteScan(paths) => Some(Rpc.FullScan(paths))
+      case SyncFiles.RpcMsg(rpc) => Some(rpc)
 
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
         val byteArr = new Array[Byte](Util.blockSize)
         val buf = ByteBuffer.wrap(byteArr)
 
-        Util.autoclose(os.read.channel(src / subPath)) { channel =>
-          buf.rewind()
-          channel.position(chunkIndex * Util.blockSize)
-          var n = 0
-          while ( {
-            if (n == Util.blockSize) false
-            else channel.read(buf) match {
-              case -1 => false
-              case d =>
-                n += d
-                true
-            }
-          }) ()
+        try {
+          Util.autoclose(os.read.channel(src / subPath)) { channel =>
+            buf.rewind()
+            channel.position(chunkIndex * Util.blockSize)
+            var n = 0
+            while ( {
+              if (n == Util.blockSize) false
+              else channel.read(buf) match {
+                case -1 => false
+                case d =>
+                  n += d
+                  true
+              }
+            }) ()
 
-          val msg = Rpc.WriteChunk(
-            dest,
-            subPath,
-            chunkIndex * Util.blockSize,
-            new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
-          )
-          statusActor.send(StatusActor.FilesAndBytes(0, n))
-          msg
+            val msg = Rpc.WriteChunk(
+              dest,
+              subPath,
+              chunkIndex * Util.blockSize,
+              new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
+            )
+            statusActor.send(StatusActor.FilesAndBytes(0, n))
+            Some(msg)
+          }
+        }catch{case e: java.nio.file.NoSuchFileException =>
+          None
         }
     }
   }
@@ -434,7 +445,7 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
       if (buffered.nonEmpty){
         val grouped =
           for(((src, paths), skipper) <- group(buffered).zip(skippers))
-          yield (src, skipper.process(src, paths))
+          yield (src, skipper.processBatch(src, paths))
 
         sendToSyncActor(SyncActor.Events(grouped.toMap))
       }
@@ -447,7 +458,7 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
 
       val grouped =
         for(((src, paths), skipper) <- group(values).zip(skippers))
-        yield (src, skipper.process(src, paths))
+        yield (src, skipper.processBatch(src, paths))
 
       sendToSyncActor(SyncActor.Events(grouped.toMap))
 

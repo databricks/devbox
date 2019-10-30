@@ -9,11 +9,12 @@ object InitialScan {
 
       if (!os.isDir(scanRoot)) os.makeDir.all(scanRoot)
 
+      skipper.processInitialScanSingle(scanRoot, os.sub, true)
+
       val fileStream = os.walk.stream.attrs(
         scanRoot,
-        (p, attrs) => skipper.processSingle(scanRoot, p.subRelativeTo(scanRoot), attrs.isDir)
+        (p, attrs) => skipper.processInitialScanSingle(scanRoot, p.subRelativeTo(scanRoot), attrs.isDir)
       )
-
 
       fileStream
         .map { case (p, attrs) =>
