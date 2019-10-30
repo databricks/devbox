@@ -42,7 +42,7 @@ object Vfs{
 
   // Update stateVfs according to the given action
   def overwriteUpdateVfs(p: os.SubPath, sig: Signature, vfs: Vfs[Signature]) = {
-    val (name, folder) = vfs.resolveParent(p).get
+    val (name, folder) = vfs.resolveParent(p).getOrElse(throw new Exception("overwriteUpdateVfs failed"))
     folder.children(name) =
       if (!sig.isInstanceOf[Signature.Dir]) Vfs.File(sig)
       else Vfs.Dir(sig, mutable.LinkedHashMap.empty[String, Vfs.Node[Signature]])

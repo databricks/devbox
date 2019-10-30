@@ -68,7 +68,10 @@ object DevboxAgentMain {
         )
         val logger = new AgentLogger(
           n => {
-            val logPath = os.Path(config.logFile.get, os.pwd)
+            val logPath = os.Path(
+              config.logFile.getOrElse(throw new Exception("config.logFile is None")),
+              os.pwd
+            )
             val s"$logFileName.$logFileExt" = logPath.last
             logPath / os.up / s"$logFileName$n.$logFileExt"
           },
@@ -172,7 +175,14 @@ object DevboxAgentMain {
 
       }catch{
         case e: EOFException => throw e // master process has closed up, exit
-        case e: Throwable if !exitOnError => logger("AGNT ERROR", e)
+        case e: Throwable if !exitOnError =>
+          import java.io.PrintWriter
+          import java.io.StringWriter
+          val sw = new StringWriter()
+          val pw = new PrintWriter(sw)
+          e.printStackTrace(pw)
+          pw.flush()
+          logger("AGNT ERROR", sw.toString)
       }
     }
   }

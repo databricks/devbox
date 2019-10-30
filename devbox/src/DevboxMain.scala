@@ -71,8 +71,9 @@ object DevboxMain {
 
           implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
           val (prep, connect) = remaining.splitAt(remaining.indexOf("--"))
-          val s"$logFileName.$logFileExt" = config.logFile.get.last
-          val logFileBase = config.logFile.get / os.up
+          val logFile = config.logFile.getOrElse(throw new Exception("config.logFile is None"))
+          val s"$logFileName.$logFileExt" = logFile.last
+          val logFileBase = logFile / os.up
           Util.autoclose(new Syncer(
             new ReliableAgent(prep, connect.drop(1) /* drop the -- */, os.pwd),
             for(s <- config.repo)

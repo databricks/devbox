@@ -27,8 +27,7 @@ object SyncFiles {
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
-                  signatureTransformer: (os.SubPath, Signature) => Signature,
-                  changedPaths0: Map[os.Path, Set[os.SubPath]],
+                  changedPaths0: Map[os.Path, Map[os.SubPath, Option[Signature]]],
                   vfsArr: Seq[Vfs[Signature]],
                   logger: SyncLogger,
                   send: Msg => Unit)
@@ -39,33 +38,19 @@ object SyncFiles {
     // differences such as trailing slashes
     logger("SYNC EVENTS", changedPaths0)
 
-    Future.sequence(
-      for {
-        ((src, dest), i) <- mapping.zipWithIndex
-        eventPaths <- changedPaths0.get(src)
-      } yield {
-        logger("SYNC BASE", eventPaths)
+    for {
+      ((src, dest), i) <- mapping.zipWithIndex
+      eventPaths <- changedPaths0.get(src)
+    } yield {
+      logger("SYNC BASE", eventPaths)
 
-        val exitCode =
-          if (eventPaths.isEmpty) Future.successful(Left(SyncFiles.NoOp))
-          else SyncFiles.synchronizeRepo(
-            logger, vfsArr(i), src, dest,
-            eventPaths, signatureTransformer,
-            send
-          )
+      SyncFiles.synchronizeRepo(
+        logger, vfsArr(i), src, dest,
+        eventPaths,
+        send
+      )
+    }
 
-        exitCode.map{
-          case Right(_) => Map.empty[os.Path, Set[os.SubPath]]
-          case Left(SyncFiles.NoOp) => Map.empty[os.Path, Set[os.SubPath]]
-          case Left(SyncFiles.SyncFail(value)) =>
-            val x = new StringWriter()
-            val p = new PrintWriter(x)
-            value.printStackTrace(p)
-            logger("SYNC FAILED", x.toString)
-            Map(src -> eventPaths)
-        }
-      }
-    )
   }
 
   /**
@@ -87,25 +72,24 @@ object SyncFiles {
                       vfs: Vfs[Signature],
                       src: os.Path,
                       dest: os.RelPath,
-                      eventPaths: Set[os.SubPath],
-                      signatureTransformer: (os.SubPath, Signature) => Signature,
+                      eventPaths: Map[os.SubPath, Option[Signature]],
                       send: Msg => Unit)
-                     (implicit ec: ExecutionContext): Future[Either[ExitCode, Unit]] = {
+                     (implicit ec: ExecutionContext): Unit = {
 
-    computeSignatures(eventPaths, vfs, src, logger, signatureTransformer).transform{
-      case scala.util.Success(signatureMapping) =>
-        logger("SYNC SIGNATURE", signatureMapping)
-        if (signatureMapping.isEmpty) scala.util.Success(Left(NoOp))
-        else {
+    val signatureMapping = for{
+      (sub, newSig) <- eventPaths
+      oldSig = vfs.resolve(sub).map(_.value)
+      if newSig != oldSig
+    } yield (sub, newSig, oldSig)
 
-          send(IncrementFileTotal(src, signatureMapping.map(_._1).toSet))
-          val sortedSignatures = sortSignatureChanges(signatureMapping)
 
-          syncAllFiles(vfs, send, sortedSignatures, src, dest, logger)
-          scala.util.Success(Right(()))
-        }
-      case scala.util.Failure(ex) =>
-        scala.util.Success(Left(SyncFail(ex)))
+    logger("SYNC SIGNATURE", signatureMapping)
+
+    if (signatureMapping.nonEmpty) {
+      send(IncrementFileTotal(src, signatureMapping.map(_._1).toSet))
+      val sortedSignatures = sortSignatureChanges(signatureMapping.toSeq)
+
+      syncAllFiles(vfs, send, sortedSignatures, src, dest, logger)
     }
   }
 
@@ -240,12 +224,10 @@ object SyncFiles {
   }
 
   def computeSignatures(eventPaths: Set[os.SubPath],
-                        stateVfs: Vfs[Signature],
                         src: os.Path,
-                        logger: SyncLogger,
                         signatureTransformer: (os.SubPath, Signature) => Signature)
                        (implicit ec: ExecutionContext)
-  : Future[Seq[(os.SubPath, Option[Signature], Option[Signature])]] = {
+  : Future[Seq[(os.SubPath, Option[Signature])]] = {
 
     val eventPathsLinks = eventPaths.map(p => (p, os.isLink(src / p)))
     // Existing under a differently-cased name counts as not existing.
@@ -265,8 +247,7 @@ object SyncFiles {
 
     val buffers = new LinkedBlockingQueue[Array[Byte]]()
     for(i <- 0 until 6) buffers.add(new Array[Byte](Util.blockSize))
-    val count = new java.util.concurrent.atomic.AtomicInteger(0)
-    val total = eventPathsLinks.size
+
     val futures = eventPathsLinks
       .iterator
       .map{ case (sub, isLink) =>
@@ -283,18 +264,12 @@ object SyncFiles {
                 .map(signatureTransformer(sub, _))
               finally buffers.put(buffer)
             }
-          val oldSig = stateVfs.resolve(sub).map(_.value)
-          logger.progress(
-            s"Checking for changes [${count.getAndIncrement()}/$total]",
-            sub.toString()
-          )
 
-          if (newSig == oldSig) None
-          else Some(Tuple3(sub, newSig, oldSig))
+          (sub, newSig)
         }
       }
 
     val sequenced = scala.concurrent.Future.sequence(futures.toSeq)
-    sequenced.map(_.flatten)
+    sequenced
   }
 }

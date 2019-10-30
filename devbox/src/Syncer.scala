@@ -51,7 +51,6 @@ class Syncer(agent: AgentApi,
     agentReadWriter,
     mapping,
     statusLogger,
-    signatureTransformer,
     ignoreStrategy,
     Executors.newSingleThreadScheduledExecutor(),
     statusActor
@@ -63,10 +62,15 @@ class Syncer(agent: AgentApi,
     statusLogger
   )
 
+  val signatureActor = new SignatureActor(
+    syncer.send(_),
+    signatureTransformer
+  )
+
   val skipActor = new SkipActor(
     mapping,
     ignoreStrategy,
-    syncer.send(_),
+    signatureActor.send(_),
     statusLogger
   )
 

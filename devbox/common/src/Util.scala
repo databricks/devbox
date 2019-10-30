@@ -56,4 +56,17 @@ object Util {
     val digitGroups = (Math.log10(size) / Math.log10(1024)).toInt
     bytesFormatter.format(size / Math.pow(1024, digitGroups)) + " " + units(digitGroups)
   }
+
+
+  def joinMaps[K, V](left: Map[K, Set[V]], right: Map[K, Set[V]]) = {
+    (left.keySet ++ right.keySet)
+      .map{k => (k, left.getOrElse(k, Set()) ++ right.getOrElse(k, Set()))}
+      .toMap
+  }
+
+  def joinMaps2[K, V, Z](left: Map[K, Map[V, Z]], right: Map[K, Map[V, Z]]) = {
+    (left.keySet ++ right.keySet)
+      .map{k => (k, left.getOrElse(k, Map()) ++ right.getOrElse(k, Map()))}
+      .toMap
+  }
 }
