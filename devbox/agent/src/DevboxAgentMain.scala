@@ -115,14 +115,11 @@ object DevboxAgentMain {
             yield skippers.getOrElseUpdate(p, Skipper.fromString(ignoreStrategy))
 
 
-          Await.result(
-            InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig) =>
-              client.writeMsg(
-                Response.Scanned(scanRoot.relativeTo(wd), p, sig)
-              )
-            }(ExecutionContext.global),
-            Duration.Inf
-          )
+          InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig) =>
+            client.writeMsg(
+              Response.Scanned(scanRoot.relativeTo(wd), p, sig)
+            )
+          }
 
           client.writeMsg(Response.Ack())
 

@@ -58,14 +58,16 @@ class AgentReadWriteActor(agent: AgentApi,
 
     case AgentReadWriteActor.Receive(data) =>
       syncer.send(SyncActor.Receive(data))
-
       if (!data.isInstanceOf[Response.Ack]) Active(buffer)
       else {
         ac.reportComplete()
-
         val msg = buffer.head
+        pprint.log(msg.getClass.getSimpleName)
         if (buffer.tail.nonEmpty) logStatusMsgForRpc(msg, "(Complete)")
-        else if (buffer.head == SyncFiles.Complete()) statusActor.send(StatusActor.Done())
+        else {
+          if (buffer.head == SyncFiles.Complete()) statusActor.send(StatusActor.Done())
+        }
+
         Active(buffer.tail)
       }
 
@@ -76,8 +78,11 @@ class AgentReadWriteActor(agent: AgentApi,
 
   case class RestartSleeping(buffer: Vector[SyncFiles.Msg], retryCount: Int) extends State({
     case AgentReadWriteActor.Send(msg) =>
-      ac.reportSchedule()
-      RestartSleeping(buffer ++ getRpcFor(msg).map(_ => msg), retryCount)
+      val newMsg = getRpcFor(msg).map{ _ =>
+        ac.reportSchedule()
+        msg
+      }
+      RestartSleeping(buffer ++ newMsg, retryCount)
 
     case AgentReadWriteActor.ReadFailed() => RestartSleeping(buffer, retryCount)
 
@@ -93,7 +98,9 @@ class AgentReadWriteActor(agent: AgentApi,
       )
       val startError = if (started) None else Some(restart(buffer, retryCount))
 
-      startError.getOrElse{
+      logger.info("Restarting Devbox agent", startError.toString)
+
+      val res = startError.getOrElse{
         spawnReaderThread()
         val newMsg =
           if (buffer.nonEmpty) None
@@ -112,7 +119,8 @@ class AgentReadWriteActor(agent: AgentApi,
 
         failState.getOrElse(Active(newBuffer))
       }
-
+      logger.info("Restarting Devbox agent", res.toString)
+      res
     case AgentReadWriteActor.Close() =>
       agent.destroy()
       Closed()
@@ -205,6 +213,7 @@ class AgentReadWriteActor(agent: AgentApi,
   }
 
   def spawnReaderThread() = {
+    println("AgentReadWriteActor#spawnReaderThread")
     new Thread(() => {
       while ( {
         val strOpt =
@@ -409,17 +418,14 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
                 logger: SyncLogger)
                (implicit ac: ActorContext) extends StateMachineActor[SkipActor.Msg]{
 
-
   def initialState = Scanning(Set(), mapping.map(_ => Skipper.fromString(ignoreStrategy)))
+
   case class Scanning(buffered: Set[os.Path], skippers: Seq[Skipper]) extends State({
     case SkipActor.Scan() =>
-      ac.reportSchedule()
       common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
         (scanRoot, sub, sig) => sendToSyncActor(SyncActor.LocalScanned(scanRoot, sub))
-      }.onComplete{ t =>
-        this.send(SkipActor.Scanned())
-        ac.reportComplete()
       }
+      this.send(SkipActor.Scanned())
       Scanning(buffered, skippers)
 
     case SkipActor.Paths(values) => Scanning(buffered | values, skippers)
@@ -446,6 +452,7 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
 
       Active(skippers)
   })
+
   def group(paths: Set[os.Path]) = {
     for((src, dest) <- mapping)
     yield (

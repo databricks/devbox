@@ -5,6 +5,7 @@ import scala.collection.mutable
 import scala.concurrent.{Await, ExecutionContext}
 
 trait ActorContext extends ExecutionContext {
+  def getActive = 0L
   def executionContext: ExecutionContext
   def reportFailure(t: Throwable): Unit
 
@@ -84,7 +85,7 @@ object ActorContext{
   class Test(ec: ExecutionContext, logEx: Throwable => Unit) extends ActorContext.Scheduler {
     @volatile private[this] var active = 0L
     @volatile private[this] var promise = concurrent.Promise.successful[Unit](())
-
+    override def getActive = synchronized( active )
     def executionContext = ec
     def reportFailure(t: Throwable) = logEx(t)
 
