@@ -14,15 +14,15 @@ object BasePathSet{
   * Comes in both mutable and immutable flavors. Generally append-only, with no
   * provision for removing elements from the set except by throwing away the whole thing
   *
-  * Allows efficient [[containsPathPrefix]] checks, as well as iteration over prefixed
-  * elements via [[walk]]
+  * Allows efficient insertion, [[containsPathPrefix]] checks, [[size]] checks, as
+  * well as iteration over prefixed elements via [[walk]] and [[walkSubPaths]]
   */
 abstract class BasePathSet(){
 
 
   protected def value: BasePathSet.Node
 
-  def getSize: Int
+  def size: Int
 
   def containsPathPrefix(segments: IterableOnce[String]): Boolean = {
     query(segments).nonEmpty
@@ -32,7 +32,7 @@ abstract class BasePathSet(){
     segments
       .foldLeft(Option(value)) {
         case (None, _) => None
-        case (Some(node:BasePathSet. Node), segment) => node.children.get(segment)
+        case (Some(node), segment) => node.children.get(segment)
       }
   }
   def walk(baseSegments: Seq[String]): geny.Generator[IndexedSeq[String]] = {
@@ -74,8 +74,8 @@ object MutablePathSet{
 class MutablePathSet() extends BasePathSet(){
 
   protected var value = new MutablePathSet.Node()
-  protected var size = 0
-  def getSize = size
+  protected var size0 = 0
+  def size = size0
   def add(segments: IterableOnce[String]): Unit = {
     var current = value
     for(segment <- segments){
@@ -83,11 +83,11 @@ class MutablePathSet() extends BasePathSet(){
     }
     if (!current.hasValue) {
       current.hasValue = true
-      size += 1
+      size0 += 1
     }
   }
   def clear() = {
-    size = 0
+    size0 = 0
     value = new MutablePathSet.Node()
     this
   }
@@ -95,12 +95,17 @@ class MutablePathSet() extends BasePathSet(){
 }
 object PathSet{
   case class Node(hasValue: Boolean = false,
-                  children: Map[String, Node] = Map()) extends BasePathSet.Node
+                  children: Map[String, Node] = Map.empty) extends BasePathSet.Node
+
+  /**
+    * Shared instance to represent the common case of a file with no children
+    */
+  val ZeroChildLeaveNode = Node(hasValue = true)
 }
 class PathSet(protected val value: PathSet.Node = PathSet.Node(),
-              size: Int = 0) extends BasePathSet{
+              size0: Int = 0) extends BasePathSet{
 
-  def getSize = size
+  def size = size0
   def withPaths(segments: geny.Generator[IterableOnce[String]]): PathSet = {
     segments.foldLeft(this)((s, p) => s.withPath(p))
   }
@@ -111,7 +116,10 @@ class PathSet(protected val value: PathSet.Node = PathSet.Node(),
       else{
         val key = segmentsIter.next
         val (newChild, childNewPath) = current.children.get(key) match{
-          case None => rec(PathSet.Node())
+          case None =>
+            if (!segmentsIter.hasNext) (PathSet.ZeroChildLeaveNode, true)
+            else rec(PathSet.Node())
+
           case Some(child) => rec(child)
         }
         (current.copy(children = current.children.updated(key, newChild)), childNewPath)
@@ -120,7 +128,7 @@ class PathSet(protected val value: PathSet.Node = PathSet.Node(),
 
     val (newValue, newPath) = rec(value)
 
-    new PathSet(newValue, if (newPath) size + 1 else size)
+    new PathSet(newValue, if (newPath) size0 + 1 else size0)
 
   }
 }

@@ -454,7 +454,7 @@ class SkipActor(mapping: Seq[(os.Path, os.RelPath)],
       Scanning(newBuffered, skippers)
 
     case SkipActor.Scanned() =>
-      if (buffered.getSize > 0){
+      if (buffered.size > 0){
         val grouped =
           for(((src, paths), skipper) <- group(buffered).zip(skippers))
           yield (src, skipper.processBatch(src, paths))
@@ -541,13 +541,13 @@ class StatusActor(setImage: String => Unit,
 
       case msg: StatusActor.SyncingFile =>
 
-        logger.progress(s"${msg.prefix}$syncFiles/$totalFiles${msg.suffix}".split("\n"):_*)
+        logger.progress(s"${msg.prefix}${syncFiles.size}/${totalFiles.size}${msg.suffix}".split("\n"):_*)
         debounceReceive(msg)
 
       case StatusActor.IncrementFileTotal(base, subs) =>
 
         val newTotalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))
-        logger.info(s"${newTotalFiles.getSize} paths changed", subs.head.toString())
+        logger.info(s"${newTotalFiles.size} paths changed", subs.head.toString())
         this.copy(totalFiles = newTotalFiles)
 
 
@@ -581,7 +581,7 @@ class StatusActor(setImage: String => Unit,
         case StatusActor.Greyed(msg) => this.copy(icon = IconState("grey-dash", msg))
 
         case StatusActor.SyncingFile(prefix, suffix) =>
-          this.copy(icon = IconState("blue-sync", s"$prefix$syncFiles/$totalFiles$suffix"))
+          this.copy(icon = IconState("blue-sync", s"$prefix${syncFiles.size}/${totalFiles.size}$suffix"))
 
         case StatusActor.Done() =>
           StatusState(
@@ -597,7 +597,7 @@ class StatusActor(setImage: String => Unit,
 
   def syncCompleteMsg(syncFiles: PathSet, syncBytes: Long) = {
     s"Syncing Complete\n" +
-    s"${Util.formatInt(syncFiles.getSize)} files ${Util.readableBytesSize(syncBytes)}\n" +
+    s"${Util.formatInt(syncFiles.size)} files ${Util.readableBytesSize(syncBytes)}\n" +
     s"${Util.timeFormatter.format(java.time.Instant.now())}"
   }
 
