@@ -12,8 +12,8 @@ object SyncFiles {
 
   sealed trait Msg
 
-  case class IncrementFileTotal(totalFiles: Int, example: os.SubPath) extends Msg
-  case class StartFile() extends Msg
+  case class IncrementFileTotal(base: os.Path, subs: Set[os.SubPath]) extends Msg
+  case class StartFile(p: os.Path) extends Msg
 
   sealed trait RemoteMsg extends Msg
   case class Complete() extends RemoteMsg
@@ -98,7 +98,7 @@ object SyncFiles {
         if (signatureMapping.isEmpty) scala.util.Success(Left(NoOp))
         else {
 
-          send(IncrementFileTotal(signatureMapping.size, signatureMapping.head._1))
+          send(IncrementFileTotal(src, signatureMapping.map(_._1).toSet))
           val sortedSignatures = sortSignatureChanges(signatureMapping)
 
           syncAllFiles(vfs, send, sortedSignatures, src, dest, logger)
@@ -148,7 +148,7 @@ object SyncFiles {
     }
     for ((subPath, localSig, remoteSig) <- signatureMapping) {
       logger.apply("SYNC PATH", (subPath, localSig, remoteSig))
-      send(StartFile())
+      send(StartFile(src / subPath))
       syncFileMetadata(dest, client, subPath, localSig, remoteSig)
 
       localSig match{

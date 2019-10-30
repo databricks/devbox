@@ -44,7 +44,7 @@ object Util {
   val timeFormatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
     .withZone(ZoneId.systemDefault())
 
-  def formatInt(number: Int) = {
+  def formatInt(number: Long) = {
     val numberFormat = java.text.NumberFormat.getNumberInstance(java.util.Locale.US)
     numberFormat.format(number)
   }

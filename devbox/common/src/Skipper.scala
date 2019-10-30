@@ -40,25 +40,8 @@ object Skipper{
       Boolean
     ]
 
-    case class GitIndexTree(value: mutable.LinkedHashMap[String, GitIndexTree] = mutable.LinkedHashMap.empty){
-      def containsPath(segments: Seq[String]): Boolean = {
-        segments
-          .foldLeft(Option(this)) {
-            case (None, _) => None
-            case (Some(node), segment) => node.value.get(segment)
-          }
-          .nonEmpty
-      }
 
-      def createPath(segments: Seq[String]): Unit = {
-        var current = this
-        for(segment <- segments){
-          current = current.value.getOrElseUpdate(segment, GitIndexTree())
-        }
-      }
-    }
-
-    val gitIndexCache = GitIndexTree()
+    val gitIndexCache = new PathSet()
 
     def updateIgnoreCache(base: os.Path, path: os.SubPath) = {
       if (os.isFile(base / path, followLinks = false)){
@@ -84,17 +67,17 @@ object Skipper{
     def updateIndexCache(base: os.Path, path: os.SubPath) = {
       if (path == os.sub / ".git" / "index" && os.isFile(base / path, followLinks = false)){
         val repo = new FileRepository((base / ".git").toIO)
-        gitIndexCache.value.clear()
+        gitIndexCache.clear()
 
         for(e <- org.eclipse.jgit.dircache.DirCache.read(repo).getEntriesWithin("")){
-          gitIndexCache.createPath(e.getPathString.split('/'))
+          gitIndexCache.add(e.getPathString.split('/'))
         }
         repo.close()
       }
     }
 
     def checkFileSkipped(base: os.Path, path: os.SubPath, isDir: Boolean) = {
-      lazy val indexed = gitIndexCache.containsPath(path.segments)
+      lazy val indexed = gitIndexCache.contains(path.segments)
       lazy val ignoredEntries = for {
         (enclosingPartialPath, i) <- path.segments.inits.zipWithIndex
         if enclosingPartialPath.nonEmpty

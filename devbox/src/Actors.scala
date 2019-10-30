@@ -4,7 +4,6 @@ import java.nio.ByteBuffer
 import java.time.{Duration, ZoneId}
 import java.time.format.{DateTimeFormatter, FormatStyle}
 import java.util.concurrent.ScheduledExecutorService
-
 import devbox.common.{
   ActorContext,
   Bytes,
@@ -13,6 +12,7 @@ import devbox.common.{
   RpcClient,
   Signature,
   SimpleActor,
+  PathSet,
   Skipper,
   StateMachineActor,
   SyncLogger,
@@ -171,7 +171,7 @@ class AgentReadWriteActor(agent: AgentApi,
 
       case SyncFiles.IncrementFileTotal(totalFiles, example) =>
         statusActor.send(StatusActor.IncrementFileTotal(totalFiles, example))
-      case SyncFiles.StartFile() => statusActor.send(StatusActor.FilesAndBytes(1, 0))
+      case SyncFiles.StartFile(p) => statusActor.send(StatusActor.FilesAndBytes(Set(p), 0))
 
       case SyncFiles.RpcMsg(rpc) =>
         statusActor.send(
@@ -215,7 +215,7 @@ class AgentReadWriteActor(agent: AgentApi,
               chunkIndex * Util.blockSize,
               new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
             )
-            statusActor.send(StatusActor.FilesAndBytes(0, n))
+            statusActor.send(StatusActor.FilesAndBytes(Set(), n))
             Some(msg)
           }
         }catch{case e: java.nio.file.NoSuchFileException =>
@@ -225,7 +225,6 @@ class AgentReadWriteActor(agent: AgentApi,
   }
 
   def spawnReaderThread() = {
-    println("AgentReadWriteActor#spawnReaderThread")
     new Thread(() => {
       while ( {
         val strOpt =
@@ -351,7 +350,14 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
                             scansComplete: Int) extends State({
     case SyncActor.LocalScanned(base, sub) =>
       logger.progress(s"Scanning local [${localPathCount + 1}] remote [$remotePathCount]", sub.toString())
-      RemoteScanning(joinMaps(localPaths, Map(base -> Set(sub))), remotePaths, localPathCount + 1, remotePathCount, vfsArr, scansComplete)
+      RemoteScanning(
+        joinMaps(localPaths, Map(base -> Set(sub))),
+        remotePaths,
+        localPathCount + 1,
+        remotePathCount,
+        vfsArr,
+        scansComplete
+      )
 
     case SyncActor.Events(paths) =>
       RemoteScanning(joinMaps(localPaths, paths), remotePaths, localPathCount, remotePathCount, vfsArr, scansComplete)
@@ -482,8 +488,8 @@ object StatusActor{
   sealed trait StatusMsg extends Msg
   case class Syncing(msg: String) extends StatusMsg
   case class SyncingFile(prefix: String, suffix: String) extends StatusMsg
-  case class IncrementFileTotal(total: Int, example: os.SubPath) extends Msg
-  case class FilesAndBytes(files: Int, bytes: Long) extends Msg
+  case class IncrementFileTotal(base: os.Path, subs: Set[os.SubPath]) extends Msg
+  case class FilesAndBytes(files: Set[os.Path], bytes: Long) extends Msg
   case class Done() extends StatusMsg
   case class Error(msg: String) extends StatusMsg
   case class Greyed(msg: String) extends StatusMsg
@@ -499,8 +505,8 @@ class StatusActor(setImage: String => Unit,
   def initialState = StatusState(
     IconState("blue-tick", "Devbox initializing"),
     DebounceIdle(),
-    0,
-    0,
+    new PathSet(),
+    new PathSet(),
     0
   )
   case class IconState(image: String, tooltip: String)
@@ -511,8 +517,8 @@ class StatusActor(setImage: String => Unit,
   case class DebounceFull(value: StatusActor.StatusMsg) extends DebounceState
   case class StatusState(icon: IconState,
                          debounced: DebounceState,
-                         syncFiles: Int,
-                         totalFiles: Int,
+                         syncFiles: PathSet,
+                         totalFiles: PathSet,
                          syncBytes: Long) extends State{
     override def run = {
       case msg: StatusActor.Syncing => debounceReceive(msg)
@@ -529,15 +535,19 @@ class StatusActor(setImage: String => Unit,
         logger.progress(s"${msg.prefix}$syncFiles/$totalFiles${msg.suffix}".split("\n"):_*)
         debounceReceive(msg)
 
-      case StatusActor.IncrementFileTotal(nTotal, example) =>
-        val newTotal = totalFiles + nTotal
-        logger.info(s"$newTotal paths changed", example.toString())
-        this.copy(totalFiles = totalFiles + newTotal)
+      case StatusActor.IncrementFileTotal(base, subs) =>
+        for(sub <- subs){
+          totalFiles.add((base / sub).segments)
+        }
+        logger.info(s"${totalFiles.getSize} paths changed", subs.head.toString())
+        this
 
 
       case StatusActor.FilesAndBytes(nFiles, nBytes) =>
+        for(p <- nFiles){
+          syncFiles.add(p.segments)
+        }
         this.copy(
-          syncFiles = syncFiles + nFiles,
           syncBytes = syncBytes + nBytes
         )
 
@@ -568,7 +578,10 @@ class StatusActor(setImage: String => Unit,
           this.copy(icon = IconState("blue-sync", s"$prefix$syncFiles/$totalFiles$suffix"))
 
         case StatusActor.Done() =>
-          StatusState(IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)), newDebounced, 0, 0, 0)
+          StatusState(
+            IconState("green-tick", syncCompleteMsg(syncFiles, syncBytes)),
+            newDebounced, syncFiles.clear(), totalFiles.clear(), 0
+          )
       }
 
       setIcon(icon, statusState.icon)
@@ -576,9 +589,9 @@ class StatusActor(setImage: String => Unit,
     }
   }
 
-  def syncCompleteMsg(syncFiles: Int, syncBytes: Long) = {
+  def syncCompleteMsg(syncFiles: PathSet, syncBytes: Long) = {
     s"Syncing Complete\n" +
-    s"${Util.formatInt(syncFiles)} files ${Util.readableBytesSize(syncBytes)}\n" +
+    s"${Util.formatInt(syncFiles.getSize)} files ${Util.readableBytesSize(syncBytes)}\n" +
     s"${Util.timeFormatter.format(java.time.Instant.now())}"
   }
 
