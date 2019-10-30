@@ -394,6 +394,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       m => agentReadWriter.send(AgentReadWriteActor.Send(m))
     )
 
+    agentReadWriter.send(AgentReadWriteActor.Send(SyncFiles.Complete()))
     Active(vfsArr)
   }
 }
