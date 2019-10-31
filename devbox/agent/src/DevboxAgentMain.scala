@@ -117,11 +117,11 @@ object DevboxAgentMain {
             for(p <- paths)
             yield skippers.getOrElseUpdate(p, Skipper.fromString(ignoreStrategy))
 
-
-          InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (scanRoot, p, sig) =>
-            client.writeMsg(
-              Response.Scanned(scanRoot.relativeTo(wd), p, sig)
-            )
+          val buffer = new Array[Byte](Util.blockSize)
+          InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (base, p, attrs) =>
+            for(sig <- Sig.compute(base / p, buffer, attrs.fileType)){
+              client.writeMsg(Response.Scanned(base.relativeTo(wd), p, sig))
+            }
           }
 
           client.writeMsg(Response.Ack())

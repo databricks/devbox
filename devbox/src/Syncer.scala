@@ -119,7 +119,7 @@ class Syncer(agent: AgentApi,
         SyncFiles.RemoteScan(mapping.map(_._2))
       )
     )
-    skipActor.send(SkipScanActor.Scan())
+    skipActor.send(SkipScanActor.StartScan())
   }
 
   def close() = {

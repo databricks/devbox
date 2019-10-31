@@ -1,13 +1,13 @@
 package devbox
 import devbox.SyncActor.Msg
-import devbox.common.{ActorContext, PathSet, Response, Skipper, StateMachineActor, SyncLogger}
+import devbox.common.{ActorContext, PathSet, Response, Sig, Skipper, StateMachineActor, SyncLogger}
 
 import scala.concurrent.Future
 object SkipScanActor{
   sealed trait Msg
   case class Paths(values: PathSet) extends Msg
-  case class Scan() extends Msg
-  case class Scanned() extends Msg
+  case class StartScan() extends Msg
+  case class ScanComplete() extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
 }
 class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
@@ -25,15 +25,16 @@ class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
   case class Scanning(buffered: PathSet,
                       skippers: Seq[Skipper],
                       scansComplete: Int) extends State({
-    case SkipScanActor.Scan() =>
+    case SkipScanActor.StartScan() =>
       Future{
         common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
-          (scanRoot, sub, sig) => sendToSigActor(SigActor.SinglePath(scanRoot, sub))
+          (base, sub, attrs) => sendToSigActor(SigActor.SinglePath(base, sub))
         }
       }.onComplete{ res =>
-        this.send(SkipScanActor.Scanned())
+        this.send(SkipScanActor.ScanComplete())
       }
       Scanning(buffered, skippers, scansComplete)
+
 
     case SkipScanActor.Receive(Response.Scanned(base, p, sig)) =>
       val local = mapping.find(_._2 == base).get._1
@@ -46,7 +47,7 @@ class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
       val newBuffered = buffered.withPaths(values.walk(Nil))
       Scanning(newBuffered, skippers, scansComplete)
 
-    case SkipScanActor.Scanned() =>
+    case SkipScanActor.ScanComplete() =>
       if (buffered.size > 0){
         val grouped =
           for(((src, paths), skipper) <- group(buffered).zip(skippers))
