@@ -65,7 +65,8 @@ class Syncer(agent: AgentApi,
 
   val sigActor = new SigActor(
     syncer.send(_),
-    signatureTransformer
+    signatureTransformer,
+    statusLogger
   )
   val skipActor = new SkipActor(
     mapping,

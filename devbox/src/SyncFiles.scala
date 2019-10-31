@@ -252,10 +252,11 @@ object SyncFiles {
       .iterator
       .map{ case (sub, isLink) =>
         Future {
+
           val abs = src / sub
-          val newSig =
+          val newSig = try {
             if ((isLink && !preListed(sub / os.up).contains(sub.last)) ||
-               (!isLink && !os.followLink(abs).contains(abs))) None
+              (!isLink && !os.followLink(abs).contains(abs))) None
             else {
               val attrs = os.stat(abs, followLinks = false)
               val buffer = buffers.take()
@@ -264,7 +265,7 @@ object SyncFiles {
                 .map(signatureTransformer(sub, _))
               finally buffers.put(buffer)
             }
-
+          }catch{case e: Throwable => None}
           (sub, newSig)
         }
       }

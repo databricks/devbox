@@ -382,6 +382,7 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       logger,
       m => agentReadWriter.send(AgentReadWriteActor.Send(m))
     )
+    agentReadWriter.send(AgentReadWriteActor.Send(SyncFiles.Complete()))
 
     Active(vfsArr)
   }
@@ -395,10 +396,11 @@ object SigActor{
   case class ComputeComplete() extends Msg
 }
 class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
-               signatureTransformer: (os.SubPath, Sig) => Sig)
+               signatureTransformer: (os.SubPath, Sig) => Sig,
+               logger: SyncLogger)
               (implicit ac: ActorContext) extends StateMachineActor[SigActor.Msg]{
   def initialState: State = Idle()
-  val buffer = new Array[Byte](Util.blockSize)
+
   case class Idle() extends State({
     case SigActor.SinglePath(base, sub) => compute(Map(base -> Set(sub)))
     case SigActor.ManyPaths(grouped) => compute(grouped)
@@ -600,6 +602,7 @@ class StatusActor(setImage: String => Unit,
       }
 
       setIcon(icon, statusState.icon)
+
       statusState.copy(debounced = newDebounced)
     }
   }
