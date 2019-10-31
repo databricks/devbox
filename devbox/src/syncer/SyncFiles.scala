@@ -10,18 +10,14 @@ object SyncFiles {
 
   sealed trait Msg
 
-  case class IncrementFileTotal(base: os.Path, subs: Set[os.SubPath]) extends Msg
-  case class StartFile(p: os.Path) extends Msg
-
-  sealed trait RemoteMsg extends Msg
-  case class Complete() extends RemoteMsg
-  case class RemoteScan(paths: Seq[os.RelPath]) extends RemoteMsg
-  case class RpcMsg(value: Rpc with PathRpc) extends RemoteMsg
+  case class Complete() extends Msg
+  case class RemoteScan(paths: Seq[os.RelPath]) extends Msg
+  case class RpcMsg(value: Rpc with PathRpc) extends Msg
   case class SendChunkMsg(src: os.Path,
                           dest: os.RelPath,
                           subPath: os.SubPath,
                           chunkIndex: Int,
-                          chunkCount: Int) extends RemoteMsg
+                          chunkCount: Int) extends Msg
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
@@ -66,7 +62,7 @@ object SyncFiles {
     logger("signatureMapping", signatureMapping)
 
     if (signatureMapping.nonEmpty) {
-      send(IncrementFileTotal(src, signatureMapping.map(_._1).toSet))
+      logger.incrementFileTotal(src, signatureMapping.map(_._1).toSet)
       val sortedSignatures = sortSignatureChanges(signatureMapping.toSeq)
 
       syncAllFiles(vfs, send, sortedSignatures, src, dest, logger)
@@ -104,7 +100,9 @@ object SyncFiles {
     }
     for ((subPath, localSig, remoteSig) <- signatureMapping) {
       logger.apply("syncFile", (subPath, localSig, remoteSig))
-      send(StartFile(src / subPath))
+
+      logger.filesAndBytes(Set(src / subPath), 0)
+
       syncFileMetadata(dest, client, subPath, localSig, remoteSig)
 
       localSig match{

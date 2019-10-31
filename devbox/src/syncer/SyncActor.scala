@@ -8,7 +8,6 @@ import scala.concurrent.Future
 object SyncActor{
   sealed trait Msg
   case class Events(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]]) extends Msg
-  case class LocalScanned(base: os.Path, sub: os.SubPath, sig: Option[Sig]) extends Msg
   case class RemoteScanned(base: os.RelPath, sub: os.SubPath, sig: Sig) extends Msg
   case class InitialScansComplete() extends Msg
   case class Done() extends Msg
@@ -32,26 +31,27 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
                             localPathCount: Int,
                             remotePathCount: Int,
                             vfsArr: Seq[(os.RelPath, Vfs[Sig])]) extends State({
-    case SyncActor.LocalScanned(base, sub, sig) =>
-      logger.progress(s"Scanning local [${localPathCount + 1}] remote [$remotePathCount]", sub.toString())
-      RemoteScanning(
-        Util.joinMaps2(localPaths, Map(base -> Map(sub -> sig))),
-        remotePaths,
-        localPathCount + 1,
-        remotePathCount,
-        vfsArr
-      )
 
     case SyncActor.Events(paths) =>
-      RemoteScanning(Util.joinMaps2(localPaths, paths), remotePaths, localPathCount, remotePathCount, vfsArr)
+      val newLocalPathCount = localPathCount + paths.map(_._2.size).sum
+      logger.progress(
+        s"Scanning local [$newLocalPathCount] remote [$remotePathCount]",
+        paths.head._2.head._1.toString()
+      )
+      val joined = Util.joinMaps2(localPaths, paths)
+      RemoteScanning(joined, remotePaths, newLocalPathCount, remotePathCount, vfsArr)
 
     case SyncActor.RemoteScanned(base, subPath, sig) =>
       vfsArr.collectFirst{case (b, vfs) if b == base =>
         Vfs.overwriteUpdateVfs(subPath, sig, vfs)
       }
-      logger.progress(s"Scanning local [$localPathCount] remote [${remotePathCount + 1}]", (base / subPath).toString())
+      val newRemotePathCount = remotePathCount + 1
+      logger.progress(
+        s"Scanning local [$localPathCount] remote [$newRemotePathCount]",
+        (base / subPath).toString()
+      )
       val newRemotePaths = Util.joinMaps(remotePaths, Map(base -> Set(subPath)))
-      RemoteScanning(localPaths, newRemotePaths, localPathCount, remotePathCount + 1, vfsArr)
+      RemoteScanning(localPaths, newRemotePaths, localPathCount, newRemotePathCount, vfsArr)
 
     case SyncActor.InitialScansComplete() =>
       logger.info(
