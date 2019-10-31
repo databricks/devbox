@@ -2,7 +2,7 @@ package devbox.logger
 
 import java.awt.event.{MouseEvent, MouseListener}
 
-import devbox.common.{ActorContext, BaseLogger, Logger, SimpleActor}
+import devbox.common.{Actor, ActorContext, BaseLogger, Logger, SimpleActor}
 trait SyncLogger{
   def apply(tag: String, x: Any = Logger.NoOp): Unit
   def info(chunks: String*): Unit
@@ -16,7 +16,10 @@ trait SyncLogger{
 }
 object SyncLogger{
 
-  class Impl(val dest: String => os.Path, val rotationSize: Long, val truncate: Boolean)
+  class Impl(val dest: String => os.Path,
+             val rotationSize: Long,
+             val truncate: Boolean,
+             onClick: => Actor[Unit])
             (implicit ac: ActorContext) extends BaseLogger with SyncLogger{
 
     var lastProgressTimestamp = 0L
@@ -68,7 +71,7 @@ object SyncLogger{
 
       icon.addMouseListener(new MouseListener {
         def mouseClicked(e: MouseEvent): Unit = {
-//          agentReadWriter.send(AgentReadWriteActor.ForceRestart())
+          onClick.send(())
         }
 
         def mousePressed(e: MouseEvent): Unit = ()

@@ -6,6 +6,7 @@ import devbox.DevboxMain.Config
 import devbox.DevboxTests.{instantiateSyncer, prepareFolders}
 import devbox.common._
 import devbox.common.Cli.{Arg, showArg}
+import devbox.syncer.AgentReadWriteActor
 
 import scala.concurrent.ExecutionContext
 
@@ -90,12 +91,13 @@ object DevboxTestMain {
           if (config.label == "manual"){
             implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
-            val logger = new devbox.logger.SyncLogger.Impl(
+            lazy val logger: devbox.logger.SyncLogger.Impl = new devbox.logger.SyncLogger.Impl(
               n => os.pwd / "out" / "scratch" / config.label / s"log$n.txt",
               5 * 1024 * 1024,
-              truncate = true
+              truncate = true,
+              new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentReadWriter)
             )
-            val syncer = instantiateSyncer(
+            lazy val syncer = instantiateSyncer(
               src, dest,
               config.debounceMillis,
               logger,

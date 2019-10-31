@@ -149,6 +149,11 @@ trait Actor[T]{
            line: sourcecode.Line): Unit
 }
 
+class ProxyActor[T, V](f: T => V, downstream: Actor[V])
+                      (implicit ac: ActorContext) extends SimpleActor[T]{
+  def run(msg: T): Unit = downstream.send(f(msg))
+}
+
 abstract class BatchActor[T]()(implicit ac: ActorContext) extends Actor[T]{
   def runBatch(msgs: Seq[T]): Unit
 

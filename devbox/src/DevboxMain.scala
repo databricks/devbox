@@ -5,7 +5,7 @@ import java.nio.file.attribute.PosixFilePermission
 import devbox.common._
 import devbox.common.Cli.{Arg, showArg}
 import Cli.pathScoptRead
-import syncer.{ReliableAgent, Syncer}
+import syncer.{AgentReadWriteActor, ReliableAgent, Syncer}
 
 import scala.concurrent.ExecutionContext
 object DevboxMain {
@@ -75,20 +75,23 @@ object DevboxMain {
           val logFile = config.logFile.getOrElse(throw new Exception("config.logFile is None"))
           val s"$logFileName.$logFileExt" = logFile.last
           val logFileBase = logFile / os.up
-          Util.autoclose(new Syncer(
+
+          lazy val logger: devbox.logger.SyncLogger = new devbox.logger.SyncLogger.Impl(
+            n => logFileBase / s"$logFileName$n.$logFileExt",
+            50 * 1024 * 1024,
+            truncate = true,
+            new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentReadWriter)
+          )
+          lazy val syncer = new Syncer(
             new ReliableAgent(prep, connect.drop(1) /* drop the -- */, os.pwd),
             for(s <- config.repo)
-            yield s.split(':') match{
-              case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
-              case Array(src, dest) => (os.Path(src, os.pwd), os.rel / dest.split('/'))
-            },
+              yield s.split(':') match{
+                case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
+                case Array(src, dest) => (os.Path(src, os.pwd), os.rel / dest.split('/'))
+              },
             config.ignoreStrategy,
             config.debounceMillis,
-            new logger.SyncLogger.Impl(
-              n => logFileBase / s"$logFileName$n.$logFileExt",
-              50 * 1024 * 1024,
-              truncate = true
-            ),
+            logger,
             if (config.readOnlyRemote == null) (_, sig) => sig
             else {
               val (regexStr, negate) =
@@ -110,7 +113,8 @@ object DevboxMain {
                 case (path, sig) => sig
               }
             }
-          )){syncer =>
+          )
+          Util.autoclose(syncer){syncer =>
             syncer.start()
             Thread.sleep(Long.MaxValue)
           }
