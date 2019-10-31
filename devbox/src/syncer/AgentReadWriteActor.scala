@@ -14,6 +14,7 @@ object AgentReadWriteActor{
   case class ReadFailed() extends Msg
   case class AttemptReconnect() extends Msg
   case class Receive(data: Response) extends Msg
+  case class StartFile() extends Msg
   case class Close() extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
@@ -25,6 +26,9 @@ class AgentReadWriteActor(agent: AgentApi,
   def initialState = Active(Vector())
 
   case class Active(buffer: Vector[SyncFiles.Msg]) extends State({
+    case AgentReadWriteActor.StartFile() =>
+      logger.filesAndBytes(1, 0)
+      Active(buffer)
     case AgentReadWriteActor.Send(msg) =>
       logStatusMsgForRpc(msg)
       msg match{
@@ -193,7 +197,7 @@ class AgentReadWriteActor(agent: AgentApi,
               chunkIndex * Util.blockSize,
               new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
             )
-            logger.filesAndBytes(Set(), n)
+            logger.filesAndBytes(0, n)
             Some(msg)
           }
         }catch{case e: java.nio.file.NoSuchFileException =>

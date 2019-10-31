@@ -14,7 +14,7 @@ trait SyncLogger{
   def done(): Unit
   def syncingFile(prefix: String, suffix: String): Unit
   def incrementFileTotal(base: os.Path, subs: Set[os.SubPath]): Unit
-  def filesAndBytes(files: Set[os.Path], bytes: Long): Unit
+  def filesAndBytes(files: Long, bytes: Long): Unit
 }
 
 object SyncLogger{
@@ -29,7 +29,7 @@ object SyncLogger{
   case class Done() extends Msg
   case class SyncingFile(prefix: String, suffix: String) extends Msg
   case class IncrementFileTotal(base: os.Path, subs: Set[os.SubPath]) extends Msg
-  case class FilesAndBytes(files: Set[os.Path], bytes: Long) extends Msg
+  case class FilesAndBytes(files: Long, bytes: Long) extends Msg
 
   class Impl(val dest: String => os.Path,
              val rotationSize: Long,
@@ -49,7 +49,7 @@ object SyncLogger{
 
     def done() = this.send(Done())
 
-    def filesAndBytes(files: Set[os.Path], bytes: Long) = {
+    def filesAndBytes(files: Long, bytes: Long) = {
       this.send(FilesAndBytes(files, bytes))
     }
     def incrementFileTotal(base: os.Path, subs: Set[os.SubPath]) = {
@@ -60,7 +60,8 @@ object SyncLogger{
     }
 
     var closed = false
-    var syncFiles = new PathSet()
+    var syncChanges = 0L
+    var totalChanges = 0L
     var totalFiles = new PathSet()
     var syncBytes = 0L
     val consoleLogger = new ConsoleLogger(dest, rotationSize, truncate, logOut)
@@ -82,22 +83,26 @@ object SyncLogger{
       case Grey(chunks) => logConsoleStatus("grey-dash", chunks)
       case Progress(chunks) => logConsoleStatus("blue-sync", chunks, progress = true)
       case Done() =>
-        logConsoleStatus("green-tick", syncCompleteMsg(syncFiles, syncBytes))
-        syncFiles = new PathSet()
+        logConsoleStatus("green-tick", syncCompleteMsg(totalChanges, totalFiles, syncBytes))
+        syncChanges = 0
+        totalChanges = 0
         totalFiles = new PathSet()
+        syncBytes = 0
+
       case SyncingFile(prefix, suffix) =>
         logConsoleStatus(
           "blue-sync",
-          Seq(s"$prefix${syncFiles.size}/${totalFiles.size}$suffix"),
+          Seq(s"$prefix$syncChanges/$totalChanges$suffix"),
           progress = true
         )
 
       case IncrementFileTotal(base, subs) =>
+        totalChanges += subs.size
         totalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))
 
       case FilesAndBytes(files, bytes) =>
         syncBytes = syncBytes + bytes
-        syncFiles = syncFiles.withPaths(files.map(_.segments))
+        syncChanges = syncChanges + files
     }
 
     def logConsoleStatus(icon: String, chunks: Seq[String], progress: Boolean = false) = {
@@ -108,9 +113,9 @@ object SyncLogger{
       statusActor.send(StatusActor.SetIcon(icon, chunks))
     }
 
-    def syncCompleteMsg(syncFiles: PathSet, syncBytes: Long) = Seq(
+    def syncCompleteMsg(totalChanges: Long, totalFiles: PathSet, syncBytes: Long) = Seq(
       s"Syncing Complete",
-      s"${Util.formatInt(syncFiles.size)} files ${Util.readableBytesSize(syncBytes)}",
+      s"${Util.formatInt(totalChanges)} changes to ${Util.formatInt(totalFiles.size)} paths, ${Util.readableBytesSize(syncBytes)}",
       s"${Util.timeFormatter.format(java.time.Instant.now())}"
     )
 

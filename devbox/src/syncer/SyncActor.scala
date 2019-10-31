@@ -83,7 +83,8 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
           paths,
           vfsArr,
           logger,
-          m => sendAgentMsg(AgentReadWriteActor.Send(m))
+          m => sendAgentMsg(AgentReadWriteActor.Send(m)),
+          () => sendAgentMsg(AgentReadWriteActor.StartFile())
         )
 
       }.foreach{_ =>

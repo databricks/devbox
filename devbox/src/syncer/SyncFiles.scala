@@ -13,6 +13,7 @@ object SyncFiles {
   case class Complete() extends Msg
   case class RemoteScan(paths: Seq[os.RelPath]) extends Msg
   case class RpcMsg(value: Rpc with PathRpc) extends Msg
+
   case class SendChunkMsg(src: os.Path,
                           dest: os.RelPath,
                           subPath: os.SubPath,
@@ -24,7 +25,8 @@ object SyncFiles {
                   changedPaths0: Map[os.Path, Map[os.SubPath, Option[Sig]]],
                   vfsArr: Seq[Vfs[Sig]],
                   logger: SyncLogger,
-                  send: Msg => Unit)
+                  send: Msg => Unit,
+                  logStartFile: () => Unit)
                  (implicit ec: ExecutionContext) = {
 
     // We need to .distinct after we convert the strings to paths, in order
@@ -39,7 +41,8 @@ object SyncFiles {
       SyncFiles.synchronizeRepo(
         logger, vfsArr(i), src, dest,
         eventPaths,
-        send
+        send,
+        logStartFile
       )
     }
   }
@@ -49,7 +52,8 @@ object SyncFiles {
                       src: os.Path,
                       dest: os.RelPath,
                       eventPaths: Map[os.SubPath, Option[Sig]],
-                      send: Msg => Unit)
+                      send: Msg => Unit,
+                      logStartFile: () => Unit)
                      (implicit ec: ExecutionContext): Unit = {
 
     val signatureMapping = for{
@@ -65,7 +69,7 @@ object SyncFiles {
       logger.incrementFileTotal(src, signatureMapping.map(_._1).toSet)
       val sortedSignatures = sortSignatureChanges(signatureMapping.toSeq)
 
-      syncAllFiles(vfs, send, sortedSignatures, src, dest, logger)
+      syncAllFiles(vfs, send, sortedSignatures, src, dest, logger, logStartFile)
     }
   }
 
@@ -92,7 +96,8 @@ object SyncFiles {
                    signatureMapping: Seq[(os.SubPath, Option[Sig], Option[Sig])],
                    src: os.Path,
                    dest: os.RelPath,
-                   logger: SyncLogger): Unit = {
+                   logger: SyncLogger,
+                   logStartFile: () => Unit): Unit = {
 
     def client(rpc: Rpc with Action with PathRpc) = {
       send(RpcMsg(rpc))
@@ -101,8 +106,7 @@ object SyncFiles {
     for ((subPath, localSig, remoteSig) <- signatureMapping) {
       logger.apply("syncFile", (subPath, localSig, remoteSig))
 
-      logger.filesAndBytes(Set(src / subPath), 0)
-
+      logStartFile()
       syncFileMetadata(dest, client, subPath, localSig, remoteSig)
 
       localSig match{
