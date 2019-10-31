@@ -16,6 +16,7 @@ trait SyncLogger{
   def incrementFileTotal(base: os.Path, subs: Set[os.SubPath]): Unit
   def filesAndBytes(files: Set[os.Path], bytes: Long): Unit
 }
+
 object SyncLogger{
 
   class Impl(val dest: String => os.Path,
@@ -30,8 +31,6 @@ object SyncLogger{
     }
 
     override def close() = {
-
-      pprint.log(ac.getActive)
       consoleLogger.close()
       IconHandler.tray.remove(IconHandler.icon)
     }
@@ -40,24 +39,21 @@ object SyncLogger{
       consoleLogger.send(Logger.PPrinted(tag, x))
     }
 
-    def info(chunks: String*): Unit = {
-      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
-      consoleLogger.send(Logger.Info(chunks))
+    def info(chunks: String*) = {
+      statusActor.send(StatusActor.SetIcon("blue-sync", chunks))
     }
-    def error(chunks: String*): Unit = {
-      statusActor.send(StatusActor.Error(chunks.mkString("\n")))
-      consoleLogger.send(Logger.Info(chunks))
+    def error(chunks: String*) = {
+      statusActor.send(StatusActor.SetIcon("red-cross", chunks))
     }
-    def grey(chunks: String*): Unit = {
-      statusActor.send(StatusActor.Greyed(chunks.mkString("\n")))
-      consoleLogger.send(Logger.Info(chunks))
+    def grey(chunks: String*) = {
+      statusActor.send(StatusActor.SetIcon("grey-dash", chunks))
     }
-    def progress(chunks: String*): Unit = {
-      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
-      consoleLogger.send(Logger.Progress(chunks))
+    def progress(chunks: String*) = {
+      statusActor.send(StatusActor.SetIcon("blue-sync", chunks))
     }
 
     def done() = statusActor.send(StatusActor.Done())
+
     def filesAndBytes(files: Set[os.Path], bytes: Long) = {
       statusActor.send(StatusActor.FilesAndBytes(files, bytes))
     }
@@ -67,12 +63,12 @@ object SyncLogger{
     def syncingFile(prefix: String, suffix: String) = {
       statusActor.send(StatusActor.SyncingFile(prefix, suffix))
     }
+
     val statusActor = new StatusActor(
       imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
-      tooltip => IconHandler.icon.setToolTip(tooltip)
+      tooltip => IconHandler.icon.setToolTip(tooltip),
+      new ConsoleLogger(dest, rotationSize, truncate, logOut)
     )
-
-    val consoleLogger = new ConsoleLogger(dest, rotationSize, truncate, logOut)
 
     object IconHandler{
       val images = Seq("blue-sync", "green-tick", "red-cross", "grey-dash")
@@ -87,10 +83,7 @@ object SyncLogger{
 
 
       icon.addMouseListener(new MouseListener {
-        def mouseClicked(e: MouseEvent): Unit = {
-          onClick.send(())
-        }
-
+        def mouseClicked(e: MouseEvent): Unit = onClick.send(())
         def mousePressed(e: MouseEvent): Unit = ()
         def mouseReleased(e: MouseEvent): Unit = ()
         def mouseEntered(e: MouseEvent): Unit = ()
