@@ -1,7 +1,7 @@
 package devbox
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.{ActorContext, Sig, StateMachineActor, SyncLogger, Util}
+import devbox.common.{ActorContext, PathSet, Sig, StateMachineActor, SyncLogger, Util}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -45,7 +45,7 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
   def compute(groups: Map[os.Path, Set[os.SubPath]]) = {
     val computeFutures =
       for((k, vs) <- groups)
-      yield SigActor.computeSignatures(vs, k, signatureTransformer).map((k, _))
+      yield SigActor.computeSignatures(vs, k, signatureTransformer, logger).map((k, _))
 
     Future.sequence(computeFutures).foreach{ results =>
       sendToSyncActor(SyncActor.Events(results.map{case (k, vs) => (k, vs.toMap)}.toMap))
@@ -65,7 +65,8 @@ object SigActor{
 
   def computeSignatures(eventPaths: Set[os.SubPath],
                         src: os.Path,
-                        signatureTransformer: (os.SubPath, Sig) => Sig)
+                        signatureTransformer: (os.SubPath, Sig) => Sig,
+                        logger: SyncLogger)
                        (implicit ec: ExecutionContext)
   : Future[Seq[(os.SubPath, Option[Sig])]] = {
 
@@ -106,6 +107,7 @@ object SigActor{
               finally buffers.put(buffer)
             }
           }catch{case e: Throwable => None}
+          logger("computeSig", (sub, newSig))
           (sub, newSig)
         }
       }

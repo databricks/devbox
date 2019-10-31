@@ -36,14 +36,12 @@ object SyncFiles {
     // We need to .distinct after we convert the strings to paths, in order
     // to ensure the inputs are canonicalized and don't have meaningless
     // differences such as trailing slashes
-    logger("SYNC EVENTS", changedPaths0)
+    logger("executeSync", changedPaths0)
 
     for {
       ((src, dest), i) <- mapping.zipWithIndex
       eventPaths <- changedPaths0.get(src)
     } yield {
-      logger("SYNC BASE", eventPaths)
-
       SyncFiles.synchronizeRepo(
         logger, vfsArr(i), src, dest,
         eventPaths,
@@ -67,7 +65,7 @@ object SyncFiles {
     } yield (sub, newSig, oldSig)
 
 
-    logger("SYNC SIGNATURE", signatureMapping)
+    logger("signatureMapping", signatureMapping)
 
     if (signatureMapping.nonEmpty) {
       send(IncrementFileTotal(src, signatureMapping.map(_._1).toSet))
@@ -107,7 +105,7 @@ object SyncFiles {
       Vfs.updateVfs(rpc, vfs)
     }
     for ((subPath, localSig, remoteSig) <- signatureMapping) {
-      logger.apply("SYNC PATH", (subPath, localSig, remoteSig))
+      logger.apply("syncFile", (subPath, localSig, remoteSig))
       send(StartFile(src / subPath))
       syncFileMetadata(dest, client, subPath, localSig, remoteSig)
 
@@ -116,7 +114,7 @@ object SyncFiles {
           syncFileChunks(vfs, send, src, dest, logger, subPath, remoteSig, blockHashes, size)
         case _ =>
       }
-      logger.apply("SYNC PATH END")
+      logger.apply("syncFile end")
 
     }
   }
@@ -135,7 +133,7 @@ object SyncFiles {
       case Some(Sig.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
       case _ => (Nil, 0L)
     }
-    logger("SYNC CHUNKS", (subPath, size, otherSize, remoteSig))
+    logger("syncFileChunks", (subPath, size, otherSize, remoteSig))
     val chunkIndices = for {
       i <- blockHashes.indices
       if i >= otherHashes.length || blockHashes(i) != otherHashes(i)

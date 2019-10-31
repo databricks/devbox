@@ -54,29 +54,13 @@ class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
       Scanning(newBuffered, initialScanned, skippers, scansComplete)
 
     case SkipScanActor.ScanComplete() =>
-      if (buffered.size > 0){
-        val grouped =
-          for(((src, paths), skipper) <- group(buffered).zip(skippers))
-          yield (src, skipper.processBatch(src, paths))
-
-        sendToSigActor(SigActor.ManyPaths(grouped.toMap))
-      }
-
       scanComplete(buffered, initialScanned, skippers, scansComplete)
 
   })
 
   case class Active(skippers: Seq[Skipper]) extends State({
     case SkipScanActor.Receive(Response.Ack()) => Active(skippers)// do nothing
-    case SkipScanActor.Paths(values) =>
-
-      val grouped =
-        for(((src, paths), skipper) <- group(values).zip(skippers))
-        yield (src, skipper.processBatch(src, paths))
-
-      sendToSigActor(SigActor.ManyPaths(grouped.toMap))
-
-      Active(skippers)
+    case SkipScanActor.Paths(values) => flushPathsDownstream(values, skippers)
   })
 
   def handleLocalScanned(buffered: PathSet,
@@ -102,21 +86,31 @@ class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
       case 0 => Scanning(buffered, initialScanned, skippers, 1)
       case 1 =>
         sendToSigActor(SigActor.InitialScansComplete())
-        Active(skippers)
+        logger("initialScansComplete")
+        flushPathsDownstream(buffered, skippers)
     }
   }
 
-  def group(paths: PathSet) = {
-    for((src, dest) <- mapping)
-    yield (
-      src,
-      paths
-        .walkSubPaths(src.segments)
-        .map{ subSegments =>
-          val sub = os.SubPath(subSegments)
-          (sub, os.isDir(src / sub))
-        }
-        .toSet
-    )
+  def flushPathsDownstream(paths: PathSet, skippers: Seq[Skipper]) = {
+    val groups =
+      for((src, dest) <- mapping)
+      yield (
+        src,
+        paths
+          .walkSubPaths(src.segments)
+          .map{ subSegments =>
+            val sub = os.SubPath(subSegments)
+            (sub, os.isDir(src / sub))
+          }
+          .toSet
+      )
+
+    val processedGroups =
+      for(((src, paths), skipper) <- groups.zip(skippers))
+      yield (src, skipper.processBatch(src, paths))
+
+    sendToSigActor(SigActor.ManyPaths(processedGroups.toMap))
+
+    Active(skippers)
   }
 }
