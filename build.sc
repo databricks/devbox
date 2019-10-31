@@ -5,9 +5,9 @@ import scalalib._
 trait DevboxModule extends ScalaModule{
   def scalaVersion = "2.13.1"
   def compileIvyDeps = Agg(ivy"com.lihaoyi::acyclic:0.2.0")
-  def scalacOptions = Seq(
-    "-P:acyclic:force",
-  )
+//  def scalacOptions = Seq(
+//    "-P:acyclic:force",
+//  )
   def scalacPluginIvyDeps = Agg(ivy"com.lihaoyi::acyclic:0.2.0")
 }
 object devbox extends DevboxModule{

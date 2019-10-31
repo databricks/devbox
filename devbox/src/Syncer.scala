@@ -58,7 +58,7 @@ class Syncer(agent: AgentApi,
   )
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
-    syncer,
+    x => syncer.send(SyncActor.Receive(x)),
     statusActor,
     statusLogger
   )

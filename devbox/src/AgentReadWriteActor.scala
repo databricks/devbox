@@ -19,7 +19,7 @@ object AgentReadWriteActor{
   case class Close() extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
-                          syncer: => SyncActor,
+                          onResponse: Response => Unit,
                           statusActor: => StatusActor,
                           logger: SyncLogger)
                          (implicit ac: ActorContext)
@@ -50,7 +50,7 @@ class AgentReadWriteActor(agent: AgentApi,
       restart(buffer, 0)
 
     case AgentReadWriteActor.Receive(data) =>
-      syncer.send(SyncActor.Receive(data))
+      onResponse(data)
       if (!data.isInstanceOf[Response.Ack]) Active(buffer)
       else {
         ac.reportComplete()
@@ -290,149 +290,5 @@ class AgentReadWriteActor(agent: AgentApi,
 
       GivenUp(buffer)
     }
-  }
-}
-
-object SyncActor{
-  sealed trait Msg
-  case class ScanComplete(vfsArr: Seq[Vfs[Sig]]) extends Msg
-
-  case class Events(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]]) extends Msg
-  case class LocalScanned(scanRoot: os.Path, sub: os.SubPath, sig: Option[Sig]) extends Msg
-  case class Synced() extends Msg
-  case class Receive(value: devbox.common.Response) extends Msg
-  case class Retry() extends Msg
-  case class LocalScanComplete() extends Msg
-}
-class SyncActor(agentReadWriter: => AgentReadWriteActor,
-                sigActor: => SigActor,
-                mapping: Seq[(os.Path, os.RelPath)],
-                logger: SyncLogger,
-                ignoreStrategy: String,
-                scheduledExecutorService: ScheduledExecutorService,
-                statusActor: => StatusActor)
-               (implicit ac: ActorContext)
-  extends StateMachineActor[SyncActor.Msg]() {
-
-  def initialState = RemoteScanning(
-    Map(),
-    Map(),
-    0, 0,
-    mapping.map(_._2 -> new Vfs[Sig](Sig.Dir(0))),
-    0
-  )
-
-
-  case class RemoteScanning(localPaths: Map[os.Path, Map[os.SubPath, Option[Sig]]],
-                            remotePaths: Map[os.RelPath, Set[os.SubPath]],
-                            localPathCount: Int,
-                            remotePathCount: Int,
-                            vfsArr: Seq[(os.RelPath, Vfs[Sig])],
-                            scansComplete: Int) extends State({
-    case SyncActor.LocalScanned(base, sub, sig) =>
-      logger.progress(s"Scanning local [${localPathCount + 1}] remote [$remotePathCount]", sub.toString())
-      RemoteScanning(
-        Util.joinMaps2(localPaths, Map(base -> Map(sub -> sig))),
-        remotePaths,
-        localPathCount + 1,
-        remotePathCount,
-        vfsArr,
-        scansComplete
-      )
-
-    case SyncActor.Events(paths) =>
-      RemoteScanning(Util.joinMaps2(localPaths, paths), remotePaths, localPathCount, remotePathCount, vfsArr, scansComplete)
-
-    case SyncActor.Receive(Response.Scanned(base, subPath, sig)) =>
-      sigActor.send(SigActor.SinglePath(mapping.find(_._2 == base).get._1, subPath))
-      vfsArr.collectFirst{case (b, vfs) if b == base =>
-        Vfs.overwriteUpdateVfs(subPath, sig, vfs)
-      }
-      logger.progress(s"Scanning local [$localPathCount] remote [${remotePathCount + 1}]", (base / subPath).toString())
-      val newRemotePaths = Util.joinMaps(remotePaths, Map(base -> Set(subPath)))
-      RemoteScanning(localPaths, newRemotePaths, localPathCount, remotePathCount + 1, vfsArr, scansComplete)
-
-    case SyncActor.Receive(Response.Ack()) | SyncActor.LocalScanComplete() =>
-      scansComplete match{
-        case 0 => RemoteScanning(localPaths, remotePaths,localPathCount, remotePathCount,  vfsArr, scansComplete + 1)
-        case 1 =>
-          logger.info(
-            s"Initial Scans Complete",
-            s"${localPaths.size} local paths, ${remotePaths.size} remote paths"
-          )
-
-          executeSync(
-            localPaths,
-            vfsArr.map(_._2)
-          )
-      }
-  })
-
-  case class Active(vfsArr: Seq[Vfs[Sig]]) extends State({
-    case SyncActor.Events(paths) => executeSync(paths, vfsArr)
-    case SyncActor.Receive(Response.Ack()) => Active(vfsArr) // do nothing
-  })
-
-  def executeSync(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) = {
-    SyncFiles.executeSync(
-      mapping,
-      paths,
-      vfsArr,
-      logger,
-      m => agentReadWriter.send(AgentReadWriteActor.Send(m))
-    )
-    agentReadWriter.send(AgentReadWriteActor.Send(SyncFiles.Complete()))
-
-    Active(vfsArr)
-  }
-}
-
-object SigActor{
-  sealed trait Msg
-  case class SinglePath(scanRoot: os.Path, sub: os.SubPath) extends Msg
-  case class ManyPaths(group: Map[os.Path, Set[os.SubPath]]) extends Msg
-  case class LocalScanComplete() extends Msg
-  case class ComputeComplete() extends Msg
-}
-class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
-               signatureTransformer: (os.SubPath, Sig) => Sig,
-               logger: SyncLogger)
-              (implicit ac: ActorContext) extends StateMachineActor[SigActor.Msg]{
-  def initialState: State = Idle()
-
-  case class Idle() extends State({
-    case SigActor.SinglePath(base, sub) => compute(Map(base -> Set(sub)))
-    case SigActor.ManyPaths(grouped) => compute(grouped)
-    case SigActor.LocalScanComplete() =>
-      sendToSyncActor(SyncActor.LocalScanComplete())
-      Idle()
-  })
-
-  case class Busy(buffered: Map[os.Path, Set[os.SubPath]]) extends State({
-    case SigActor.SinglePath(base, sub) =>
-      Busy(Util.joinMaps(buffered, Map(base -> Set(sub))))
-
-    case SigActor.ManyPaths(grouped) =>
-      Busy(Util.joinMaps(buffered, grouped))
-
-    case SigActor.ComputeComplete() =>
-      if (buffered.nonEmpty) compute(buffered)
-      else Idle()
-
-    case SigActor.LocalScanComplete() =>
-      sendToSyncActor(SyncActor.LocalScanComplete())
-      Busy(buffered)
-  })
-
-  def compute(groups: Map[os.Path, Set[os.SubPath]]) = {
-    val computeFutures =
-      for((k, vs) <- groups)
-      yield SyncFiles.computeSignatures(vs, k, signatureTransformer).map((k, _))
-
-    Future.sequence(computeFutures).foreach{ results =>
-      sendToSyncActor(SyncActor.Events(results.map{case (k, vs) => (k, vs.toMap)}.toMap))
-      this.send(SigActor.ComputeComplete())
-    }
-    Busy(Map())
   }
 }
