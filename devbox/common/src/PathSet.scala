@@ -28,6 +28,10 @@ abstract class BasePathSet(){
     query(segments).nonEmpty
   }
 
+  def contains(segments: IterableOnce[String]): Boolean = {
+    query(segments).exists(_.hasValue)
+  }
+
   def query(segments: IterableOnce[String]): Option[BasePathSet.Node] = {
     segments
       .foldLeft(Option(value)) {

@@ -1,6 +1,5 @@
 package devbox
-import devbox.SyncActor.Msg
-import devbox.common.{ActorContext, PathSet, Response, Sig, Skipper, StateMachineActor, SyncLogger}
+import devbox.common.{ActorContext, PathSet, Response, Skipper, StateMachineActor, SyncLogger}
 
 import scala.concurrent.Future
 object SkipScanActor{
@@ -8,6 +7,7 @@ object SkipScanActor{
   case class Paths(values: PathSet) extends Msg
   case class StartScan() extends Msg
   case class ScanComplete() extends Msg
+  case class LocalScanned(base: os.Path, sub: os.SubPath) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
 }
 class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
@@ -18,34 +18,40 @@ class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
 
   def initialState = Scanning(
     new PathSet(),
+    new PathSet(),
     mapping.map(_ => Skipper.fromString(ignoreStrategy)),
     0
   )
 
   case class Scanning(buffered: PathSet,
+                      initialScanned: PathSet,
                       skippers: Seq[Skipper],
                       scansComplete: Int) extends State({
     case SkipScanActor.StartScan() =>
       Future{
         common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
-          (base, sub, attrs) => sendToSigActor(SigActor.SinglePath(base, sub))
+          (base, sub, attrs) => this.send(SkipScanActor.LocalScanned(base, sub))
         }
       }.onComplete{ res =>
         this.send(SkipScanActor.ScanComplete())
       }
-      Scanning(buffered, skippers, scansComplete)
+      Scanning(buffered, initialScanned, skippers, scansComplete)
 
 
-    case SkipScanActor.Receive(Response.Scanned(base, p, sig)) =>
-      val local = mapping.find(_._2 == base).get._1
-      sendToSigActor(SigActor.SinglePath(local, p))
-      sendToSigActor(SigActor.RemotePath(base, p, sig))
-      Scanning(buffered, skippers, scansComplete)
+    case SkipScanActor.LocalScanned(base, sub) =>
+      handleLocalScanned(buffered, initialScanned, skippers, scansComplete, base, sub)
 
-    case SkipScanActor.Receive(Response.Ack()) => scanComplete(buffered, skippers, scansComplete)
+    case SkipScanActor.Receive(Response.Scanned(base, sub, sig)) =>
+      val localBase = mapping.find(_._2 == base).get._1
+      sendToSigActor(SigActor.RemotePath(base, sub, sig))
+      handleLocalScanned(buffered, initialScanned, skippers, scansComplete, localBase, sub)
+
+    case SkipScanActor.Receive(Response.Ack()) =>
+      scanComplete(buffered, initialScanned, skippers, scansComplete)
+
     case SkipScanActor.Paths(values) =>
       val newBuffered = buffered.withPaths(values.walk(Nil))
-      Scanning(newBuffered, skippers, scansComplete)
+      Scanning(newBuffered, initialScanned, skippers, scansComplete)
 
     case SkipScanActor.ScanComplete() =>
       if (buffered.size > 0){
@@ -56,7 +62,7 @@ class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
         sendToSigActor(SigActor.ManyPaths(grouped.toMap))
       }
 
-      scanComplete(buffered, skippers, scansComplete)
+      scanComplete(buffered, initialScanned, skippers, scansComplete)
 
   })
 
@@ -73,15 +79,33 @@ class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
       Active(skippers)
   })
 
-  def scanComplete(buffered: PathSet, skippers: Seq[Skipper], scansComplete: Int) = {
+  def handleLocalScanned(buffered: PathSet,
+                         initialScanned: PathSet,
+                         skippers: Seq[Skipper],
+                         scansComplete: Int,
+                         base: os.Path,
+                         sub: os.SubPath) = {
+    val segments = (base / sub).segments
+    if (!initialScanned.contains(segments)){
+      sendToSigActor(SigActor.SinglePath(base, sub))
+      Scanning(buffered, initialScanned.withPath(segments), skippers, scansComplete)
+    }else{
+      Scanning(buffered, initialScanned, skippers, scansComplete)
+    }
+  }
+
+  def scanComplete(buffered: PathSet,
+                   initialScanned: PathSet,
+                   skippers: Seq[Skipper],
+                   scansComplete: Int) = {
     scansComplete match{
-      case 0 => Scanning(buffered, skippers, 1)
+      case 0 => Scanning(buffered, initialScanned, skippers, 1)
       case 1 =>
         sendToSigActor(SigActor.InitialScansComplete())
         Active(skippers)
     }
-
   }
+
   def group(paths: PathSet) = {
     for((src, dest) <- mapping)
     yield (
