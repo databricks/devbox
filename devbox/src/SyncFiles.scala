@@ -50,23 +50,7 @@ object SyncFiles {
         send
       )
     }
-
   }
-
-  /**
-    * Represents the various ways a repo synchronization can exit early.
-    */
-  sealed trait ExitCode
-
-  /**
-    * Something failed with an exception, and we want to re-try the sync
-    */
-  case class SyncFail(value: Throwable) extends ExitCode
-
-  /**
-    * There was nothing to do so we stopped.
-    */
-  case object NoOp extends ExitCode
 
   def synchronizeRepo(logger: SyncLogger,
                       vfs: Vfs[Sig],
@@ -108,14 +92,6 @@ object SyncFiles {
         // Lastly, we sort by the stringified path, for neatness
         p
       )
-    }
-  }
-
-  def restartOnFailure[T](t: => T)  = {
-    try Right(t)
-    catch{
-      case e: RpcException => throw e
-      case e: Exception => Left(SyncFail(e))
     }
   }
 
