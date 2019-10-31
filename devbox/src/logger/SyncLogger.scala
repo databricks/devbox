@@ -4,6 +4,8 @@ import java.awt.event.{MouseEvent, MouseListener}
 
 import devbox.common.{Actor, ActorContext, BaseLogger, Logger, SimpleActor}
 trait SyncLogger{
+  def init(): Unit
+  def close(): Unit
   def apply(tag: String, x: Any = Logger.NoOp): Unit
   def info(chunks: String*): Unit
   def error(chunks: String*): Unit
@@ -25,19 +27,31 @@ object SyncLogger{
     var lastProgressTimestamp = 0L
 
     def logOut(s: String) = {}
+    def init() = {
+      IconHandler.tray.add(IconHandler.icon)
+    }
+
+    override def close() = {
+      super.close()
+      IconHandler.tray.remove(IconHandler.icon)
+    }
+
     def apply(tag: String, x: Any = Logger.NoOp): Unit = ConsoleLogger.send(Logger.PPrinted(tag, x))
 
     def info(chunks: String*): Unit = {
-
+      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
       ConsoleLogger.send(Logger.Info(chunks))
     }
     def error(chunks: String*): Unit = {
+      statusActor.send(StatusActor.Error(chunks.mkString("\n")))
       ConsoleLogger.send(Logger.Info(chunks))
     }
     def grey(chunks: String*): Unit = {
+      statusActor.send(StatusActor.Greyed(chunks.mkString("\n")))
       ConsoleLogger.send(Logger.Info(chunks))
     }
     def progress(chunks: String*): Unit = {
+      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
       ConsoleLogger.send(Logger.Progress(chunks))
     }
 

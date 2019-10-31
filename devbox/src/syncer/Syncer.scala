@@ -19,30 +19,6 @@ class Syncer(agent: AgentApi,
              signatureTransformer: (os.SubPath, Sig) => Sig)
             (implicit ac: ActorContext) extends AutoCloseable{
 
-//  val statusLogger = new SyncLogger{
-//    def apply(tag: String, x: Any = Logger.NoOp): Unit = logger.apply(tag, x)
-//    def info(chunks: String*) = {
-//      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
-//      logger.info(chunks:_*)
-//    }
-//    def error(chunks: String*) = {
-//      statusActor.send(StatusActor.Error(chunks.mkString("\n")))
-//      logger.error(chunks:_*)
-//    }
-//    def grey(chunks: String*) = {
-//      statusActor.send(StatusActor.Greyed(chunks.mkString("\n")))
-//      logger.grey(chunks:_*)
-//    }
-//    def progress(chunks: String*) = {
-//      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
-//      logger.progress(chunks:_*)
-//    }
-//  }
-
-
-
-
-
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
     x => skipActor.send(SkipScanActor.Receive(x)),
@@ -79,11 +55,8 @@ class Syncer(agent: AgentApi,
     logger.apply(_, _)
   )
 
-  var running = false
-
   def start() = {
-//    IconHandler.tray.add(IconHandler.icon)
-    running = true
+    logger.init()
     agent.start(s =>
       logger.info(s"Initializing Devbox\n$s")
     )
@@ -98,8 +71,7 @@ class Syncer(agent: AgentApi,
   }
 
   def close() = {
-//    IconHandler.tray.remove(IconHandler.icon)
-    running = false
+    logger.close()
     watcher.close()
     agentReadWriter.send(AgentReadWriteActor.Close())
   }
