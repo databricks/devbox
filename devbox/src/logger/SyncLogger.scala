@@ -2,7 +2,7 @@ package devbox.logger
 
 import java.awt.event.{MouseEvent, MouseListener}
 
-import devbox.common.{Actor, ActorContext, BaseLogger, Logger, SimpleActor}
+import devbox.common.{Actor, ActorContext, BaseLogger, Logger, PathSet, SimpleActor, Util}
 trait SyncLogger{
   def init(): Unit
   def close(): Unit
@@ -18,56 +18,91 @@ trait SyncLogger{
 }
 
 object SyncLogger{
+  sealed trait Msg
+  case class Init() extends Msg
+  case class Close() extends Msg
+  case class Apply(tag: String, x: Any) extends Msg
+  case class Info(chunks: Seq[String]) extends Msg
+  case class Error(chunks: Seq[String]) extends Msg
+  case class Grey(chunks: Seq[String]) extends Msg
+  case class Progress(chunks: Seq[String]) extends Msg
+  case class Done() extends Msg
+  case class SyncingFile(prefix: String, suffix: String) extends Msg
+  case class IncrementFileTotal(base: os.Path, subs: Set[os.SubPath]) extends Msg
+  case class FilesAndBytes(files: Set[os.Path], bytes: Long) extends Msg
 
   class Impl(val dest: String => os.Path,
              val rotationSize: Long,
              val truncate: Boolean,
              onClick: => Actor[Unit])
-            (implicit ac: ActorContext) extends SyncLogger{
+            (implicit ac: ActorContext) extends SimpleActor[Msg] with SyncLogger {
 
     def logOut(s: String) = {}
-    def init() = {
-      IconHandler.tray.add(IconHandler.icon)
-    }
+    def init() = this.send(Init())
 
-    override def close() = {
-      consoleLogger.close()
-      IconHandler.tray.remove(IconHandler.icon)
-    }
+    override def close() = this.send(Close())
+    def apply(tag: String, x: Any = Logger.NoOp): Unit = this.send(Apply(tag, x))
+    def info(chunks: String*) = this.send(Info(chunks))
+    def error(chunks: String*) = this.send(Error(chunks))
+    def grey(chunks: String*) = this.send(Grey(chunks))
+    def progress(chunks: String*) = this.send(Progress(chunks))
 
-    def apply(tag: String, x: Any = Logger.NoOp): Unit = {
-      consoleLogger.send(Logger.PPrinted(tag, x))
-    }
-
-    def info(chunks: String*) = {
-      statusActor.send(StatusActor.SetIcon("blue-sync", chunks))
-    }
-    def error(chunks: String*) = {
-      statusActor.send(StatusActor.SetIcon("red-cross", chunks))
-    }
-    def grey(chunks: String*) = {
-      statusActor.send(StatusActor.SetIcon("grey-dash", chunks))
-    }
-    def progress(chunks: String*) = {
-      statusActor.send(StatusActor.SetIcon("blue-sync", chunks))
-    }
-
-    def done() = statusActor.send(StatusActor.Done())
+    def done() = this.send(Done())
 
     def filesAndBytes(files: Set[os.Path], bytes: Long) = {
-      statusActor.send(StatusActor.FilesAndBytes(files, bytes))
+      this.send(FilesAndBytes(files, bytes))
     }
     def incrementFileTotal(base: os.Path, subs: Set[os.SubPath]) = {
-      statusActor.send(StatusActor.IncrementFileTotal(base, subs))
+      this.send(IncrementFileTotal(base, subs))
     }
     def syncingFile(prefix: String, suffix: String) = {
-      statusActor.send(StatusActor.SyncingFile(prefix, suffix))
+      this.send(SyncingFile(prefix, suffix))
     }
 
+    var syncFiles = new PathSet()
+    var totalFiles = new PathSet()
+    var syncBytes = 0L
+    val consoleLogger = new ConsoleLogger(dest, rotationSize, truncate, logOut)
     val statusActor = new StatusActor(
       imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
-      tooltip => IconHandler.icon.setToolTip(tooltip),
-      new ConsoleLogger(dest, rotationSize, truncate, logOut)
+      tooltip => IconHandler.icon.setToolTip(tooltip)
+    )
+
+    def run(msg: Msg) = msg match{
+      case Init() => IconHandler.tray.add(IconHandler.icon)
+      case Close() =>
+        consoleLogger.close()
+        IconHandler.tray.remove(IconHandler.icon)
+
+      case Apply(tag, x) =>
+      case Info(chunks) => logConsoleStatus("blue-sync", chunks)
+      case Error(chunks) => logConsoleStatus("red-cross", chunks)
+      case Grey(chunks) => logConsoleStatus("grey-dash", chunks)
+      case Progress(chunks) => logConsoleStatus("blue-sync", chunks, progress = true)
+      case Done() => logConsoleStatus("green-tick", syncCompleteMsg(syncFiles, syncBytes))
+      case SyncingFile(prefix, suffix) =>
+        logConsoleStatus("blue-sync", Seq(s"$prefix${syncFiles.size}/${totalFiles.size}$suffix"))
+
+      case IncrementFileTotal(base, subs) =>
+        totalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))
+
+      case FilesAndBytes(files, bytes) =>
+        syncBytes = syncBytes + bytes
+        syncFiles = syncFiles.withPaths(files.map(_.segments))
+    }
+
+    def logConsoleStatus(icon: String, chunks: Seq[String], progress: Boolean = false) = {
+      consoleLogger.send(
+        if (progress) Logger.Progress(chunks)
+        else Logger.Info(chunks)
+      )
+      statusActor.send(StatusActor.SetIcon(icon, chunks))
+    }
+
+    def syncCompleteMsg(syncFiles: PathSet, syncBytes: Long) = Seq(
+      s"Syncing Complete",
+      s"${Util.formatInt(syncFiles.size)} files ${Util.readableBytesSize(syncBytes)}",
+      s"${Util.timeFormatter.format(java.time.Instant.now())}"
     )
 
     object IconHandler{
