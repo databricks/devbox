@@ -15,7 +15,7 @@ class Syncer(agent: AgentApi,
              ignoreStrategy: String = "dotgit",
              debounceMillis: Int,
              logger: SyncLogger,
-             signatureTransformer: (os.SubPath, Signature) => Signature)
+             signatureTransformer: (os.SubPath, Sig) => Sig)
             (implicit ac: ActorContext) extends AutoCloseable{
 
   private[this] val watcher = os.watch.watch(
@@ -49,6 +49,7 @@ class Syncer(agent: AgentApi,
   }
   val syncer: SyncActor = new SyncActor(
     agentReadWriter,
+    sigActor,
     mapping,
     statusLogger,
     ignoreStrategy,
@@ -62,12 +63,15 @@ class Syncer(agent: AgentApi,
     statusLogger
   )
 
+  val sigActor = new SigActor(
+    syncer.send(_),
+    signatureTransformer
+  )
   val skipActor = new SkipActor(
     mapping,
     ignoreStrategy,
-    syncer.send(_),
-    statusLogger,
-    signatureTransformer
+    sigActor.send(_),
+    statusLogger
   )
 
   val statusActor = new StatusActor(

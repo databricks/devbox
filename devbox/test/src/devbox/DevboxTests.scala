@@ -259,7 +259,7 @@ object DevboxTests extends TestSuite{
                         logger: SyncLogger,
                         ignoreStrategy: String,
                         exitOnError: Boolean,
-                        signatureMapping: (os.SubPath, Signature) => Signature,
+                        signatureMapping: (os.SubPath, Sig) => Sig,
                         healthCheckInterval: Int = 0,
                         randomKill: Option[Int] = None)
                        (implicit ac: ActorContext) = {
@@ -301,7 +301,7 @@ object DevboxTests extends TestSuite{
   }
 
   def computeSig(p: os.Path, buffer: Array[Byte]) = {
-    Signature.compute(p, buffer, os.stat(p, followLinks = false).fileType)
+    Sig.compute(p, buffer, os.stat(p, followLinks = false).fileType)
   }
   def validate(src: os.Path, dest: os.Path, ignoreStrategy: String) = {
     println("Validating...")

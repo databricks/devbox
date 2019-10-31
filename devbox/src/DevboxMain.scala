@@ -96,9 +96,9 @@ object DevboxMain {
               val regex = com.google.re2j.Pattern.compile(regexStr)
 
               {
-                case (path, Signature.File(perms, blockHashes, size))
+                case (path, Sig.File(perms, blockHashes, size))
                   if regex.matches(path.toString) ^ negate =>
-                  Signature.File(
+                  Sig.File(
                     perms
                       - PosixFilePermission.GROUP_WRITE
                       - PosixFilePermission.OTHERS_WRITE

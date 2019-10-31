@@ -103,8 +103,8 @@ object DevboxTestMain {
               exitOnError = false,
               if (!config.readOnlyRemote) {(p, sig) => sig}
               else {
-                case (p, Signature.File(perms, blockHashes, size)) =>
-                  Signature.File(
+                case (p, Sig.File(perms, blockHashes, size)) =>
+                  Sig.File(
                     perms
                       - PosixFilePermission.GROUP_WRITE
                       - PosixFilePermission.OTHERS_WRITE

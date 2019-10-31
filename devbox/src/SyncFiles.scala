@@ -3,7 +3,7 @@ package devbox
 import java.io.{PrintWriter, StringWriter}
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.{Action, Bytes, Logger, PathRpc, Rpc, RpcException, Signature, SyncLogger, Util, Vfs}
+import devbox.common.{Action, Bytes, Logger, PathRpc, Rpc, RpcException, Sig, SyncLogger, Util, Vfs}
 import os.{Path, RelPath, SubPath}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -27,8 +27,8 @@ object SyncFiles {
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
-                  changedPaths0: Map[os.Path, Map[os.SubPath, Option[Signature]]],
-                  vfsArr: Seq[Vfs[Signature]],
+                  changedPaths0: Map[os.Path, Map[os.SubPath, Option[Sig]]],
+                  vfsArr: Seq[Vfs[Sig]],
                   logger: SyncLogger,
                   send: Msg => Unit)
                  (implicit ec: ExecutionContext) = {
@@ -69,10 +69,10 @@ object SyncFiles {
   case object NoOp extends ExitCode
 
   def synchronizeRepo(logger: SyncLogger,
-                      vfs: Vfs[Signature],
+                      vfs: Vfs[Sig],
                       src: os.Path,
                       dest: os.RelPath,
-                      eventPaths: Map[os.SubPath, Option[Signature]],
+                      eventPaths: Map[os.SubPath, Option[Sig]],
                       send: Msg => Unit)
                      (implicit ec: ExecutionContext): Unit = {
 
@@ -93,7 +93,7 @@ object SyncFiles {
     }
   }
 
-  def sortSignatureChanges(sigs: Seq[(os.SubPath, Option[Signature], Option[Signature])]) = {
+  def sortSignatureChanges(sigs: Seq[(os.SubPath, Option[Sig], Option[Sig])]) = {
     sigs.sortBy { case (p, local, remote) =>
       (
         // First, sort by how deep the path is. We want to operate on the
@@ -119,9 +119,9 @@ object SyncFiles {
     }
   }
 
-  def syncAllFiles(vfs: Vfs[Signature],
+  def syncAllFiles(vfs: Vfs[Sig],
                    send: Msg => Unit,
-                   signatureMapping: Seq[(os.SubPath, Option[Signature], Option[Signature])],
+                   signatureMapping: Seq[(os.SubPath, Option[Sig], Option[Sig])],
                    src: os.Path,
                    dest: os.RelPath,
                    logger: SyncLogger): Unit = {
@@ -136,7 +136,7 @@ object SyncFiles {
       syncFileMetadata(dest, client, subPath, localSig, remoteSig)
 
       localSig match{
-        case Some(Signature.File(_, blockHashes, size)) =>
+        case Some(Sig.File(_, blockHashes, size)) =>
           syncFileChunks(vfs, send, src, dest, logger, subPath, remoteSig, blockHashes, size)
         case _ =>
       }
@@ -146,17 +146,17 @@ object SyncFiles {
   }
 
 
-  def syncFileChunks(vfs: Vfs[Signature],
+  def syncFileChunks(vfs: Vfs[Sig],
                      send: Msg => Unit,
                      src: Path,
                      dest: RelPath,
                      logger: SyncLogger,
                      subPath: SubPath,
-                     remoteSig: Option[Signature],
+                     remoteSig: Option[Sig],
                      blockHashes: Seq[Bytes],
                      size: Long): Unit = {
     val (otherHashes, otherSize) = remoteSig match {
-      case Some(Signature.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
+      case Some(Sig.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
       case _ => (Nil, 0L)
     }
     logger("SYNC CHUNKS", (subPath, size, otherSize, remoteSig))
@@ -184,24 +184,24 @@ object SyncFiles {
   def syncFileMetadata(dest: RelPath,
                        client: Rpc with Action with PathRpc => Unit,
                        subPath: SubPath,
-                       localSig: Option[Signature],
-                       remoteSig: Option[Signature]): Unit = {
+                       localSig: Option[Sig],
+                       remoteSig: Option[Sig]): Unit = {
 
     (localSig, remoteSig) match {
       case (None, _) =>
         client(Rpc.Remove(dest, subPath))
-      case (Some(Signature.Dir(perms)), remote) =>
+      case (Some(Sig.Dir(perms)), remote) =>
         remote match {
           case None =>
             client(Rpc.PutDir(dest, subPath, perms))
-          case Some(Signature.Dir(remotePerms)) =>
+          case Some(Sig.Dir(remotePerms)) =>
             client(Rpc.SetPerms(dest, subPath, perms))
           case Some(_) =>
             client(Rpc.Remove(dest, subPath))
             client(Rpc.PutDir(dest, subPath, perms))
         }
 
-      case (Some(Signature.Symlink(target)), remote) =>
+      case (Some(Sig.Symlink(target)), remote) =>
         remote match {
           case None =>
             client(Rpc.PutLink(dest, subPath, target))
@@ -209,13 +209,13 @@ object SyncFiles {
             client(Rpc.Remove(dest, subPath))
             client(Rpc.PutLink(dest, subPath, target))
         }
-      case (Some(Signature.File(perms, blockHashes, size)), remote) =>
-        if (remote.exists(!_.isInstanceOf[Signature.File])) {
+      case (Some(Sig.File(perms, blockHashes, size)), remote) =>
+        if (remote.exists(!_.isInstanceOf[Sig.File])) {
           client(Rpc.Remove(dest, subPath))
         }
 
         remote match {
-          case Some(Signature.File(otherPerms, otherBlockHashes, otherSize)) =>
+          case Some(Sig.File(otherPerms, otherBlockHashes, otherSize)) =>
             if (perms != otherPerms) client(Rpc.SetPerms(dest, subPath, perms))
 
           case _ => client(Rpc.PutFile(dest, subPath, perms))
@@ -225,9 +225,9 @@ object SyncFiles {
 
   def computeSignatures(eventPaths: Set[os.SubPath],
                         src: os.Path,
-                        signatureTransformer: (os.SubPath, Signature) => Signature)
+                        signatureTransformer: (os.SubPath, Sig) => Sig)
                        (implicit ec: ExecutionContext)
-  : Future[Seq[(os.SubPath, Option[Signature])]] = {
+  : Future[Seq[(os.SubPath, Option[Sig])]] = {
 
     val eventPathsLinks = eventPaths.map(p => (p, os.isLink(src / p)))
     // Existing under a differently-cased name counts as not existing.
@@ -259,7 +259,7 @@ object SyncFiles {
             else {
               val attrs = os.stat(abs, followLinks = false)
               val buffer = buffers.take()
-              try Signature
+              try Sig
                 .compute(abs, buffer, attrs.fileType)
                 .map(signatureTransformer(sub, _))
               finally buffers.put(buffer)

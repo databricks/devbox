@@ -11,9 +11,9 @@ import scala.collection.mutable
   * The minimal amount of metadata identifying something on the filesystem that
   * is necessary to perform efficient synchronization.
   */
-sealed trait Signature
+sealed trait Sig
 
-object Signature{
+object Sig{
   /**
     * Computes the signature of a given path. Assumes the file exists.
     */
@@ -37,14 +37,14 @@ object Signature{
     }
   }
 
-  case class File(perms: os.PermSet, blockHashes: Seq[Bytes], size: Long) extends Signature
+  case class File(perms: os.PermSet, blockHashes: Seq[Bytes], size: Long) extends Sig
   object File{ implicit val rw: ReadWriter[File] = macroRW }
 
-  case class Dir(perms: os.PermSet) extends Signature
+  case class Dir(perms: os.PermSet) extends Sig
   object Dir{ implicit val rw: ReadWriter[Dir] = macroRW }
 
-  case class Symlink(dest: String) extends Signature
+  case class Symlink(dest: String) extends Sig
   object Symlink{ implicit val rw: ReadWriter[Symlink] = macroRW }
 
-  implicit val rw: ReadWriter[Signature] = macroRW
+  implicit val rw: ReadWriter[Sig] = macroRW
 }
