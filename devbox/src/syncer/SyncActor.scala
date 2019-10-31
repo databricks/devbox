@@ -3,12 +3,15 @@ package devbox.syncer
 import devbox.common._
 import devbox.logger.SyncLogger
 
+import scala.concurrent.Future
+
 object SyncActor{
   sealed trait Msg
   case class Events(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]]) extends Msg
   case class LocalScanned(base: os.Path, sub: os.SubPath, sig: Option[Sig]) extends Msg
   case class RemoteScanned(base: os.RelPath, sub: os.SubPath, sig: Sig) extends Msg
   case class InitialScansComplete() extends Msg
+  case class Done() extends Msg
 }
 class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
                 mapping: Seq[(os.Path, os.RelPath)])
@@ -62,21 +65,33 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
       )
   })
 
-  case class Active(vfsArr: Seq[Vfs[Sig]]) extends State({
+  case class Idle(vfsArr: Seq[Vfs[Sig]]) extends State({
     case SyncActor.Events(paths) => executeSync(paths, vfsArr)
+  })
 
+  case class Busy(buffered: Map[os.Path, Map[os.SubPath, Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) extends State({
+    case SyncActor.Events(paths) => Busy(Util.joinMaps2(paths, buffered), vfsArr)
+    case SyncActor.Done() => executeSync(buffered, vfsArr)
   })
 
   def executeSync(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) = {
-    SyncFiles.executeSync(
-      mapping,
-      paths,
-      vfsArr,
-      logger,
-      m => sendAgentMsg(AgentReadWriteActor.Send(m))
-    )
-    sendAgentMsg(AgentReadWriteActor.Send(SyncFiles.Complete()))
+    if (paths.forall(_._2.isEmpty)) Idle(vfsArr)
+    else {
+      Future {
+        SyncFiles.executeSync(
+          mapping,
+          paths,
+          vfsArr,
+          logger,
+          m => sendAgentMsg(AgentReadWriteActor.Send(m))
+        )
 
-    Active(vfsArr)
+      }.foreach{_ =>
+        sendAgentMsg(AgentReadWriteActor.Send(SyncFiles.Complete()))
+        this.send(SyncActor.Done())
+      }
+
+      Busy(Map.empty, vfsArr)
+    }
   }
 }
