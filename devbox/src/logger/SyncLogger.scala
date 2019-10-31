@@ -59,6 +59,7 @@ object SyncLogger{
       this.send(SyncingFile(prefix, suffix))
     }
 
+    var closed = false
     var syncFiles = new PathSet()
     var totalFiles = new PathSet()
     var syncBytes = 0L
@@ -68,20 +69,28 @@ object SyncLogger{
       tooltip => IconHandler.icon.setToolTip(tooltip)
     )
 
-    def run(msg: Msg) = msg match{
+    def run(msg: Msg) = if (!closed) msg match{
       case Init() => IconHandler.tray.add(IconHandler.icon)
       case Close() =>
-        consoleLogger.close()
+        closed = true
+        consoleLogger.send(Logger.Close())
         IconHandler.tray.remove(IconHandler.icon)
 
-      case Apply(tag, x) =>
+      case Apply(tag, x) => consoleLogger.send(Logger.PPrinted(tag, x))
       case Info(chunks) => logConsoleStatus("blue-sync", chunks)
       case Error(chunks) => logConsoleStatus("red-cross", chunks)
       case Grey(chunks) => logConsoleStatus("grey-dash", chunks)
       case Progress(chunks) => logConsoleStatus("blue-sync", chunks, progress = true)
-      case Done() => logConsoleStatus("green-tick", syncCompleteMsg(syncFiles, syncBytes))
+      case Done() =>
+        logConsoleStatus("green-tick", syncCompleteMsg(syncFiles, syncBytes))
+        syncFiles = new PathSet()
+        totalFiles = new PathSet()
       case SyncingFile(prefix, suffix) =>
-        logConsoleStatus("blue-sync", Seq(s"$prefix${syncFiles.size}/${totalFiles.size}$suffix"))
+        logConsoleStatus(
+          "blue-sync",
+          Seq(s"$prefix${syncFiles.size}/${totalFiles.size}$suffix"),
+          progress = true
+        )
 
       case IncrementFileTotal(base, subs) =>
         totalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))

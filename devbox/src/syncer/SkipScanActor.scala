@@ -15,8 +15,7 @@ object SkipScanActor{
 }
 class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
                     ignoreStrategy: String,
-                    sendToSigActor: SigActor.Msg => Unit,
-                    logger: SyncLogger)
+                    sendToSigActor: SigActor.Msg => Unit)
                    (implicit ac: ActorContext) extends StateMachineActor[SkipScanActor.Msg]{
 
   def initialState = Scanning(
@@ -89,7 +88,6 @@ class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
       case 0 => Scanning(buffered, initialScanned, skippers, 1)
       case 1 =>
         sendToSigActor(SigActor.InitialScansComplete())
-        logger("initialScansComplete")
         flushPathsDownstream(buffered, skippers)
     }
   }

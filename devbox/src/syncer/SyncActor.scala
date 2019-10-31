@@ -17,8 +17,7 @@ object SyncActor{
 class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
                 mapping: Seq[(os.Path, os.RelPath)],
                 logger: SyncLogger,
-                ignoreStrategy: String,
-                scheduledExecutorService: ScheduledExecutorService)
+                ignoreStrategy: String)
                (implicit ac: ActorContext)
   extends StateMachineActor[SyncActor.Msg]() {
 

@@ -31,5 +31,7 @@ class ConsoleLogger(val dest: String => os.Path,
         println(chunks.mkString(", "))
         lastProgressTimestamp = now
       }
+
+    case Logger.Close() => close()
   }
 }

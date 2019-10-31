@@ -25,27 +25,24 @@ class Syncer(agent: AgentApi,
     logger
   )
 
-  val syncer: SyncActor = new SyncActor(
+  val syncer = new SyncActor(
     agentReadWriter.send,
     mapping,
     logger,
-    ignoreStrategy,
-    Executors.newSingleThreadScheduledExecutor()
+    ignoreStrategy
   )
 
   val sigActor = new SigActor(
     syncer.send,
-    signatureTransformer,
-    logger
+    signatureTransformer
   )
   val skipActor = new SkipScanActor(
     mapping,
     ignoreStrategy,
-    sigActor.send,
-    logger
+    sigActor.send
   )
 
-  private[this] val watcher = os.watch.watch(
+  val watcher = os.watch.watch(
     mapping.map(_._1),
     events => skipActor.send(
       SkipScanActor.Paths(

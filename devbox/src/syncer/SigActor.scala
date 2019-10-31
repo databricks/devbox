@@ -8,8 +8,7 @@ import devbox.logger.SyncLogger
 import scala.concurrent.{ExecutionContext, Future}
 
 class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
-               signatureTransformer: (os.SubPath, Sig) => Sig,
-               logger: SyncLogger)
+               signatureTransformer: (os.SubPath, Sig) => Sig)
               (implicit ac: ActorContext) extends StateMachineActor[SigActor.Msg]{
   def initialState: State = Idle()
 
@@ -109,7 +108,6 @@ object SigActor{
               finally buffers.put(buffer)
             }
           }catch{case e: Throwable => None}
-          logger("computeSig", (sub, newSig))
           (sub, newSig)
         }
       }
