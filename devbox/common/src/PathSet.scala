@@ -101,10 +101,13 @@ object PathSet{
   case class Node(hasValue: Boolean = false,
                   children: Map[String, Node] = Map.empty) extends BasePathSet.Node
 
+  def apply(paths: IterableOnce[IterableOnce[String]]) = new PathSet().withPaths(paths)
+
   /**
     * Shared instance to represent the common case of a file with no children
     */
   val ZeroChildLeaveNode = Node(hasValue = true)
+
 }
 class PathSet(protected val value: PathSet.Node = PathSet.Node(),
               size0: Int = 0) extends BasePathSet{

@@ -15,51 +15,42 @@ class Syncer(agent: AgentApi,
              mapping: Seq[(os.Path, os.RelPath)],
              ignoreStrategy: String = "dotgit",
              debounceMillis: Int,
-             logger: SyncLogger,
              signatureTransformer: (os.SubPath, Sig) => Sig)
-            (implicit ac: ActorContext) extends AutoCloseable{
+            (implicit ac: ActorContext, logger: SyncLogger) extends AutoCloseable{
 
-  val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
+  val agentActor: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
     x => skipActor.send(SkipScanActor.Receive(x)),
-    logger
   )
 
-  val syncer = new SyncActor(
-    agentReadWriter.send,
-    mapping,
-    logger,
-    ignoreStrategy
+  val syncActor = new SyncActor(
+    agentActor.send,
+    mapping
   )
 
   val sigActor = new SigActor(
-    syncer.send,
+    syncActor.send,
     signatureTransformer
   )
+
   val skipActor = new SkipScanActor(
+    sigActor.send,
     mapping,
-    ignoreStrategy,
-    sigActor.send
+    ignoreStrategy
   )
 
   val watcher = os.watch.watch(
     mapping.map(_._1),
-    events => skipActor.send(
-      SkipScanActor.Paths(
-        new PathSet().withPaths(events.iterator.map(_.segments))
-      )
-    ),
-    logger.apply(_, _)
+    events => skipActor.send(SkipScanActor.Paths(PathSet(events.iterator.map(_.segments)))),
+    logger.apply
   )
 
   def start() = {
     logger.init()
-    agent.start(s =>
-      logger.info(s"Initializing Devbox\n$s")
-    )
-    agentReadWriter.spawnReaderThread()
+    agent.start(s => logger.info(s"Initializing Devbox\n$s"))
+    agentActor.spawnReaderThread()
 
-    agentReadWriter.send(
+    agentActor.send(
       AgentReadWriteActor.Send(
         SyncFiles.RemoteScan(mapping.map(_._2))
       )
@@ -70,6 +61,6 @@ class Syncer(agent: AgentApi,
   def close() = {
     logger.close()
     watcher.close()
-    agentReadWriter.send(AgentReadWriteActor.Close())
+    agentActor.send(AgentReadWriteActor.Close())
   }
 }

@@ -76,11 +76,11 @@ object DevboxMain {
           val s"$logFileName.$logFileExt" = logFile.last
           val logFileBase = logFile / os.up
 
-          lazy val logger: devbox.logger.SyncLogger = new devbox.logger.SyncLogger.Impl(
+          implicit lazy val logger: devbox.logger.SyncLogger = new devbox.logger.SyncLogger.Impl(
             n => logFileBase / s"$logFileName$n.$logFileExt",
             50 * 1024 * 1024,
             truncate = true,
-            new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentReadWriter)
+            new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
           )
           lazy val syncer = new Syncer(
             new ReliableAgent(prep, connect.drop(1) /* drop the -- */, os.pwd),
@@ -91,7 +91,6 @@ object DevboxMain {
               },
             config.ignoreStrategy,
             config.debounceMillis,
-            logger,
             if (config.readOnlyRemote == null) (_, sig) => sig
             else {
               val (regexStr, negate) =

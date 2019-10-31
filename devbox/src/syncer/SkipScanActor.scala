@@ -13,10 +13,11 @@ object SkipScanActor{
   case class LocalScanned(base: os.Path, sub: os.SubPath) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
 }
-class SkipScanActor(mapping: Seq[(os.Path, os.RelPath)],
-                    ignoreStrategy: String,
-                    sendToSigActor: SigActor.Msg => Unit)
-                   (implicit ac: ActorContext) extends StateMachineActor[SkipScanActor.Msg]{
+class SkipScanActor(sendToSigActor: SigActor.Msg => Unit,
+                    mapping: Seq[(os.Path, os.RelPath)],
+                    ignoreStrategy: String)
+                   (implicit ac: ActorContext,
+                    logger: SyncLogger) extends StateMachineActor[SkipScanActor.Msg]{
 
   def initialState = Scanning(
     new PathSet(),

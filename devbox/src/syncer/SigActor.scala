@@ -9,7 +9,8 @@ import scala.concurrent.{ExecutionContext, Future}
 
 class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
                signatureTransformer: (os.SubPath, Sig) => Sig)
-              (implicit ac: ActorContext) extends StateMachineActor[SigActor.Msg]{
+              (implicit ac: ActorContext,
+               logger: SyncLogger) extends StateMachineActor[SigActor.Msg]{
   def initialState: State = Idle()
 
   case class Idle() extends State({
@@ -46,7 +47,7 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
   def compute(groups: Map[os.Path, Set[os.SubPath]]) = {
     val computeFutures =
       for((k, vs) <- groups)
-      yield SigActor.computeSignatures(vs, k, signatureTransformer, logger).map((k, _))
+      yield SigActor.computeSignatures(vs, k, signatureTransformer).map((k, _))
 
     Future.sequence(computeFutures).foreach{ results =>
       sendToSyncActor(SyncActor.Events(results.map{case (k, vs) => (k, vs.toMap)}.toMap))
@@ -66,8 +67,7 @@ object SigActor{
 
   def computeSignatures(eventPaths: Set[os.SubPath],
                         src: os.Path,
-                        signatureTransformer: (os.SubPath, Sig) => Sig,
-                        logger: SyncLogger)
+                        signatureTransformer: (os.SubPath, Sig) => Sig)
                        (implicit ec: ExecutionContext)
   : Future[Seq[(os.SubPath, Option[Sig])]] = {
 

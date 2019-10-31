@@ -125,16 +125,16 @@ object DevboxTests extends TestSuite{
         else ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
         _.printStackTrace()
       )
-      lazy val logger: SyncLogger.Impl = new SyncLogger.Impl(
+      implicit lazy val logger: SyncLogger.Impl = new SyncLogger.Impl(
         n => logFileBase / s"$logFileName$n.$logFileExt",
         5 * 1024 * 1024,
         truncate = false,
-        new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentReadWriter)
+        new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
       )
 
       lazy val syncer = instantiateSyncer(
         src, dest, 50,
-        logger, ignoreStrategy,
+        ignoreStrategy,
         exitOnError = true,
         signatureMapping = (_, sig) => sig,
         randomKill = randomKillInterval
@@ -261,13 +261,13 @@ object DevboxTests extends TestSuite{
   def instantiateSyncer(src: os.Path,
                         dest: os.Path,
                         debounceMillis: Int,
-                        logger: SyncLogger,
                         ignoreStrategy: String,
                         exitOnError: Boolean,
                         signatureMapping: (os.SubPath, Sig) => Sig,
                         healthCheckInterval: Int = 0,
                         randomKill: Option[Int] = None)
-                       (implicit ac: ActorContext) = {
+                       (implicit ac: ActorContext,
+                        logger: SyncLogger) = {
 
     val syncer = new Syncer(
       new ReliableAgent(
@@ -288,7 +288,6 @@ object DevboxTests extends TestSuite{
       Seq(src -> os.rel),
       ignoreStrategy,
       debounceMillis,
-      logger,
       signatureMapping
     )
     syncer

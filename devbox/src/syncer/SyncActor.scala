@@ -1,7 +1,5 @@
 package devbox.syncer
 
-import java.util.concurrent.ScheduledExecutorService
-
 import devbox.common._
 import devbox.logger.SyncLogger
 
@@ -15,10 +13,9 @@ object SyncActor{
   case class InitialScansComplete() extends Msg
 }
 class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
-                mapping: Seq[(os.Path, os.RelPath)],
-                logger: SyncLogger,
-                ignoreStrategy: String)
-               (implicit ac: ActorContext)
+                mapping: Seq[(os.Path, os.RelPath)])
+               (implicit ac: ActorContext,
+                logger: SyncLogger)
   extends StateMachineActor[SyncActor.Msg]() {
 
   def initialState = RemoteScanning(

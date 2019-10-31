@@ -17,9 +17,9 @@ object AgentReadWriteActor{
   case class Close() extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
-                          onResponse: Response => Unit,
+                          onResponse: Response => Unit)
+                         (implicit ac: ActorContext,
                           logger: SyncLogger)
-                         (implicit ac: ActorContext)
   extends StateMachineActor[AgentReadWriteActor.Msg](){
 
   def initialState = Active(Vector())

@@ -91,16 +91,15 @@ object DevboxTestMain {
           if (config.label == "manual"){
             implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
-            lazy val logger: devbox.logger.SyncLogger.Impl = new devbox.logger.SyncLogger.Impl(
+            implicit lazy val logger: devbox.logger.SyncLogger.Impl = new devbox.logger.SyncLogger.Impl(
               n => os.pwd / "out" / "scratch" / config.label / s"log$n.txt",
               5 * 1024 * 1024,
               truncate = true,
-              new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentReadWriter)
+              new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
             )
             lazy val syncer = instantiateSyncer(
               src, dest,
               config.debounceMillis,
-              logger,
               config.ignoreStrategy,
               exitOnError = false,
               if (!config.readOnlyRemote) {(p, sig) => sig}
