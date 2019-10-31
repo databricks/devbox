@@ -5,6 +5,7 @@ import java.nio.file.attribute.PosixFilePermission
 import devbox.common._
 import devbox.common.Cli.{Arg, showArg}
 import Cli.pathScoptRead
+import syncer.{ReliableAgent, Syncer}
 
 import scala.concurrent.ExecutionContext
 object DevboxMain {
@@ -83,7 +84,7 @@ object DevboxMain {
             },
             config.ignoreStrategy,
             config.debounceMillis,
-            new SyncLogger.Impl(
+            new logger.SyncLogger.Impl(
               n => logFileBase / s"$logFileName$n.$logFileExt",
               50 * 1024 * 1024,
               truncate = true

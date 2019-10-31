@@ -1,5 +1,8 @@
-package devbox
-import devbox.common.{ActorContext, PathSet, Response, Skipper, StateMachineActor}
+package devbox.syncer
+
+import devbox.common._
+import devbox.common
+import devbox.logger.SyncLogger
 
 import scala.concurrent.Future
 object SkipScanActor{

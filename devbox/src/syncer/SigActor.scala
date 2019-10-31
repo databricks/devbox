@@ -1,7 +1,9 @@
-package devbox
+package devbox.syncer
+
 import java.util.concurrent.LinkedBlockingQueue
 
 import devbox.common.{ActorContext, Sig, StateMachineActor, Util}
+import devbox.logger.SyncLogger
 
 import scala.concurrent.{ExecutionContext, Future}
 

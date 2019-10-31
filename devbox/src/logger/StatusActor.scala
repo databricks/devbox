@@ -1,6 +1,8 @@
-package devbox
-import devbox.common.{ActorContext, PathSet, StateMachineActor, Util}
+package devbox.logger
+
 import java.time.Duration
+
+import devbox.common.{ActorContext, PathSet, StateMachineActor, Util}
 object StatusActor{
   sealed trait Msg
   sealed trait StatusMsg extends Msg

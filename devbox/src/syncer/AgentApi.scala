@@ -1,4 +1,4 @@
-package devbox
+package devbox.syncer
 
 import java.io._
 

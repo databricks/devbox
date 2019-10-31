@@ -3,9 +3,11 @@ import java.io.{DataInputStream, DataOutputStream, PipedInputStream, PipedOutput
 import java.util.concurrent.{Executors, Semaphore}
 
 import devbox.common._
+import logger.SyncLogger
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.revwalk.RevCommit
 import os.Path
+import syncer.{ReliableAgent, Syncer}
 
 import collection.JavaConverters._
 import utest._

@@ -1,12 +1,10 @@
-package devbox
+package devbox.syncer
 
-import java.io.{PrintWriter, StringWriter}
-import java.util.concurrent.LinkedBlockingQueue
-
-import devbox.common.{Action, Bytes, Logger, PathRpc, Rpc, RpcException, Sig, Util, Vfs}
+import devbox.common._
+import devbox.logger.SyncLogger
 import os.{Path, RelPath, SubPath}
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
 
 object SyncFiles {
 

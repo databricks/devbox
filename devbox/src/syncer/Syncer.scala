@@ -1,8 +1,9 @@
-package devbox
-import java.awt.event.{MouseEvent, MouseListener}
+package devbox.syncer
+
 import java.util.concurrent._
 
 import devbox.common._
+import devbox.logger.SyncLogger
 
 /**
   * The Syncer class instances contain all the stateful, close-able parts of

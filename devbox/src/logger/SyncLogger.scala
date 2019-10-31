@@ -1,4 +1,5 @@
-package devbox
+package devbox.logger
+
 import java.awt.event.{MouseEvent, MouseListener}
 
 import devbox.common.{ActorContext, BaseLogger, Logger, SimpleActor}

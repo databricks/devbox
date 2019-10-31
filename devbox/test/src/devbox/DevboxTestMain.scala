@@ -90,7 +90,7 @@ object DevboxTestMain {
           if (config.label == "manual"){
             implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
-            val logger = new SyncLogger.Impl(
+            val logger = new devbox.logger.SyncLogger.Impl(
               n => os.pwd / "out" / "scratch" / config.label / s"log$n.txt",
               5 * 1024 * 1024,
               truncate = true
