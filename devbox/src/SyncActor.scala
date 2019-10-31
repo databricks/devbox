@@ -1,7 +1,7 @@
 package devbox
 import java.util.concurrent.ScheduledExecutorService
 
-import devbox.common.{ActorContext, Response, Sig, StateMachineActor, SyncLogger, Util, Vfs}
+import devbox.common.{ActorContext, Sig, StateMachineActor, Util, Vfs}
 
 object SyncActor{
   sealed trait Msg

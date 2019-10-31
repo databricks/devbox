@@ -18,46 +18,40 @@ class Syncer(agent: AgentApi,
              signatureTransformer: (os.SubPath, Sig) => Sig)
             (implicit ac: ActorContext) extends AutoCloseable{
 
-  val statusLogger = new SyncLogger{
-    def apply(tag: String, x: Any = Logger.NoOp): Unit = logger.apply(tag, x)
-    def info(chunks: String*) = {
-      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
-      logger.info(chunks:_*)
-    }
-    def error(chunks: String*) = {
-      statusActor.send(StatusActor.Error(chunks.mkString("\n")))
-      logger.error(chunks:_*)
-    }
-    def grey(chunks: String*) = {
-      statusActor.send(StatusActor.Greyed(chunks.mkString("\n")))
-      logger.grey(chunks:_*)
-    }
-    def progress(chunks: String*) = {
-      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
-      logger.progress(chunks:_*)
-    }
-  }
+//  val statusLogger = new SyncLogger{
+//    def apply(tag: String, x: Any = Logger.NoOp): Unit = logger.apply(tag, x)
+//    def info(chunks: String*) = {
+//      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
+//      logger.info(chunks:_*)
+//    }
+//    def error(chunks: String*) = {
+//      statusActor.send(StatusActor.Error(chunks.mkString("\n")))
+//      logger.error(chunks:_*)
+//    }
+//    def grey(chunks: String*) = {
+//      statusActor.send(StatusActor.Greyed(chunks.mkString("\n")))
+//      logger.grey(chunks:_*)
+//    }
+//    def progress(chunks: String*) = {
+//      statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
+//      logger.progress(chunks:_*)
+//    }
+//  }
 
 
-  val statusActor = new StatusActor(
-    //    _ => (), _ => (),
-    imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
-    tooltip => IconHandler.icon.setToolTip(tooltip),
-    logger
-  )
+
 
 
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
     x => skipActor.send(SkipScanActor.Receive(x)),
-    statusActor,
-    statusLogger
+    logger
   )
 
   val syncer: SyncActor = new SyncActor(
     agentReadWriter.send,
     mapping,
-    statusLogger,
+    logger,
     ignoreStrategy,
     Executors.newSingleThreadScheduledExecutor()
   )
@@ -65,13 +59,13 @@ class Syncer(agent: AgentApi,
   val sigActor = new SigActor(
     syncer.send,
     signatureTransformer,
-    statusLogger
+    logger
   )
   val skipActor = new SkipScanActor(
     mapping,
     ignoreStrategy,
     sigActor.send,
-    statusLogger
+    logger
   )
 
   private[this] val watcher = os.watch.watch(
@@ -85,34 +79,12 @@ class Syncer(agent: AgentApi,
   )
 
   var running = false
-  object IconHandler{
 
-    val images = Seq("blue-sync", "green-tick", "red-cross", "grey-dash")
-      .map{name => (name, java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png")))}
-      .toMap
-    val icon = new java.awt.TrayIcon(images("blue-sync"))
-
-    icon.setToolTip("Devbox Initializing")
-
-    val tray = java.awt.SystemTray.getSystemTray()
-
-
-    icon.addMouseListener(new MouseListener {
-      def mouseClicked(e: MouseEvent): Unit = {
-        agentReadWriter.send(AgentReadWriteActor.ForceRestart())
-      }
-
-      def mousePressed(e: MouseEvent): Unit = ()
-      def mouseReleased(e: MouseEvent): Unit = ()
-      def mouseEntered(e: MouseEvent): Unit = ()
-      def mouseExited(e: MouseEvent): Unit = ()
-    })
-  }
   def start() = {
-    IconHandler.tray.add(IconHandler.icon)
+//    IconHandler.tray.add(IconHandler.icon)
     running = true
     agent.start(s =>
-      statusActor.send(StatusActor.Syncing(s"Initializing Devbox\n$s"))
+      logger.info(s"Initializing Devbox\n$s")
     )
     agentReadWriter.spawnReaderThread()
 
@@ -125,7 +97,7 @@ class Syncer(agent: AgentApi,
   }
 
   def close() = {
-    IconHandler.tray.remove(IconHandler.icon)
+//    IconHandler.tray.remove(IconHandler.icon)
     running = false
     watcher.close()
     agentReadWriter.send(AgentReadWriteActor.Close())

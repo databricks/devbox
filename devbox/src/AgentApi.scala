@@ -26,10 +26,7 @@ class ReliableAgent(prep: Seq[String], cmd: Seq[String], cwd: os.Path) extends A
             cwd = cwd,
             stderr = os.Pipe,
             mergeErrIntoOut = true,
-            stdout = os.ProcessOutput.Readlines{ line =>
-              println(line)
-              logPrepOutput(line)
-            },
+            stdout = os.ProcessOutput.Readlines(logPrepOutput),
             check = false
           )
 

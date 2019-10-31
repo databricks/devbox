@@ -1,5 +1,5 @@
 package devbox
-import devbox.common.{SyncLogger, ActorContext, PathSet, StateMachineActor, Util}
+import devbox.common.{ActorContext, PathSet, StateMachineActor, Util}
 import java.time.Duration
 object StatusActor{
   sealed trait Msg
@@ -14,8 +14,7 @@ object StatusActor{
   case class Debounce() extends Msg
 }
 class StatusActor(setImage: String => Unit,
-                  setTooltip: String => Unit,
-                  logger: SyncLogger)
+                  setTooltip: String => Unit)
                  (implicit ac: ActorContext) extends StateMachineActor[StatusActor.Msg]{
 
 
@@ -45,18 +44,18 @@ class StatusActor(setImage: String => Unit,
 
       case msg: StatusActor.Done =>
 
-        logger.progress(syncCompleteMsg(syncFiles, syncBytes).split("\n"):_*)
+//        logger.progress(syncCompleteMsg(syncFiles, syncBytes).split("\n"):_*)
         debounceReceive(msg)
 
       case msg: StatusActor.SyncingFile =>
 
-        logger.progress(s"${msg.prefix}${syncFiles.size}/${totalFiles.size}${msg.suffix}".split("\n"):_*)
+//        logger.progress(s"${msg.prefix}${syncFiles.size}/${totalFiles.size}${msg.suffix}".split("\n"):_*)
         debounceReceive(msg)
 
       case StatusActor.IncrementFileTotal(base, subs) =>
 
         val newTotalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))
-        logger.info(s"${newTotalFiles.size} paths changed", subs.head.toString())
+//        logger.info(s"${newTotalFiles.size} paths changed", subs.head.toString())
         this.copy(totalFiles = newTotalFiles)
 
 

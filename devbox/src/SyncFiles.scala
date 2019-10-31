@@ -3,7 +3,7 @@ package devbox
 import java.io.{PrintWriter, StringWriter}
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.{Action, Bytes, Logger, PathRpc, Rpc, RpcException, Sig, SyncLogger, Util, Vfs}
+import devbox.common.{Action, Bytes, Logger, PathRpc, Rpc, RpcException, Sig, Util, Vfs}
 import os.{Path, RelPath, SubPath}
 
 import scala.concurrent.{ExecutionContext, Future}

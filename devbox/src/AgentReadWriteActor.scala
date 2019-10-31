@@ -3,7 +3,7 @@ package devbox
 import java.nio.ByteBuffer
 import java.time.Duration
 
-import devbox.common.{ActorContext, Bytes, Response, Rpc, RpcClient, StateMachineActor, SyncLogger, Util}
+import devbox.common.{ActorContext, Bytes, Response, Rpc, RpcClient, StateMachineActor, Util}
 
 
 object AgentReadWriteActor{
@@ -17,7 +17,6 @@ object AgentReadWriteActor{
 }
 class AgentReadWriteActor(agent: AgentApi,
                           onResponse: Response => Unit,
-                          statusActor: => StatusActor,
                           logger: SyncLogger)
                          (implicit ac: ActorContext)
   extends StateMachineActor[AgentReadWriteActor.Msg](){
@@ -54,7 +53,7 @@ class AgentReadWriteActor(agent: AgentApi,
         val msg = buffer.head
         if (buffer.tail.nonEmpty) logStatusMsgForRpc(msg, "(Complete)")
         else {
-          if (msg == SyncFiles.Complete()) statusActor.send(StatusActor.Done())
+          if (msg == SyncFiles.Complete()) logger.done()
         }
 
         Active(buffer.tail)
@@ -155,18 +154,16 @@ class AgentReadWriteActor(agent: AgentApi,
         logger.info("Scanning directories", paths.mkString("\n"))
 
       case SyncFiles.IncrementFileTotal(totalFiles, example) =>
-        statusActor.send(StatusActor.IncrementFileTotal(totalFiles, example))
-      case SyncFiles.StartFile(p) => statusActor.send(StatusActor.FilesAndBytes(Set(p), 0))
+        logger.incrementFileTotal(totalFiles, example)
+
+      case SyncFiles.StartFile(p) => logger.filesAndBytes(Set(p), 0)
 
       case SyncFiles.RpcMsg(rpc) =>
-        statusActor.send(
-          StatusActor.SyncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
-        )
+        logger.syncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
+
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
         val chunkMsg = if (chunkCount > 1) s" chunk [$chunkIndex/$chunkCount]" else ""
-        statusActor.send(
-          StatusActor.SyncingFile("Syncing path [", s"]$chunkMsg:\n$subPath$suffix")
-        )
+        logger.syncingFile("Syncing path [", s"]$chunkMsg:\n$subPath$suffix")
     }
   }
   def getRpcFor(msg: SyncFiles.RemoteMsg): Option[Rpc] = {
@@ -200,7 +197,7 @@ class AgentReadWriteActor(agent: AgentApi,
               chunkIndex * Util.blockSize,
               new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
             )
-            statusActor.send(StatusActor.FilesAndBytes(Set(), n))
+            logger.filesAndBytes(Set(), n)
             Some(msg)
           }
         }catch{case e: java.nio.file.NoSuchFileException =>
