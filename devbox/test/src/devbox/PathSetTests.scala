@@ -19,7 +19,7 @@ object PathSetTests extends TestSuite {
       s.add(Seq("hello", "world"))
       s.size ==> 3
 
-      s.walk(Nil).toSet ==> Set(
+      s.walk().toSet ==> Set(
         Seq("hello"), Seq("hello", "world"), Seq("i am", "cow")
       )
       s.walk(Seq("hello")).toSet ==> Set(Seq("hello"), Seq("hello", "world"))
@@ -44,7 +44,7 @@ object PathSetTests extends TestSuite {
       s = s.withPath(Seq("hello", "world"))
       s.size ==> 3
 
-      s.walk(Nil).toSet ==> Set(
+      s.walk().toSet ==> Set(
         Seq("hello"), Seq("hello", "world"), Seq("i am", "cow")
       )
     }

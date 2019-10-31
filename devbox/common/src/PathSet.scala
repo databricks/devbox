@@ -39,7 +39,7 @@ abstract class BasePathSet(){
         case (Some(node), segment) => node.children.get(segment)
       }
   }
-  def walk(baseSegments: Seq[String]): geny.Generator[IndexedSeq[String]] = {
+  def walk(baseSegments: Seq[String] = Nil): geny.Generator[IndexedSeq[String]] = {
     walkSubPaths(baseSegments).map(baseSegments.toIndexedSeq ++ _)
   }
 

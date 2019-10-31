@@ -1,7 +1,5 @@
 package devbox.syncer
 
-import java.util.concurrent._
-
 import devbox.common._
 import devbox.logger.SyncLogger
 

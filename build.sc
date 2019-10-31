@@ -68,9 +68,9 @@ object devbox extends DevboxModule{
     )
     def forkEnv = Map(
       "AGENT_EXECUTABLE" -> agent.assembly().path.toString,
-//      "SCALATAGS_BUNDLE" -> scalatagsBundle().path.toString,
-//      "OSLIB_BUNDLE" -> oslibBundle().path.toString,
-//      "MILL_BUNDLE" -> millBundle().path.toString
+      "SCALATAGS_BUNDLE" -> scalatagsBundle().path.toString,
+      "OSLIB_BUNDLE" -> oslibBundle().path.toString,
+      "MILL_BUNDLE" -> millBundle().path.toString
     )
   }
 }

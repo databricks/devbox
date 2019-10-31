@@ -12,6 +12,7 @@ object SkipScanActor{
   case class ScanComplete() extends Msg
   case class LocalScanned(base: os.Path, sub: os.SubPath) extends Msg
   case class Receive(value: devbox.common.Response) extends Msg
+  case class Done() extends Msg
 }
 class SkipScanActor(sendToSigActor: SigActor.Msg => Unit,
                     mapping: Seq[(os.Path, os.RelPath)],
@@ -53,7 +54,7 @@ class SkipScanActor(sendToSigActor: SigActor.Msg => Unit,
       scanComplete(buffered, initialScanned, skippers, scansComplete)
 
     case SkipScanActor.Paths(values) =>
-      val newBuffered = buffered.withPaths(values.walk(Nil))
+      val newBuffered = buffered.withPaths(values.walk())
       Scanning(newBuffered, initialScanned, skippers, scansComplete)
 
     case SkipScanActor.ScanComplete() =>
@@ -61,9 +62,15 @@ class SkipScanActor(sendToSigActor: SigActor.Msg => Unit,
 
   })
 
-  case class Active(skippers: Seq[Skipper]) extends State({
-    case SkipScanActor.Receive(Response.Ack()) => Active(skippers)// do nothing
+  case class Idle(skippers: Seq[Skipper]) extends State({
+    case SkipScanActor.Receive(Response.Ack()) => Idle(skippers)
     case SkipScanActor.Paths(values) => flushPathsDownstream(values, skippers)
+  })
+
+  case class Busy(buffered: PathSet, skippers: Seq[Skipper]) extends State({
+    case SkipScanActor.Receive(Response.Ack()) => Busy(buffered, skippers)
+    case SkipScanActor.Paths(values) => Busy(buffered.withPaths(values.walk()), skippers)
+    case SkipScanActor.Done() => flushPathsDownstream(buffered, skippers)
   })
 
   def handleLocalScanned(buffered: PathSet,
@@ -94,25 +101,30 @@ class SkipScanActor(sendToSigActor: SigActor.Msg => Unit,
   }
 
   def flushPathsDownstream(paths: PathSet, skippers: Seq[Skipper]) = {
-    val groups =
-      for((src, dest) <- mapping)
-      yield (
-        src,
-        paths
-          .walkSubPaths(src.segments)
-          .map{ subSegments =>
-            val sub = os.SubPath(subSegments)
-            (sub, os.isDir(src / sub))
-          }
-          .toSet
-      )
+    if (paths.size == 0) Idle(skippers)
+    else {
+      Future {
+        val groups =
+          for ((src, dest) <- mapping)
+            yield (
+              src,
+              paths
+                .walkSubPaths(src.segments)
+                .map { subSegments =>
+                  val sub = os.SubPath(subSegments)
+                  (sub, os.isDir(src / sub))
+                }
+                .toSet
+            )
 
-    val processedGroups =
-      for(((src, paths), skipper) <- groups.zip(skippers))
-      yield (src, skipper.processBatch(src, paths))
+        for (((src, paths), skipper) <- groups.zip(skippers))
+          yield (src, skipper.processBatch(src, paths))
 
-    sendToSigActor(SigActor.ManyPaths(processedGroups.toMap))
-
-    Active(skippers)
+      }.onComplete{ case scala.util.Success(processedGroups) =>
+        sendToSigActor(SigActor.ManyPaths(processedGroups.toMap))
+        this.send(SkipScanActor.Done())
+      }
+      Busy(new PathSet(), skippers)
+    }
   }
 }
