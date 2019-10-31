@@ -5,8 +5,6 @@ import devbox.logger.SyncLogger
 
 object SyncActor{
   sealed trait Msg
-  case class ScanComplete(vfsArr: Seq[Vfs[Sig]]) extends Msg
-
   case class Events(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]]) extends Msg
   case class LocalScanned(base: os.Path, sub: os.SubPath, sig: Option[Sig]) extends Msg
   case class RemoteScanned(base: os.RelPath, sub: os.SubPath, sig: Sig) extends Msg
