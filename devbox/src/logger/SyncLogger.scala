@@ -22,9 +22,7 @@ object SyncLogger{
              val rotationSize: Long,
              val truncate: Boolean,
              onClick: => Actor[Unit])
-            (implicit ac: ActorContext) extends BaseLogger with SyncLogger{
-
-    var lastProgressTimestamp = 0L
+            (implicit ac: ActorContext) extends SyncLogger{
 
     def logOut(s: String) = {}
     def init() = {
@@ -32,27 +30,31 @@ object SyncLogger{
     }
 
     override def close() = {
-      super.close()
+
+      pprint.log(ac.getActive)
+      consoleLogger.close()
       IconHandler.tray.remove(IconHandler.icon)
     }
 
-    def apply(tag: String, x: Any = Logger.NoOp): Unit = ConsoleLogger.send(Logger.PPrinted(tag, x))
+    def apply(tag: String, x: Any = Logger.NoOp): Unit = {
+      consoleLogger.send(Logger.PPrinted(tag, x))
+    }
 
     def info(chunks: String*): Unit = {
       statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
-      ConsoleLogger.send(Logger.Info(chunks))
+      consoleLogger.send(Logger.Info(chunks))
     }
     def error(chunks: String*): Unit = {
       statusActor.send(StatusActor.Error(chunks.mkString("\n")))
-      ConsoleLogger.send(Logger.Info(chunks))
+      consoleLogger.send(Logger.Info(chunks))
     }
     def grey(chunks: String*): Unit = {
       statusActor.send(StatusActor.Greyed(chunks.mkString("\n")))
-      ConsoleLogger.send(Logger.Info(chunks))
+      consoleLogger.send(Logger.Info(chunks))
     }
     def progress(chunks: String*): Unit = {
       statusActor.send(StatusActor.Syncing(chunks.mkString("\n")))
-      ConsoleLogger.send(Logger.Progress(chunks))
+      consoleLogger.send(Logger.Progress(chunks))
     }
 
     def done() = statusActor.send(StatusActor.Done())
@@ -66,16 +68,17 @@ object SyncLogger{
       statusActor.send(StatusActor.SyncingFile(prefix, suffix))
     }
     val statusActor = new StatusActor(
-      //    _ => (), _ => (),
       imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
       tooltip => IconHandler.icon.setToolTip(tooltip)
     )
 
-    object IconHandler{
+    val consoleLogger = new ConsoleLogger(dest, rotationSize, truncate, logOut)
 
+    object IconHandler{
       val images = Seq("blue-sync", "green-tick", "red-cross", "grey-dash")
         .map{name => (name, java.awt.Toolkit.getDefaultToolkit().getImage(getClass.getResource(s"/$name.png")))}
         .toMap
+
       val icon = new java.awt.TrayIcon(images("blue-sync"))
 
       icon.setToolTip("Devbox Initializing")
@@ -93,29 +96,6 @@ object SyncLogger{
         def mouseEntered(e: MouseEvent): Unit = ()
         def mouseExited(e: MouseEvent): Unit = ()
       })
-    }
-    object ConsoleLogger extends SimpleActor[Logger.Msg] {
-      def run(msg: Logger.Msg): Unit = msg match {
-        case Logger.PPrinted(tag, value) =>
-          assert(tag.length <= Logger.margin)
-
-          val msgStr =
-            fansi.Color.Magenta(tag.padTo(Logger.margin, ' ')) ++ " | " ++
-              pprint.apply(value, height = Int.MaxValue)
-
-          write(msgStr.toString().replace("\n", Logger.marginStr))
-
-        case Logger.Info(chunks) =>
-          println(chunks.mkString(", "))
-          lastProgressTimestamp = System.currentTimeMillis()
-
-        case Logger.Progress(chunks) =>
-          val now = System.currentTimeMillis()
-          if (now - lastProgressTimestamp > 5000) {
-            println(chunks.mkString(", "))
-            lastProgressTimestamp = now
-          }
-      }
     }
 
   }
