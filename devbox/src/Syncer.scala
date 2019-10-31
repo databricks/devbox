@@ -21,7 +21,7 @@ class Syncer(agent: AgentApi,
   private[this] val watcher = os.watch.watch(
     mapping.map(_._1),
     events => skipActor.send(
-      SkipActor.Paths(
+      SkipScanActor.Paths(
         new PathSet().withPaths(events.iterator.map(_.segments))
       )
     ),
@@ -58,7 +58,7 @@ class Syncer(agent: AgentApi,
   )
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
-    x => syncer.send(SyncActor.Receive(x)),
+    x => skipActor.send(SkipScanActor.Receive(x)),
     statusActor,
     statusLogger
   )
@@ -68,7 +68,7 @@ class Syncer(agent: AgentApi,
     signatureTransformer,
     statusLogger
   )
-  val skipActor = new SkipActor(
+  val skipActor = new SkipScanActor(
     mapping,
     ignoreStrategy,
     sigActor.send(_),
@@ -119,7 +119,7 @@ class Syncer(agent: AgentApi,
         SyncFiles.RemoteScan(mapping.map(_._2))
       )
     )
-    skipActor.send(SkipActor.Scan())
+    skipActor.send(SkipScanActor.Scan())
   }
 
   def close() = {

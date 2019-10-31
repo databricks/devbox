@@ -12,14 +12,21 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
   def initialState: State = Idle()
 
   case class Idle() extends State({
+    case SigActor.RemotePath(base, sub, sig) =>
+      sendToSyncActor(SyncActor.RemoteScanned(base, sub, sig))
+      Idle()
     case SigActor.SinglePath(base, sub) => compute(Map(base -> Set(sub)))
     case SigActor.ManyPaths(grouped) => compute(grouped)
-    case SigActor.LocalScanComplete() =>
-      sendToSyncActor(SyncActor.LocalScanComplete())
+    case SigActor.InitialScansComplete() =>
+      sendToSyncActor(SyncActor.InitialScansComplete())
       Idle()
   })
 
   case class Busy(buffered: Map[os.Path, Set[os.SubPath]]) extends State({
+    case SigActor.RemotePath(base, sub, sig) =>
+      sendToSyncActor(SyncActor.RemoteScanned(base, sub, sig))
+      Busy(buffered)
+
     case SigActor.SinglePath(base, sub) =>
       Busy(Util.joinMaps(buffered, Map(base -> Set(sub))))
 
@@ -30,8 +37,8 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
       if (buffered.nonEmpty) compute(buffered)
       else Idle()
 
-    case SigActor.LocalScanComplete() =>
-      sendToSyncActor(SyncActor.LocalScanComplete())
+    case SigActor.InitialScansComplete() =>
+      sendToSyncActor(SyncActor.InitialScansComplete())
       Busy(buffered)
   })
 
@@ -49,9 +56,10 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
 }
 object SigActor{
   sealed trait Msg
-  case class SinglePath(scanRoot: os.Path, sub: os.SubPath) extends Msg
+  case class RemotePath(base: os.RelPath, sub: os.SubPath, sig: Sig) extends Msg
+  case class SinglePath(base: os.Path, sub: os.SubPath) extends Msg
   case class ManyPaths(group: Map[os.Path, Set[os.SubPath]]) extends Msg
-  case class LocalScanComplete() extends Msg
+  case class InitialScansComplete() extends Msg
   case class ComputeComplete() extends Msg
 
 
