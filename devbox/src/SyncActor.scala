@@ -10,17 +10,13 @@ object SyncActor{
   case class Events(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]]) extends Msg
   case class LocalScanned(base: os.Path, sub: os.SubPath, sig: Option[Sig]) extends Msg
   case class RemoteScanned(base: os.RelPath, sub: os.SubPath, sig: Sig) extends Msg
-  case class Synced() extends Msg
-  case class Retry() extends Msg
   case class InitialScansComplete() extends Msg
 }
-class SyncActor(agentReadWriter: => AgentReadWriteActor,
-                sigActor: => SigActor,
+class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
                 mapping: Seq[(os.Path, os.RelPath)],
                 logger: SyncLogger,
                 ignoreStrategy: String,
-                scheduledExecutorService: ScheduledExecutorService,
-                statusActor: => StatusActor)
+                scheduledExecutorService: ScheduledExecutorService)
                (implicit ac: ActorContext)
   extends StateMachineActor[SyncActor.Msg]() {
 
@@ -81,9 +77,9 @@ class SyncActor(agentReadWriter: => AgentReadWriteActor,
       paths,
       vfsArr,
       logger,
-      m => agentReadWriter.send(AgentReadWriteActor.Send(m))
+      m => sendAgentMsg(AgentReadWriteActor.Send(m))
     )
-    agentReadWriter.send(AgentReadWriteActor.Send(SyncFiles.Complete()))
+    sendAgentMsg(AgentReadWriteActor.Send(SyncFiles.Complete()))
 
     Active(vfsArr)
   }

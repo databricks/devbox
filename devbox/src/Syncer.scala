@@ -18,16 +18,6 @@ class Syncer(agent: AgentApi,
              signatureTransformer: (os.SubPath, Sig) => Sig)
             (implicit ac: ActorContext) extends AutoCloseable{
 
-  private[this] val watcher = os.watch.watch(
-    mapping.map(_._1),
-    events => skipActor.send(
-      SkipScanActor.Paths(
-        new PathSet().withPaths(events.iterator.map(_.segments))
-      )
-    ),
-    logger.apply(_, _)
-  )
-
   val statusLogger = new SyncLogger{
     def apply(tag: String, x: Any = Logger.NoOp): Unit = logger.apply(tag, x)
     def info(chunks: String*) = {
@@ -47,15 +37,16 @@ class Syncer(agent: AgentApi,
       logger.progress(chunks:_*)
     }
   }
-  val syncer: SyncActor = new SyncActor(
-    agentReadWriter,
-    sigActor,
-    mapping,
-    statusLogger,
-    ignoreStrategy,
-    Executors.newSingleThreadScheduledExecutor(),
-    statusActor
+
+
+  val statusActor = new StatusActor(
+    //    _ => (), _ => (),
+    imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
+    tooltip => IconHandler.icon.setToolTip(tooltip),
+    logger
   )
+
+
   val agentReadWriter: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
     x => skipActor.send(SkipScanActor.Receive(x)),
@@ -63,23 +54,34 @@ class Syncer(agent: AgentApi,
     statusLogger
   )
 
+  val syncer: SyncActor = new SyncActor(
+    agentReadWriter.send,
+    mapping,
+    statusLogger,
+    ignoreStrategy,
+    Executors.newSingleThreadScheduledExecutor()
+  )
+
   val sigActor = new SigActor(
-    syncer.send(_),
+    syncer.send,
     signatureTransformer,
     statusLogger
   )
   val skipActor = new SkipScanActor(
     mapping,
     ignoreStrategy,
-    sigActor.send(_),
+    sigActor.send,
     statusLogger
   )
 
-  val statusActor = new StatusActor(
-//    _ => (), _ => (),
-    imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
-    tooltip => IconHandler.icon.setToolTip(tooltip),
-    logger
+  private[this] val watcher = os.watch.watch(
+    mapping.map(_._1),
+    events => skipActor.send(
+      SkipScanActor.Paths(
+        new PathSet().withPaths(events.iterator.map(_.segments))
+      )
+    ),
+    logger.apply(_, _)
   )
 
   var running = false

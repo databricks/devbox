@@ -2,11 +2,8 @@ package devbox
 
 import java.nio.ByteBuffer
 import java.time.Duration
-import java.util.concurrent.ScheduledExecutorService
 
-import devbox.common.{ActorContext, Bytes, Response, Rpc, RpcClient, Sig, StateMachineActor, SyncLogger, Util, Vfs}
-
-import scala.concurrent.Future
+import devbox.common.{ActorContext, Bytes, Response, Rpc, RpcClient, StateMachineActor, SyncLogger, Util}
 
 
 object AgentReadWriteActor{
