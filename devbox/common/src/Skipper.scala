@@ -80,7 +80,7 @@ object Skipper{
         (enclosingPartialPath, i) <- path.segments.inits.zipWithIndex
         if enclosingPartialPath.nonEmpty
         gitIgnoreRoot <- enclosingPartialPath.inits.drop(1)
-        (linesHash, ignoreNode) <- ignorePaths.get(os.sub / gitIgnoreRoot / ".gitignore")
+        (linesHash, ignoreNode) <- ignorePaths.get(os.sub / gitIgnoreRoot)
       } yield {
         val enclosedPartialPathStr = enclosingPartialPath.drop(gitIgnoreRoot.length).mkString("/")
 
