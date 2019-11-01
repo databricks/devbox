@@ -33,6 +33,7 @@ class AgentReadWriteActor(agent: AgentApi,
     case AgentReadWriteActor.StartFile() =>
       logger.filesAndBytes(1, 0)
       Active(buffer)
+
     case AgentReadWriteActor.Send(msg) =>
       logStatusMsgForRpc(msg)
       msg match{
@@ -62,14 +63,15 @@ class AgentReadWriteActor(agent: AgentApi,
         // response, from a later Msg, we are guaranteed to not need to replay
         // them, and they do not require any logging to be done since they are
         // logged on receive.
-        val newBuffer = buffer.dropWhile(_.isLeft)
+        val filtered1 = buffer.dropWhile(_.isLeft)
+        val Right(msg) = filtered1.head
+        val filtered2 = filtered1.tail.dropWhile(_.isLeft)
 
-        val Right(msg) = newBuffer.head
+        if (filtered2.isEmpty) {
+          if (msg == SyncFiles.Complete()) logger.done()
+        }
 
-        if (newBuffer.tail.nonEmpty) logStatusMsgForRpc(msg, "(Complete)")
-        else if (msg == SyncFiles.Complete()) logger.done()
-
-        Active(newBuffer.tail)
+        Active(filtered2)
       }
 
     case AgentReadWriteActor.Close() =>

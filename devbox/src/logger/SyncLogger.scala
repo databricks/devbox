@@ -110,7 +110,7 @@ object SyncLogger{
     def logSyncing() = {
       logConsoleStatus(
         "blue-sync",
-        Seq(s"Syncing path [$syncChanges/$totalChanges$chunkMsg]\n$path$suffix"),
+        Seq(s"Syncing path [$syncChanges/$totalChanges]$chunkMsg\n$path$suffix"),
         progress = true
       )
     }
