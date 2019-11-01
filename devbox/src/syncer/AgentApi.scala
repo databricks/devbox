@@ -32,7 +32,7 @@ class ReliableAgent(prep: Seq[String], cmd: Seq[String], cwd: os.Path) extends A
 
         prepResult.exitCode == 0
       }
-    if (prepPassed) process = os.proc(cmd).spawn(stderr = os.Pipe, cwd = cwd)
+    if (prepPassed) process = os.proc(cmd).spawn(cwd = cwd)
 
     prepPassed
   }

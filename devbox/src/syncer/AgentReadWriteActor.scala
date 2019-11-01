@@ -219,35 +219,6 @@ class AgentReadWriteActor(agent: AgentApi,
 
   def spawnReaderThread() = {
     new Thread(() => {
-      while ( {
-        val strOpt =
-          try Some(agent.stderr.readLine())
-          catch{
-            case e: java.io.EOFException => None
-            case e: java.io.IOException => None
-          }
-        strOpt match{
-          case None | Some(null)=> false
-          case Some(str) =>
-            try {
-              val s = ujson.read(str).str
-              logger.apply(
-                "AGENT OUT",
-                new Object {
-                  override def toString: String = s
-                }
-              )
-              true
-            } catch {
-              case e: ujson.ParseException =>
-                println(str)
-                false
-            }
-        }
-      })()
-    }, "DevboxAgentLoggerThread").start()
-
-    new Thread(() => {
       while(try{
         val response = client.readMsg[Response]()
         this.send(AgentReadWriteActor.Receive(response))
