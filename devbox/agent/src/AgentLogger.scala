@@ -8,9 +8,6 @@ class AgentLogger(val dest: String => os.Path, val rotationSize: Long)
   def truncate = true
   def apply(tag: String, x: Any = Logger.NoOp): Unit = this.send(Logger.PPrinted(tag, x))
 
-  def logOut(s: String) = {
-    System.err.println(ujson.write(s))
-  }
   def run(msg: Logger.PPrinted): Unit = {
     assert(msg.tag.length <= Logger.margin)
 

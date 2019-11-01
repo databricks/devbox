@@ -6,7 +6,7 @@ class RpcClient(out: => OutputStream with DataOutput,
                 logger: (String, Any) => Unit) {
 
   def writeMsg[T: upickle.default.Writer](t: T, success: Boolean = true): Unit = {
-    logger("MSG WRITE", t)
+    logger("RPC Write", t)
     val blob = upickle.default.writeBinary(t)
     out.writeInt(blob.length)
     out.write(blob)
@@ -27,7 +27,7 @@ class RpcClient(out: => OutputStream with DataOutput,
       catch{case e: upickle.core.Abort =>
         throw new Exception(upickle.default.readBinary[upack.Msg](blob).toString, e)
       }
-    logger("MSG READ", res)
+    logger("RPC Read", res)
 
     res
   }

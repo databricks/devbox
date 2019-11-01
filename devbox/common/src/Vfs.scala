@@ -42,7 +42,8 @@ object Vfs{
 
   // Update stateVfs according to the given action
   def overwriteUpdateVfs(p: os.SubPath, sig: Sig, vfs: Vfs[Sig]) = {
-    val (name, folder) = vfs.resolveParent(p).getOrElse(throw new Exception("overwriteUpdateVfs failed"))
+    val (name, folder) = vfs.resolveParent(p)
+      .getOrElse(throw new Exception("overwriteUpdateVfs failed"))
     folder.children(name) =
       if (!sig.isInstanceOf[Sig.Dir]) Vfs.File(sig)
       else Vfs.Dir(sig, mutable.Map.empty[String, Vfs.Node[Sig]])
@@ -50,7 +51,8 @@ object Vfs{
 
   def updateVfs(a: Action, stateVfs: Vfs[Sig]) = a match{
     case Rpc.PutFile(_, path, perms) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception("Parent path not found " + path.toString))
+      val (name, folder) = stateVfs.resolveParent(path)
+        .getOrElse(throw new Exception("Parent path not found " + path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Sig.File(perms, Nil, 0))
 
@@ -60,7 +62,8 @@ object Vfs{
       }
 
     case Rpc.PutDir(_, path, perms) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception("Parent path not found " + path.toString))
+      val (name, folder) = stateVfs.resolveParent(path)
+        .getOrElse(throw new Exception("Parent path not found " + path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.Dir(
         Sig.Dir(perms),
@@ -68,21 +71,28 @@ object Vfs{
       )
 
     case Rpc.PutLink(_, path, dest) =>
-      val (name, folder) = stateVfs.resolveParent(path).getOrElse(throw new Exception("Parent path not found " + path.toString))
+      val (name, folder) = stateVfs.resolveParent(path)
+        .getOrElse(throw new Exception("Parent path not found " + path.toString))
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.File(Sig.Symlink(dest))
 
     case Action.WriteChunk(path, index, hash) =>
-      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception("File not found " + path.toString)).asInstanceOf[Vfs.File[Sig.File]]
+      val currentFile = stateVfs.resolve(path)
+        .getOrElse(throw new Exception("File not found " + path.toString))
+        .asInstanceOf[Vfs.File[Sig.File]]
       currentFile.value = currentFile.value.copy(
         blockHashes =
-          if (index < currentFile.value.blockHashes.length) currentFile.value.blockHashes.updated(index.toInt, hash)
-          else if (index == currentFile.value.blockHashes.length) currentFile.value.blockHashes :+ hash
-          else ???
+          if (index < currentFile.value.blockHashes.length) {
+            currentFile.value.blockHashes.updated(index.toInt, hash)
+          } else if (index == currentFile.value.blockHashes.length) {
+            currentFile.value.blockHashes :+ hash
+          } else ???
       )
 
     case Rpc.SetSize(_, path, offset) =>
-      val currentFile = stateVfs.resolve(path).getOrElse(throw new Exception("File not found " + path.toString)).asInstanceOf[Vfs.File[Sig.File]]
+      val currentFile = stateVfs.resolve(path)
+        .getOrElse(throw new Exception("File not found " + path.toString))
+        .asInstanceOf[Vfs.File[Sig.File]]
       currentFile.value = currentFile.value.copy(
         size = offset,
         blockHashes = currentFile.value.blockHashes.take(

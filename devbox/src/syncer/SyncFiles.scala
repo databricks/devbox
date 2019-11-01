@@ -115,8 +115,6 @@ object SyncFiles {
           syncFileChunks(vfs, send, src, dest, logger, subPath, remoteSig, blockHashes, size)
         case _ =>
       }
-      logger.apply("syncFile end")
-
     }
   }
 
@@ -132,7 +130,7 @@ object SyncFiles {
                      size: Long): Unit = {
     val (otherHashes, otherSize) = remoteSig match {
       case Some(Sig.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
-      case _ => (Nil, 0L)
+      case _ => (Nil, 0)
     }
     logger("syncFileChunks", (subPath, size, otherSize, remoteSig))
     val chunkIndices = for {

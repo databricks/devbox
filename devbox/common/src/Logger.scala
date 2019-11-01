@@ -10,9 +10,7 @@ trait BaseLogger extends AutoCloseable{
   var size = 0L
   var output: java.io.Writer = _
 
-  def logOut(s: String): Unit
   def write(s: String) = {
-    logOut(s)
 
     if (output == null || size > rotationSize) {
       if (output != null) output.close()

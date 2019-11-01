@@ -37,7 +37,6 @@ object SyncLogger{
              onClick: => Actor[Unit])
             (implicit ac: ActorContext) extends SimpleActor[Msg] with SyncLogger {
 
-    def logOut(s: String) = {}
     def init() = this.send(Init())
 
     override def close() = this.send(Close())
@@ -64,7 +63,7 @@ object SyncLogger{
     var totalChanges = 0L
     var totalFiles = new PathSet()
     var syncBytes = 0L
-    val consoleLogger = new ConsoleLogger(dest, rotationSize, truncate, logOut)
+    val consoleLogger = new ConsoleLogger(dest, rotationSize, truncate)
     val statusActor = new StatusActor(
       imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
       tooltip => IconHandler.icon.setToolTip(tooltip)
