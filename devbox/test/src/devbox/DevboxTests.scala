@@ -295,11 +295,12 @@ object DevboxTests extends TestSuite{
 
   def walkNonSkipped(base: os.Path, ignoreStrategy: String) = {
     val skip = Skipper.fromString(ignoreStrategy)
-    val rawPaths = os
-      .walk
-      .attrs(base)
-      .map{case (p, attrs) => (p.subRelativeTo(base), attrs.isDir)}
-      .toSet
+    val rawPaths = PathMap.from(
+      os
+        .walk
+        .attrs(base)
+        .map{case (p, attrs) => (p.subRelativeTo(base).segments, attrs.isDir)}
+    )
 
     skip.processBatch(base, rawPaths)
   }
@@ -311,8 +312,8 @@ object DevboxTests extends TestSuite{
     println("Validating...")
 
 
-    val srcPaths = walkNonSkipped(src, ignoreStrategy)
-    val destPaths = walkNonSkipped(dest, ignoreStrategy)
+    val srcPaths = walkNonSkipped(src, ignoreStrategy).walk().map(os.SubPath(_)).toSet
+    val destPaths = walkNonSkipped(dest, ignoreStrategy).walk().map(os.SubPath(_)).toSet
 
     if (srcPaths != destPaths){
       throw new Exception(

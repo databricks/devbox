@@ -1,6 +1,6 @@
 package devbox
 
-import devbox.common.Skipper
+import devbox.common.{PathMap, PathSet, Skipper}
 import utest._
 
 object GitIgnoreTests extends TestSuite {
@@ -8,12 +8,12 @@ object GitIgnoreTests extends TestSuite {
     val skip = new Skipper.GitIgnore()
     val existingFiles =
       for((p, attrs) <- os.walk.attrs(base))
-      yield (p.subRelativeTo(base), attrs.isDir)
+      yield (p.subRelativeTo(base).segments, attrs.isDir)
 
-    skip.processBatch(base, existingFiles.toSet)
+    skip.processBatch(base, PathMap.from(existingFiles))
 
     def apply(p: os.SubPath, isDir: Boolean): Boolean = {
-      skip.processBatch(base, Set(p -> isDir)).isEmpty
+      skip.processBatch(base, PathMap(p.segments -> isDir)).size != 0
     }
   }
 
@@ -52,9 +52,9 @@ object GitIgnoreTests extends TestSuite {
       val base = os.temp.dir()
       val gitIgnorePath = os.SubPath(gitIgnorePrefix) / ".gitignore"
       os.write(base / gitIgnorePath, gitIgnoreLine, createFolders = true)
-      skip.processBatch(base, Set(gitIgnorePath -> false))
+      skip.processBatch(base, PathMap(gitIgnorePath.segments -> false))
 
-      skip.processBatch(base, Set(os.SubPath(path) -> (path.last == '/'))).isEmpty
+      skip.processBatch(base, PathMap(os.SubPath(path).segments -> (path.last == '/'))).size == 0
     }
 
     'simple - {

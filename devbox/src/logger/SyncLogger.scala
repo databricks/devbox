@@ -13,7 +13,7 @@ trait SyncLogger{
   def progress(chunks: String*): Unit
   def done(): Unit
   def syncingFile(prefix: String, suffix: String): Unit
-  def incrementFileTotal(base: os.Path, subs: Set[os.SubPath]): Unit
+  def incrementFileTotal(base: os.Path, subs: PathSet): Unit
   def filesAndBytes(files: Long, bytes: Long): Unit
 }
 
@@ -28,7 +28,7 @@ object SyncLogger{
   case class Progress(chunks: Seq[String]) extends Msg
   case class Done() extends Msg
   case class SyncingFile(prefix: String, suffix: String) extends Msg
-  case class IncrementFileTotal(base: os.Path, subs: Set[os.SubPath]) extends Msg
+  case class IncrementFileTotal(base: os.Path, subs: PathSet) extends Msg
   case class FilesAndBytes(files: Long, bytes: Long) extends Msg
 
   class Impl(val dest: String => os.Path,
@@ -52,7 +52,7 @@ object SyncLogger{
     def filesAndBytes(files: Long, bytes: Long) = {
       this.send(FilesAndBytes(files, bytes))
     }
-    def incrementFileTotal(base: os.Path, subs: Set[os.SubPath]) = {
+    def incrementFileTotal(base: os.Path, subs: PathSet) = {
       this.send(IncrementFileTotal(base, subs))
     }
     def syncingFile(prefix: String, suffix: String) = {
@@ -98,7 +98,7 @@ object SyncLogger{
 
       case IncrementFileTotal(base, subs) =>
         totalChanges += subs.size
-        totalFiles = totalFiles.withPaths(subs.map(s => (base / s).segments))
+        totalFiles = totalFiles.withPaths(subs.walk())
 
       case FilesAndBytes(files, bytes) =>
         syncBytes = syncBytes + bytes

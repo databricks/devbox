@@ -39,7 +39,9 @@ class Syncer(agent: AgentApi,
 
   val watcher = os.watch.watch(
     mapping.map(_._1),
-    events => skipActor.send(SkipScanActor.Paths(PathSet(events.iterator.map(_.segments)))),
+    events => skipActor.send(
+      SkipScanActor.Paths(PathSet.from(events.iterator.map(_.segments)))
+    ),
     logger.apply
   )
 

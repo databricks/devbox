@@ -109,7 +109,8 @@ object PathMap{
   case class Node[T](valueOpt: Option[T] = None,
                      children: Map[String, Node[T]] = Map.empty[String, Node[T]]) extends BasePathMap.Node[T]
 
-  def apply[T](paths: IterableOnce[(IterableOnce[String], T)]) = new PathMap().withPaths(paths)
+  def from[T](paths: geny.Generator[(IterableOnce[String], T)]) = new PathMap().withPaths(paths)
+  def apply[T](paths: (IterableOnce[String], T)*) = new PathMap().withPaths(paths)
 
 
 }
@@ -148,7 +149,8 @@ class MutablePathSet() extends MutablePathMap[Unit] {
 }
 
 object PathSet{
-  def apply[T](paths: IterableOnce[IterableOnce[String]]) = new PathSet().withPaths(paths)
+  def from[T](paths: Generator[IterableOnce[String]]) = new PathSet().withPaths(paths)
+  def apply[T](paths: IterableOnce[String]*) = new PathSet().withPaths(paths)
 }
 class PathSet(root: PathMap.Node[Unit] = PathMap.Node[Unit](),
               size0: Int = 0) extends PathMap[Unit](root, size0) {

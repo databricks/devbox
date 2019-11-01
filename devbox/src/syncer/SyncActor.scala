@@ -50,7 +50,7 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
         s"Scanning local [$localPathCount] remote [$newRemotePathCount]",
         (base / subPath).toString()
       )
-      val newRemotePaths = Util.joinMaps3(remotePaths, Map(base -> PathSet(Seq(subPath.segments))))
+      val newRemotePaths = Util.joinMaps3(remotePaths, Map(base -> PathSet(subPath.segments)))
       RemoteScanning(localPaths, newRemotePaths, localPathCount, newRemotePathCount, vfsArr)
 
     case SyncActor.InitialScansComplete() =>

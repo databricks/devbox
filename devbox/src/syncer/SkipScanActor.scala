@@ -108,13 +108,11 @@ class SkipScanActor(sendToSigActor: SigActor.Msg => Unit,
           for ((src, dest) <- mapping)
             yield (
               src,
-              paths
-                .walkSubPaths(src.segments)
-                .map { subSegments =>
-                  val sub = os.SubPath(subSegments)
-                  (sub, os.isDir(src / sub))
-                }
-                .toSet
+              PathMap.from(
+                paths
+                  .walkSubPaths(src.segments)
+                  .map { subSegments =>(subSegments, os.isDir(src / subSegments))}
+              )
             )
 
         for (((src, paths), skipper) <- groups.zip(skippers))

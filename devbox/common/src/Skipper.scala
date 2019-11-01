@@ -3,11 +3,9 @@ package devbox.common
 import org.eclipse.jgit.ignore.{FastIgnoreRule, IgnoreNode}
 import org.eclipse.jgit.internal.storage.file.FileRepository
 
-import scala.collection.mutable
-
 
 trait Skipper {
-  def processBatch(base: os.Path, paths: Set[(os.SubPath, Boolean)]): Set[os.SubPath]
+  def processBatch(base: os.Path, paths: PathMap[Boolean]): PathSet
   def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean): Boolean
 }
 
@@ -19,13 +17,13 @@ object Skipper{
   }
 
   object Null extends Skipper {
-    def processBatch(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = paths.map(_._1)
+    def processBatch(base: os.Path, paths: PathMap[Boolean]) = PathSet.from(paths.walk())
     def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = false
   }
 
   object DotGit extends Skipper {
-    def processBatch(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
-      paths.map(_._1).filter(!_.segments.lift(0).contains(".git"))
+    def processBatch(base: os.Path, paths: PathMap[Boolean]) = {
+      PathSet.from(paths.walk().filter(!_.lift(0).contains(".git")))
     }
     def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = {
       path.segments.lift(0).contains(".git")
@@ -113,7 +111,7 @@ object Skipper{
       !checkFileSkipped(base, path, isDir)
     }
 
-    def processBatch(base: os.Path, paths: Set[(os.SubPath, Boolean)]) = {
+    def processBatch(base: os.Path, paths: PathMap[Boolean]) = {
       for(p <- ignorePaths.keySet){
         if (!os.isFile(base / p) && ignorePaths.contains(p)) {
           ignorePaths.remove(p)
@@ -121,12 +119,17 @@ object Skipper{
         }
       }
 
-      for((p, isDir) <- paths if !isDir){
+      for((p0, isDir) <- paths.walkValues() if !isDir){
+        val p = os.SubPath(p0)
         if (p.last == ".gitignore") updateIgnoreCache(base, p)
         updateIndexCache(base, p)
       }
 
-      paths.collect{ case (p, isDir) if checkFileSkipped(base, p, isDir) => p }
+      PathSet.from(
+        paths
+          .walkValues()
+          .collect{ case (p, isDir) if checkFileSkipped(base, os.SubPath(p), isDir) => p }
+      )
     }
   }
 }

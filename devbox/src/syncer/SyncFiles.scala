@@ -68,7 +68,7 @@ object SyncFiles {
 
     logger("signatureMapping", signatureMapping)
 
-    logger.incrementFileTotal(src, signatureMapping.map(_._1).toSet)
+    logger.incrementFileTotal(src, PathSet.from(signatureMapping.map(_._1.segments)))
     val sortedSignatures = sortSignatureChanges(signatureMapping.toSeq)
 
     syncAllFiles(vfs, send, sortedSignatures, src, dest, logger, logStartFile)
