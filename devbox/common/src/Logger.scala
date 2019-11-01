@@ -5,7 +5,6 @@ import java.nio.file.StandardOpenOption.{APPEND, CREATE, TRUNCATE_EXISTING, WRIT
 trait BaseLogger extends AutoCloseable{
   def rotationSize: Long
   def dest: String => os.Path
-  def truncate: Boolean
 
   var size = 0L
   var output: java.io.Writer = _
@@ -19,9 +18,7 @@ trait BaseLogger extends AutoCloseable{
       output = new java.io.OutputStreamWriter(
         os.write.outputStream(
           dest(""),
-          openOptions =
-            if (truncate) Seq(CREATE, WRITE, TRUNCATE_EXISTING)
-            else Seq(CREATE, WRITE, APPEND)
+          openOptions = Seq(CREATE, WRITE, TRUNCATE_EXISTING)
         )
       )
       size = 0

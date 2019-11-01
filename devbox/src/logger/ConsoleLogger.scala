@@ -4,8 +4,7 @@ import devbox.common.{ActorContext, BaseLogger, Logger, SimpleActor}
 
 
 class ConsoleLogger(val dest: String => os.Path,
-                    val rotationSize: Long,
-                    val truncate: Boolean)
+                    val rotationSize: Long)
                    (implicit ac: ActorContext) extends SimpleActor[Logger.Msg] with BaseLogger{
   var lastProgressTimestamp = 0L
 

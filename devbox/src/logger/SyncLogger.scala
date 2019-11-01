@@ -33,7 +33,6 @@ object SyncLogger{
 
   class Impl(val dest: String => os.Path,
              val rotationSize: Long,
-             val truncate: Boolean,
              onClick: => Actor[Unit])
             (implicit ac: ActorContext) extends SimpleActor[Msg] with SyncLogger {
 
@@ -63,7 +62,7 @@ object SyncLogger{
     var totalChanges = 0L
     var totalFiles = new PathSet()
     var syncBytes = 0L
-    val consoleLogger = new ConsoleLogger(dest, rotationSize, truncate)
+    val consoleLogger = new ConsoleLogger(dest, rotationSize)
     val statusActor = new StatusActor(
       imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
       tooltip => IconHandler.icon.setToolTip(tooltip)

@@ -79,7 +79,6 @@ object DevboxMain {
           implicit lazy val logger: devbox.logger.SyncLogger = new devbox.logger.SyncLogger.Impl(
             n => logFileBase / s"$logFileName$n.$logFileExt",
             50 * 1024 * 1024,
-            truncate = true,
             new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
           )
           lazy val syncer = new Syncer(

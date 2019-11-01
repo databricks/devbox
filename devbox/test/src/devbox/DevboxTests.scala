@@ -128,7 +128,6 @@ object DevboxTests extends TestSuite{
       implicit lazy val logger: SyncLogger.Impl = new SyncLogger.Impl(
         n => logFileBase / s"$logFileName$n.$logFileExt",
         5 * 1024 * 1024,
-        truncate = false,
         new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
       )
 

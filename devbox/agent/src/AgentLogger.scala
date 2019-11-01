@@ -5,7 +5,6 @@ import devbox.common.{ActorContext, BaseLogger, Logger, SimpleActor}
 class AgentLogger(val dest: String => os.Path, val rotationSize: Long)
                  (implicit ac: ActorContext) extends SimpleActor[Logger.PPrinted] with BaseLogger{
 
-  def truncate = true
   def apply(tag: String, x: Any = Logger.NoOp): Unit = this.send(Logger.PPrinted(tag, x))
 
   def run(msg: Logger.PPrinted): Unit = {
