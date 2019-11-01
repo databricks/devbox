@@ -12,7 +12,7 @@ import upickle.default.{ReadWriter, macroRW}
   */
 final class Vfs[T](val root: Vfs.Dir[T]) {
   def this(rootMetadata: T) = {
-    this(Vfs.Dir[T](rootMetadata, mutable.LinkedHashMap.empty))
+    this(Vfs.Dir[T](rootMetadata, mutable.Map.empty))
   }
 
   def resolve(p: os.SubPath): Option[Vfs.Node[T]] = {
@@ -45,7 +45,7 @@ object Vfs{
     val (name, folder) = vfs.resolveParent(p).getOrElse(throw new Exception("overwriteUpdateVfs failed"))
     folder.children(name) =
       if (!sig.isInstanceOf[Sig.Dir]) Vfs.File(sig)
-      else Vfs.Dir(sig, mutable.LinkedHashMap.empty[String, Vfs.Node[Sig]])
+      else Vfs.Dir(sig, mutable.Map.empty[String, Vfs.Node[Sig]])
   }
 
   def updateVfs(a: Action, stateVfs: Vfs[Sig]) = a match{
@@ -64,7 +64,7 @@ object Vfs{
       assert(!folder.children.contains(name))
       folder.children(name) = Vfs.Dir(
         Sig.Dir(perms),
-        mutable.LinkedHashMap.empty[String, Vfs.Node[Sig]]
+        mutable.Map.empty[String, Vfs.Node[Sig]]
       )
 
     case Rpc.PutLink(_, path, dest) =>
