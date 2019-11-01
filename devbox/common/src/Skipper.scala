@@ -3,7 +3,6 @@ package devbox.common
 import org.eclipse.jgit.ignore.{FastIgnoreRule, IgnoreNode}
 import org.eclipse.jgit.internal.storage.file.FileRepository
 
-
 trait Skipper {
   def batchRemoveSkippedPaths(base: os.Path, paths: PathMap[Boolean]): PathSet
   def initialScanIsPathSkipped(base: os.Path, path: os.SubPath, isDir: Boolean): Boolean

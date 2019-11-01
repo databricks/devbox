@@ -2,7 +2,6 @@ package devbox
 
 import java.nio.file.attribute.PosixFilePermission
 
-import devbox.DevboxMain.Config
 import devbox.DevboxTests.{instantiateSyncer, prepareFolders}
 import devbox.common._
 import devbox.common.Cli.{Arg, showArg}
@@ -134,6 +133,5 @@ object DevboxTestMain {
         }
         System.exit(0)
     }
-
   }
 }

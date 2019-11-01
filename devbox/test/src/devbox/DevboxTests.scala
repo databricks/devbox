@@ -1,12 +1,12 @@
 package devbox
-import java.io.{DataInputStream, DataOutputStream, PipedInputStream, PipedOutputStream}
-import java.util.concurrent.{Executors, Semaphore}
+
+import java.util.concurrent.Executors
 
 import devbox.common._
 import logger.SyncLogger
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.revwalk.RevCommit
-import os.Path
+
 import syncer.{AgentReadWriteActor, ReliableAgent, Syncer}
 
 import collection.JavaConverters._
