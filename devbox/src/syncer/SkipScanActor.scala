@@ -118,7 +118,7 @@ class SkipScanActor(sendToSigActor: SigActor.Msg => Unit,
             )
 
         for (((src, paths), skipper) <- groups.zip(skippers))
-          yield (src, skipper.processBatch(src, paths))
+        yield (src, skipper.processBatch(src, paths))
 
       }.onComplete{ case scala.util.Success(processedGroups) =>
         sendToSigActor(SigActor.ManyPaths(processedGroups.toMap))

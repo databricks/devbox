@@ -9,13 +9,15 @@ object BasePathMap{
   }
 }
 /**
-  * A compact, high-performance mutable Set of path segments, implemented as a tree.
+  * A compact, high-performance Sets and Maps of path segments, implemented as a tree.
   *
   * Comes in both mutable and immutable flavors. Generally append-only, with no
   * provision for removing elements from the set except by throwing away the whole thing
   *
   * Allows efficient insertion, [[containsPathPrefix]] checks, [[size]] checks, as
-  * well as iteration over prefixed elements via [[walk]] and [[walkSubPaths]]
+  * well as iteration over prefixed elements via [[walk]] and [[walkSubPaths]].
+  *
+  * `PathSet`s are thin wrappers around `PathMap[Unit]`s
   */
 abstract class BasePathMap[T](){
 

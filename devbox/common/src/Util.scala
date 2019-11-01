@@ -64,6 +64,7 @@ object Util {
       .toMap
   }
 
+
   def joinMaps2[K, Z](left: Map[K, PathMap[Z]], right: Map[K, PathMap[Z]]) = {
     (left.keySet ++ right.keySet)
       .map{k =>
@@ -74,6 +75,16 @@ object Util {
             new PathMap[Z]()).withPaths(right.getOrElse(k, new PathMap[Z]()).walkValues()
           )
         )
+      }
+      .toMap
+  }
+
+  def joinMaps3[K](left: Map[K, PathSet], right: Map[K, PathSet]) = {
+    (left.keySet ++ right.keySet)
+      .map{k =>
+        (
+          k,
+          left.getOrElse(k, new PathSet()).withPaths(right.getOrElse(k, new PathSet()).walk()))
       }
       .toMap
   }
