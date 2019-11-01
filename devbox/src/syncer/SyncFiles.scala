@@ -128,11 +128,11 @@ object SyncFiles {
                      remoteSig: Option[Sig],
                      blockHashes: Seq[Bytes],
                      size: Long): Unit = {
-    val (otherHashes, otherSize) = remoteSig match {
-      case Some(Sig.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, otherSize)
-      case _ => (Nil, 0)
+    val (otherHashes, otherSizeOpt) = remoteSig match {
+      case Some(Sig.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, Some(otherSize))
+      case _ => (Nil, None)
     }
-    logger("syncFileChunks", (subPath, size, otherSize, remoteSig))
+    logger("syncFileChunks", (subPath, size, otherSizeOpt, remoteSig))
     val chunkIndices = for {
       i <- blockHashes.indices
       if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
@@ -147,11 +147,12 @@ object SyncFiles {
       send(SendChunkMsg(src, dest, subPath, chunkIndex, blockHashes.size))
     }
 
-    if (size != otherSize) {
-      val msg = Rpc.SetSize(dest, subPath, size)
-      Vfs.updateVfs(msg, vfs)
-      send(RpcMsg(msg))
-    }
+    // We need to update the Vfs with the Rpc.SetSize every time, because it
+    // isn't smart enough to update the size automatically when we send it
+    // Action.WriteChunk.
+    val msg = Rpc.SetSize(dest, subPath, size)
+    Vfs.updateVfs(msg, vfs)
+    for(otherSize <- otherSizeOpt if otherSize > size) send(RpcMsg(msg))
   }
 
   def syncFileMetadata(dest: RelPath,
