@@ -22,7 +22,7 @@ object SyncFiles {
 
 
   def executeSync(mapping: Seq[(os.Path, os.RelPath)],
-                  changedPaths0: Map[os.Path, Map[os.SubPath, Option[Sig]]],
+                  changedPaths0: Map[os.Path, PathMap[Option[Sig]]],
                   vfsArr: Seq[Vfs[Sig]],
                   logger: SyncLogger,
                   send: Msg => Unit,
@@ -40,7 +40,9 @@ object SyncFiles {
     } yield {
       SyncFiles.synchronizeRepo(
         logger, vfsArr(i), src, dest,
-        eventPaths,
+        eventPaths
+          .walkSubPathsValues(Nil)
+          .map{case (segments, sig) => (os.SubPath(segments), sig)},
         send,
         logStartFile
       )
@@ -51,26 +53,25 @@ object SyncFiles {
                       vfs: Vfs[Sig],
                       src: os.Path,
                       dest: os.RelPath,
-                      eventPaths: Map[os.SubPath, Option[Sig]],
+                      eventPaths: geny.Generator[(os.SubPath, Option[Sig])],
                       send: Msg => Unit,
                       logStartFile: () => Unit)
                      (implicit ec: ExecutionContext): Unit = {
 
-    val signatureMapping = for{
+    val signatureMapping0 = for{
       (sub, newSig) <- eventPaths
       oldSig = vfs.resolve(sub).map(_.value)
       if newSig != oldSig
     } yield (sub, newSig, oldSig)
 
+    val signatureMapping = signatureMapping0.toArray
 
     logger("signatureMapping", signatureMapping)
 
-    if (signatureMapping.nonEmpty) {
-      logger.incrementFileTotal(src, signatureMapping.map(_._1).toSet)
-      val sortedSignatures = sortSignatureChanges(signatureMapping.toSeq)
+    logger.incrementFileTotal(src, signatureMapping.map(_._1).toSet)
+    val sortedSignatures = sortSignatureChanges(signatureMapping.toSeq)
 
-      syncAllFiles(vfs, send, sortedSignatures, src, dest, logger, logStartFile)
-    }
+    syncAllFiles(vfs, send, sortedSignatures, src, dest, logger, logStartFile)
   }
 
   def sortSignatureChanges(sigs: Seq[(os.SubPath, Option[Sig], Option[Sig])]) = {

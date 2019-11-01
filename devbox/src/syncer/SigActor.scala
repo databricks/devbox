@@ -2,7 +2,7 @@ package devbox.syncer
 
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.{ActorContext, Sig, StateMachineActor, Util}
+import devbox.common.{ActorContext, PathMap, Sig, StateMachineActor, Util}
 import devbox.logger.SyncLogger
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -56,7 +56,13 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
       yield SigActor.computeSignatures(vs, k, signatureTransformer, buffers).map((k, _))
 
     Future.sequence(computeFutures).foreach{ results =>
-      sendToSyncActor(SyncActor.Events(results.map{case (k, vs) => (k, vs.toMap)}.toMap))
+      sendToSyncActor(
+        SyncActor.Events(
+          results
+            .map{case (k, vs) => (k, PathMap(vs.map{case (k, v) => (k.segments, v)}))}
+            .toMap
+        )
+      )
       this.send(SigActor.ComputeComplete())
     }
     Busy(Map())

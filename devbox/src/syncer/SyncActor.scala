@@ -7,7 +7,7 @@ import scala.concurrent.Future
 
 object SyncActor{
   sealed trait Msg
-  case class Events(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]]) extends Msg
+  case class Events(paths: Map[os.Path, PathMap[Option[Sig]]]) extends Msg
   case class RemoteScanned(base: os.RelPath, sub: os.SubPath, sig: Sig) extends Msg
   case class InitialScansComplete() extends Msg
   case class Done() extends Msg
@@ -26,7 +26,7 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
   )
 
 
-  case class RemoteScanning(localPaths: Map[os.Path, Map[os.SubPath, Option[Sig]]],
+  case class RemoteScanning(localPaths: Map[os.Path, PathMap[Option[Sig]]],
                             remotePaths: Map[os.RelPath, Set[os.SubPath]],
                             localPathCount: Int,
                             remotePathCount: Int,
@@ -36,7 +36,7 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
       val newLocalPathCount = localPathCount + paths.map(_._2.size).sum
       logger.progress(
         s"Scanning local [$newLocalPathCount] remote [$remotePathCount]",
-        paths.head._2.head._1.toString()
+        paths.head._2.walk().head.mkString("/")
       )
       val joined = Util.joinMaps2(localPaths, paths)
       RemoteScanning(joined, remotePaths, newLocalPathCount, remotePathCount, vfsArr)
@@ -69,13 +69,13 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
     case SyncActor.Events(paths) => executeSync(paths, vfsArr)
   })
 
-  case class Busy(buffered: Map[os.Path, Map[os.SubPath, Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) extends State({
+  case class Busy(buffered: Map[os.Path, PathMap[Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) extends State({
     case SyncActor.Events(paths) => Busy(Util.joinMaps2(paths, buffered), vfsArr)
     case SyncActor.Done() => executeSync(buffered, vfsArr)
   })
 
-  def executeSync(paths: Map[os.Path, Map[os.SubPath, Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) = {
-    if (paths.forall(_._2.isEmpty)) Idle(vfsArr)
+  def executeSync(paths: Map[os.Path, PathMap[Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) = {
+    if (paths.size == 0) Idle(vfsArr)
     else {
       Future {
         SyncFiles.executeSync(

@@ -69,6 +69,10 @@ abstract class BasePathMap[T](){
       }
     }
   }
+
+  def walkSubPaths(baseSegments: IterableOnce[String]) = walkSubPathsValues(baseSegments).map(_._1)
+
+  def walk(baseSegments: Seq[String] = Nil) = walkValues(baseSegments).map(_._1)
 }
 object MutablePathMap{
   class Node[T] extends BasePathMap.Node[T]{
@@ -137,11 +141,7 @@ class PathMap[T](protected val root: PathMap.Node[T] = PathMap.Node[T](),
   }
 }
 
-trait BasePathSet extends BasePathMap[Unit]{
-  def walkSubPaths(baseSegments: IterableOnce[String]) = walkSubPathsValues(baseSegments).map(_._1)
-  def walk(baseSegments: Seq[String] = Nil) = walkValues(baseSegments).map(_._1)
-}
-class MutablePathSet() extends MutablePathMap[Unit] with BasePathSet{
+class MutablePathSet() extends MutablePathMap[Unit] {
   def add(segments: IterableOnce[String]): Unit =  add(segments, ())
 }
 
@@ -149,7 +149,7 @@ object PathSet{
   def apply[T](paths: IterableOnce[IterableOnce[String]]) = new PathSet().withPaths(paths)
 }
 class PathSet(root: PathMap.Node[Unit] = PathMap.Node[Unit](),
-              size0: Int = 0) extends PathMap[Unit](root, size0) with BasePathSet{
+              size0: Int = 0) extends PathMap[Unit](root, size0) {
   def withPaths(segments: geny.Generator[IterableOnce[String]]): PathSet = {
     segments.foldLeft(this)((s, p) => s.withPath(p))
   }
