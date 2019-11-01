@@ -2,10 +2,10 @@ package devbox.common
 import geny.Generator
 
 import collection.mutable
-object BasePathSet{
-  trait Node {
-    def hasValue: Boolean
-    def children: collection.Map[String, Node]
+object BasePathMap{
+  trait Node[T] {
+    def valueOpt: Option[T]
+    def children: collection.Map[String, Node[T]]
   }
 }
 /**
@@ -17,10 +17,10 @@ object BasePathSet{
   * Allows efficient insertion, [[containsPathPrefix]] checks, [[size]] checks, as
   * well as iteration over prefixed elements via [[walk]] and [[walkSubPaths]]
   */
-abstract class BasePathSet(){
+abstract class BasePathMap[T](){
 
 
-  protected def value: BasePathSet.Node
+  protected def root: BasePathMap.Node[T]
 
   def size: Int
 
@@ -29,32 +29,33 @@ abstract class BasePathSet(){
   }
 
   def contains(segments: IterableOnce[String]): Boolean = {
-    query(segments).exists(_.hasValue)
+    query(segments).exists(_.valueOpt.nonEmpty)
   }
 
-  def query(segments: IterableOnce[String]): Option[BasePathSet.Node] = {
+  def query(segments: IterableOnce[String]): Option[BasePathMap.Node[T]] = {
     segments
-      .foldLeft(Option(value)) {
+      .foldLeft(Option(root)) {
         case (None, _) => None
         case (Some(node), segment) => node.children.get(segment)
       }
   }
-  def walk(baseSegments: Seq[String] = Nil): geny.Generator[IndexedSeq[String]] = {
-    walkSubPaths(baseSegments).map(baseSegments.toIndexedSeq ++ _)
+  def walkValues(baseSegments: Seq[String] = Nil): geny.Generator[(IndexedSeq[String], T)] = {
+    walkSubPathsValues(baseSegments).map{case (p, v) => (baseSegments.toIndexedSeq ++ p, v)}
   }
 
-  def walkSubPaths(baseSegments: IterableOnce[String]): geny.Generator[IndexedSeq[String]] = {
-    new Generator[IndexedSeq[String]] {
-      def generate(handleItem: IndexedSeq[String] => Generator.Action): Generator.Action = {
+  def walkSubPathsValues(baseSegments: IterableOnce[String]): geny.Generator[(IndexedSeq[String], T)] = {
+    new Generator[(IndexedSeq[String], T)] {
+      def generate(handleItem: ((IndexedSeq[String], T)) => Generator.Action): Generator.Action = {
 
         query(baseSegments) match{
           case None => Generator.Continue
           case Some(base) =>
 
-            def rec(sub: Vector[String], n: BasePathSet.Node): Generator.Action = {
-              var state: Generator.Action =
-                if (n.hasValue) handleItem(sub)
-                else Generator.Continue
+            def rec(sub: Vector[String], n: BasePathMap.Node[T]): Generator.Action = {
+              var state: Generator.Action = n.valueOpt match{
+                case Some(v) => handleItem((sub, v))
+                case None => Generator.Continue
+              }
               val iter = n.children.iterator
               while(state == Generator.Continue && iter.hasNext){
                 val (k, v) = iter.next()
@@ -69,73 +70,91 @@ abstract class BasePathSet(){
     }
   }
 }
-object MutablePathSet{
-  class Node extends BasePathSet.Node{
-    var hasValue = false
-    val children = mutable.Map.empty[String, Node]
+object MutablePathMap{
+  class Node[T] extends BasePathMap.Node[T]{
+    var valueOpt = Option.empty[T]
+    val children = mutable.Map.empty[String, Node[T]]
   }
 }
-class MutablePathSet() extends BasePathSet(){
+class MutablePathMap[T]() extends BasePathMap[T](){
 
-  protected var value = new MutablePathSet.Node()
+  protected var root = new MutablePathMap.Node()
   protected var size0 = 0
   def size = size0
-  def add(segments: IterableOnce[String]): Unit = {
-    var current = value
+  def add(segments: IterableOnce[String], v: T): Unit = {
+    var current = root
     for(segment <- segments){
-      current = current.children.getOrElseUpdate(segment, new MutablePathSet.Node())
+      current = current.children.getOrElseUpdate(segment, new MutablePathMap.Node[T]())
     }
-    if (!current.hasValue) {
-      current.hasValue = true
+    if (current.valueOpt.isEmpty) {
+      current.valueOpt = Some(v)
       size0 += 1
     }
   }
   def clear() = {
     size0 = 0
-    value = new MutablePathSet.Node()
+    root = new MutablePathMap.Node()
     this
   }
+}
+
+
+object PathMap{
+  case class Node[T](valueOpt: Option[T] = None,
+                     children: Map[String, Node[T]] = Map.empty[String, Node[T]]) extends BasePathMap.Node[T]
+
+  def apply[T](paths: IterableOnce[(IterableOnce[String], T)]) = new PathMap().withPaths(paths)
+
 
 }
-object PathSet{
-  case class Node(hasValue: Boolean = false,
-                  children: Map[String, Node] = Map.empty) extends BasePathSet.Node
-
-  def apply(paths: IterableOnce[IterableOnce[String]]) = new PathSet().withPaths(paths)
-
-  /**
-    * Shared instance to represent the common case of a file with no children
-    */
-  val ZeroChildLeaveNode = Node(hasValue = true)
-
-}
-class PathSet(protected val value: PathSet.Node = PathSet.Node(),
-              size0: Int = 0) extends BasePathSet{
+class PathMap[T](protected val root: PathMap.Node[T] = PathMap.Node[T](),
+                 size0: Int = 0) extends BasePathMap[T]{
 
   def size = size0
-  def withPaths(segments: geny.Generator[IterableOnce[String]]): PathSet = {
-    segments.foldLeft(this)((s, p) => s.withPath(p))
+  def withPaths(segments: geny.Generator[(IterableOnce[String], T)]): PathMap[T] = {
+    segments.foldLeft(this)((s, p) => s.withPath(p._1, p._2))
   }
-  def withPath(segments: IterableOnce[String]): PathSet = {
+  def withPath(segments: IterableOnce[String], value: T): PathMap[T] = {
+    val (newValue, newPath) = withPath0(segments, value)
+    new PathMap(newValue, if (newPath) size0 + 1 else size0)
+  }
+  def withPath0(segments: IterableOnce[String], value: T) = {
     val segmentsIter = segments.iterator
-    def rec(current: PathSet.Node): (PathSet.Node, Boolean) = {
-      if (!segmentsIter.hasNext) (current.copy(hasValue = true), !current.hasValue)
-      else{
+    def rec(current: PathMap.Node[T]): (PathMap.Node[T], Boolean) = {
+      if (!segmentsIter.hasNext) (current.copy(valueOpt = Some(value)), current.valueOpt.isEmpty)
+      else {
         val key = segmentsIter.next
-        val (newChild, childNewPath) = current.children.get(key) match{
-          case None =>
-            if (!segmentsIter.hasNext) (PathSet.ZeroChildLeaveNode, true)
-            else rec(PathSet.Node())
-
+        val (newChild, childNewPath) = current.children.get(key) match {
+          case None => rec(PathMap.Node())
           case Some(child) => rec(child)
         }
         (current.copy(children = current.children.updated(key, newChild)), childNewPath)
       }
     }
 
-    val (newValue, newPath) = rec(value)
+    rec(root)
 
+  }
+}
+
+trait BasePathSet extends BasePathMap[Unit]{
+  def walkSubPaths(baseSegments: IterableOnce[String]) = walkSubPathsValues(baseSegments).map(_._1)
+  def walk(baseSegments: Seq[String] = Nil) = walkValues(baseSegments).map(_._1)
+}
+class MutablePathSet() extends MutablePathMap[Unit] with BasePathSet{
+  def add(segments: IterableOnce[String]): Unit =  add(segments, ())
+}
+
+object PathSet{
+  def apply[T](paths: IterableOnce[IterableOnce[String]]) = new PathSet().withPaths(paths)
+}
+class PathSet(root: PathMap.Node[Unit] = PathMap.Node[Unit](),
+              size0: Int = 0) extends PathMap[Unit](root, size0) with BasePathSet{
+  def withPaths(segments: geny.Generator[IterableOnce[String]]): PathSet = {
+    segments.foldLeft(this)((s, p) => s.withPath(p))
+  }
+  def withPath(segments: IterableOnce[String]): PathSet = {
+    val (newValue, newPath) = withPath0(segments, ())
     new PathSet(newValue, if (newPath) size0 + 1 else size0)
-
   }
 }
