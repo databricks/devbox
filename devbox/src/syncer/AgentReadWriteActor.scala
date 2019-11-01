@@ -48,11 +48,9 @@ class AgentReadWriteActor(agent: AgentApi,
         case _ => Active(buffer)
       }
 
-    case AgentReadWriteActor.ReadFailed() =>
-      restart(buffer, 0)
+    case AgentReadWriteActor.ReadFailed() => restart(buffer, 0)
 
-    case AgentReadWriteActor.ForceRestart() =>
-      restart(buffer, 0)
+    case AgentReadWriteActor.ForceRestart() => restart(buffer, 0)
 
     case AgentReadWriteActor.Receive(data) =>
       onResponse(data)
