@@ -51,13 +51,6 @@ class StatusActor(setImage: String => Unit,
     }
   }
 
-  def syncCompleteMsg(syncFiles: PathSet, syncBytes: Long) = Seq(
-    s"Syncing Complete",
-    s"${Util.formatInt(syncFiles.size)} files ${Util.readableBytesSize(syncBytes)}",
-    s"${Util.timeFormatter.format(java.time.Instant.now())}"
-  )
-
-
   def setIcon(icon: StatusActor.SetIcon, nextIcon: StatusActor.SetIcon) = {
     if (icon.iconName != nextIcon.iconName) setImage(nextIcon.iconName)
     if (icon.msg != nextIcon.msg) setTooltip(nextIcon.msg.mkString("\n"))

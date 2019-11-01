@@ -166,16 +166,16 @@ class AgentReadWriteActor(agent: AgentApi,
     val suffix = if (suffix0 == "") "" else "\n" + suffix0
     msg match{
       case SyncFiles.Complete() =>
-        logger.progress("Syncing Complete", "waiting for confirmation from Devbox")
+        logger.progress("Syncing paths complete", "waiting for confirmation from Devbox")
       case SyncFiles.RemoteScan(paths) =>
         logger.info("Scanning directories", paths.mkString("\n"))
 
       case SyncFiles.RpcMsg(rpc) =>
-        logger.syncingFile("Syncing path [", s"]:\n${rpc.path}$suffix")
+        logger.syncingFile("", rpc.path.toString, suffix)
 
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
         val chunkMsg = if (chunkCount > 1) s" chunk [$chunkIndex/$chunkCount]" else ""
-        logger.syncingFile("Syncing path [", s"]$chunkMsg:\n$subPath$suffix")
+        logger.syncingFile(chunkMsg, subPath.toString, suffix)
     }
   }
   def getRpcFor(msg: SyncFiles.Msg, buf: ByteBuffer): Option[Rpc] = {
