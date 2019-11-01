@@ -15,11 +15,12 @@ class ConsoleLogger(val dest: String => os.Path,
     case Logger.PPrinted(tag, value) =>
       assert(tag.length <= Logger.margin)
 
-      val msgStr =
-        fansi.Color.Magenta(tag.padTo(Logger.margin, ' ')) ++ " | " ++
-          pprint.apply(value, height = Int.MaxValue)
+      val msgIterator =
+        Iterator(tag.padTo(Logger.margin, ' '), " | ") ++
+        pprint.tokenize(value, height = Int.MaxValue).map(_.plainText)
 
-      write(msgStr.toString().replace("\n", Logger.marginStr))
+      for(chunk <- msgIterator) write(chunk.replace("\n", Logger.marginStr))
+      write("\n")
 
     case Logger.Info(chunks) =>
       println(chunks.mkString(", "))

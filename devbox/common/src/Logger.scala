@@ -8,7 +8,7 @@ trait BaseLogger extends AutoCloseable{
   def truncate: Boolean
 
   var size = 0L
-  var output: java.io.OutputStream = _
+  var output: java.io.Writer = _
 
   def logOut(s: String): Unit
   def write(s: String) = {
@@ -18,19 +18,19 @@ trait BaseLogger extends AutoCloseable{
       if (output != null) output.close()
       os.remove.all(dest("-old"))
       if (os.exists(dest(""))) os.copy(dest(""), dest("-old"))
-      output = os.write.outputStream(
-        dest(""),
-        openOptions =
-          if (truncate) Seq(CREATE, WRITE, TRUNCATE_EXISTING)
-          else Seq(CREATE, WRITE, APPEND)
+      output = new java.io.OutputStreamWriter(
+        os.write.outputStream(
+          dest(""),
+          openOptions =
+            if (truncate) Seq(CREATE, WRITE, TRUNCATE_EXISTING)
+            else Seq(CREATE, WRITE, APPEND)
+        )
       )
       size = 0
-
     }
-    val bytes = fansi.Str(s).plainText.getBytes("UTF-8")
-    output.write(bytes)
-    output.write('\n')
-    size += bytes.length + 1
+
+    output.write(s)
+    size += s.length + 1
   }
 
   def close() = output.close()

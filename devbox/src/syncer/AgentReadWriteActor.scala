@@ -26,6 +26,9 @@ class AgentReadWriteActor(agent: AgentApi,
   def initialState = Active(Vector())
 
   type Buffered = Either[AgentReadWriteActor.StartFile, SyncFiles.Msg]
+  val byteArr = new Array[Byte](Util.blockSize)
+  val buf = ByteBuffer.wrap(byteArr)
+
   case class Active(buffer: Vector[Buffered]) extends State({
     case AgentReadWriteActor.StartFile() =>
       logger.filesAndBytes(1, 0)
@@ -34,7 +37,7 @@ class AgentReadWriteActor(agent: AgentApi,
       logStatusMsgForRpc(msg)
       msg match{
         case r: SyncFiles.Msg =>
-          getRpcFor(r) match{
+          getRpcFor(r, buf) match{
             case None => Active(buffer)
             case Some(rpc) =>
               val newBuffer = buffer :+ Right(r)
@@ -56,18 +59,19 @@ class AgentReadWriteActor(agent: AgentApi,
       if (!data.isInstanceOf[Response.Ack]) Active(buffer)
       else {
         ac.reportComplete()
-        val buffered = buffer.head
-        if (buffer.tail.nonEmpty) {
-          buffered match{
-            case Right(msg) => logStatusMsgForRpc(msg, "(Complete)")
-            case _ =>
-          }
-        }
-        else {
-          if (buffered == Right(SyncFiles.Complete())) logger.done()
-        }
 
-        Active(buffer.tail)
+        // Drop all the StartFile nodes from the buffer; since we've gotten a
+        // response, from a later Msg, we are guaranteed to not need to replay
+        // them, and they do not require any logging to be done since they are
+        // logged on receive.
+        val newBuffer = buffer.dropWhile(_.isLeft)
+
+        val Right(msg) = newBuffer.head
+
+        if (newBuffer.tail.nonEmpty) logStatusMsgForRpc(msg, "(Complete)")
+        else if (msg == SyncFiles.Complete()) logger.done()
+
+        Active(newBuffer.tail)
       }
 
     case AgentReadWriteActor.Close() =>
@@ -114,7 +118,7 @@ class AgentReadWriteActor(agent: AgentApi,
             buffered match{
               case Right(msg) =>
                 logStatusMsgForRpc(msg, "(Replaying)")
-                getRpcFor(msg) match{
+                getRpcFor(msg, buf) match{
                   case None => None
                   case Some(rpc) => sendRpc(newBuffer, retryCount, rpc)
                 }
@@ -176,15 +180,14 @@ class AgentReadWriteActor(agent: AgentApi,
         logger.syncingFile("Syncing path [", s"]$chunkMsg:\n$subPath$suffix")
     }
   }
-  def getRpcFor(msg: SyncFiles.Msg): Option[Rpc] = {
+  def getRpcFor(msg: SyncFiles.Msg, buf: ByteBuffer): Option[Rpc] = {
     msg match{
       case SyncFiles.Complete() => Some(Rpc.Complete())
       case SyncFiles.RemoteScan(paths) => Some(Rpc.FullScan(paths))
       case SyncFiles.RpcMsg(rpc) => Some(rpc)
 
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>
-        val byteArr = new Array[Byte](Util.blockSize)
-        val buf = ByteBuffer.wrap(byteArr)
+
 
         try {
           Util.autoclose(os.read.channel(src / subPath)) { channel =>

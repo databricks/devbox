@@ -14,10 +14,11 @@ class AgentLogger(val dest: String => os.Path, val rotationSize: Long)
   def run(msg: Logger.PPrinted): Unit = {
     assert(msg.tag.length <= Logger.margin)
 
-    val msgStr =
-      fansi.Color.Magenta(msg.tag.padTo(Logger.margin, ' ')) ++ " | " ++
-        pprint.apply(msg.value, height = Int.MaxValue)
+    val msgIterator =
+      Iterator(msg.tag.padTo(Logger.margin, ' '), " | ") ++
+      pprint.tokenize(msg.value, height = Int.MaxValue).map(_.plainText)
 
-    write(msgStr.toString().replace("\n", Logger.marginStr))
+    for(chunk <- msgIterator) write(chunk.replace("\n", Logger.marginStr))
+    write("\n")
   }
 }

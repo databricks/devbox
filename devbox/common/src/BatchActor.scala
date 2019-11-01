@@ -56,7 +56,7 @@ object ActorContext{
 
     def scheduleMsg[T](a: Actor[T], msg: T, delay: java.time.Duration)
                       (implicit fileName: sourcecode.FileName,
-                       line: sourcecode.Line)= {
+                       line: sourcecode.Line) = {
       reportSchedule(a, msg)
       scheduler.schedule[Unit](
         () => {
@@ -157,14 +157,14 @@ class ProxyActor[T, V](f: T => V, downstream: Actor[V])
 abstract class BatchActor[T]()(implicit ac: ActorContext) extends Actor[T]{
   def runBatch(msgs: Seq[T]): Unit
 
-  private val queue = new mutable.Queue[(T, sourcecode.FileName, sourcecode.Line)]()
+  private val queue = new mutable.Queue[T]()
   private var scheduled = false
 
   def send(t: T)
           (implicit fileName: sourcecode.FileName,
            line: sourcecode.Line): Unit = synchronized{
     ac.reportSchedule(this, t)
-    queue.enqueue((t, fileName, line))
+    queue.enqueue(t)
     if (!scheduled){
       scheduled = true
       ac.execute(() => runWithItems())
@@ -173,9 +173,9 @@ abstract class BatchActor[T]()(implicit ac: ActorContext) extends Actor[T]{
 
   private[this] def runWithItems(): Unit = {
     val msgs = synchronized(queue.dequeueAll(_ => true))
-    try runBatch(msgs.map(_._1))
+    try runBatch(msgs)
     catch{case e: Throwable => ac.reportFailure(e)}
-    finally msgs.foreach(m => ac.reportComplete(this, m._1)(m._2, m._3))
+    finally msgs.foreach(m => ac.reportComplete(this, m))
     synchronized{
       if (queue.nonEmpty) ac.execute(() => runWithItems())
       else{

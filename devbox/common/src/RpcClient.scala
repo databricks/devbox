@@ -8,10 +8,8 @@ class RpcClient(out: => OutputStream with DataOutput,
   def writeMsg[T: upickle.default.Writer](t: T, success: Boolean = true): Unit = {
     logger("MSG WRITE", t)
     val blob = upickle.default.writeBinary(t)
-
-    val compressed = Util.gzip(blob)
-    out.writeInt(compressed.length)
-    out.write(compressed)
+    out.writeInt(blob.length)
+    out.write(blob)
     out.flush()
   }
 
@@ -19,9 +17,9 @@ class RpcClient(out: => OutputStream with DataOutput,
 
     val blob = {
       val length = in.readInt()
-      val compressed = new Array[Byte](length)
-      in.readFully(compressed)
-      Util.gunzip(compressed)
+      val data = new Array[Byte](length)
+      in.readFully(data)
+      data
     }
 
     val res =

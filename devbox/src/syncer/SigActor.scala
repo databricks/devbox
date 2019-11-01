@@ -13,6 +13,12 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
                logger: SyncLogger) extends StateMachineActor[SigActor.Msg]{
   def initialState: State = Idle()
 
+  val buffers = {
+    val res = new LinkedBlockingQueue[Array[Byte]]()
+    for(i <- 0 until 4) res.add(new Array[Byte](Util.blockSize))
+    res
+  }
+
   case class Idle() extends State({
     case SigActor.RemotePath(base, sub, sig) =>
       sendToSyncActor(SyncActor.RemoteScanned(base, sub, sig))
@@ -47,7 +53,7 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
   def compute(groups: Map[os.Path, Set[os.SubPath]]) = {
     val computeFutures =
       for((k, vs) <- groups)
-      yield SigActor.computeSignatures(vs, k, signatureTransformer).map((k, _))
+      yield SigActor.computeSignatures(vs, k, signatureTransformer, buffers).map((k, _))
 
     Future.sequence(computeFutures).foreach{ results =>
       sendToSyncActor(SyncActor.Events(results.map{case (k, vs) => (k, vs.toMap)}.toMap))
@@ -67,7 +73,8 @@ object SigActor{
 
   def computeSignatures(eventPaths: Set[os.SubPath],
                         src: os.Path,
-                        signatureTransformer: (os.SubPath, Sig) => Sig)
+                        signatureTransformer: (os.SubPath, Sig) => Sig,
+                        buffers: LinkedBlockingQueue[Array[Byte]])
                        (implicit ec: ExecutionContext)
   : Future[Seq[(os.SubPath, Option[Sig])]] = {
 
@@ -86,9 +93,6 @@ object SigActor{
         )
       )
       .toMap
-
-    val buffers = new LinkedBlockingQueue[Array[Byte]]()
-    for(i <- 0 until 6) buffers.add(new Array[Byte](Util.blockSize))
 
     val futures = eventPathsLinks
       .iterator
