@@ -8,11 +8,11 @@ object InitialScan {
 
       if (!os.isDir(base)) os.makeDir.all(base)
 
-      skipper.processInitialScanSingle(base, os.sub, true)
+      skipper.initialScanIsPathSkipped(base, os.sub, true)
 
       val fileStream = os.walk.stream.attrs(
         base,
-        (p, attrs) => skipper.processInitialScanSingle(base, p.subRelativeTo(base), attrs.isDir)
+        (p, attrs) => skipper.initialScanIsPathSkipped(base, p.subRelativeTo(base), attrs.isDir)
       )
 
       fileStream.foreach { case (p, attrs) =>

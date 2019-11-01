@@ -5,8 +5,8 @@ import org.eclipse.jgit.internal.storage.file.FileRepository
 
 
 trait Skipper {
-  def processBatch(base: os.Path, paths: PathMap[Boolean]): PathSet
-  def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean): Boolean
+  def batchRemoveSkippedPaths(base: os.Path, paths: PathMap[Boolean]): PathSet
+  def initialScanIsPathSkipped(base: os.Path, path: os.SubPath, isDir: Boolean): Boolean
 }
 
 object Skipper{
@@ -17,23 +17,23 @@ object Skipper{
   }
 
   object Null extends Skipper {
-    def processBatch(base: os.Path, paths: PathMap[Boolean]) = PathSet.from(paths.walk())
-    def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = false
+    def batchRemoveSkippedPaths(base: os.Path, paths: PathMap[Boolean]) = PathSet.from(paths.walk())
+    def initialScanIsPathSkipped(base: os.Path, path: os.SubPath, isDir: Boolean) = false
   }
 
   object DotGit extends Skipper {
-    def processBatch(base: os.Path, paths: PathMap[Boolean]) = {
+    def batchRemoveSkippedPaths(base: os.Path, paths: PathMap[Boolean]) = {
       PathSet.from(paths.walk().filter(!_.lift(0).contains(".git")))
     }
-    def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = {
+    def initialScanIsPathSkipped(base: os.Path, path: os.SubPath, isDir: Boolean) = {
       path.segments.lift(0).contains(".git")
     }
   }
 
   class GitIgnore() extends Skipper {
-    val ignorePaths = collection.mutable.Map.empty[os.SubPath, (Int, IgnoreNode)]
+    val ignoreNodeCache = collection.mutable.Map.empty[os.SubPath, (Int, IgnoreNode)]
 
-    val ignoreCache = collection.mutable.Map.empty[
+    val isPathIgnoredCache = collection.mutable.Map.empty[
       (IndexedSeq[String], Int, Boolean),
       Boolean
     ]
@@ -45,7 +45,7 @@ object Skipper{
       if (os.isFile(base / path, followLinks = false)){
         val lines = try os.read.lines(base / path) catch{case e: Throwable => Nil }
         val linesHash = lines.hashCode
-        if (!ignorePaths.get(path / os.up).exists(_._1 == linesHash)) {
+        if (!ignoreNodeCache.get(path / os.up).exists(_._1 == linesHash)) {
 
           import collection.JavaConverters._
 
@@ -56,8 +56,8 @@ object Skipper{
               .asJava
           )
 
-          ignorePaths(path / os.up) = (linesHash, n)
-          ignoreCache.clear()
+          ignoreNodeCache(path / os.up) = (linesHash, n)
+          isPathIgnoredCache.clear()
         }
       }
     }
@@ -74,17 +74,17 @@ object Skipper{
       }
     }
 
-    def checkFileSkipped(base: os.Path, path: os.SubPath, isDir: Boolean) = {
+    def checkFileActive(base: os.Path, path: os.SubPath, isDir: Boolean) = {
       lazy val indexed = gitIndexCache.containsPathPrefix(path.segments)
       lazy val ignoredEntries = for {
         (enclosingPartialPath, i) <- path.segments.inits.zipWithIndex
         if enclosingPartialPath.nonEmpty
         gitIgnoreRoot <- enclosingPartialPath.inits.drop(1)
-        (linesHash, ignoreNode) <- ignorePaths.get(os.sub / gitIgnoreRoot)
+        (linesHash, ignoreNode) <- ignoreNodeCache.get(os.sub / gitIgnoreRoot)
       } yield {
         val enclosedPartialPathStr = enclosingPartialPath.drop(gitIgnoreRoot.length).mkString("/")
 
-        val ignored = ignoreCache.getOrElseUpdate(
+        val ignored = isPathIgnoredCache.getOrElseUpdate(
           (enclosingPartialPath, gitIgnoreRoot.length, isDir),
           ignoreNode.isIgnored(enclosedPartialPathStr, if (i == 0) isDir else true) match{
             case IgnoreNode.MatchResult.IGNORED => true
@@ -100,7 +100,7 @@ object Skipper{
       indexed || notIgnored
     }
 
-    def processInitialScanSingle(base: os.Path, path: os.SubPath, isDir: Boolean) = {
+    def initialScanIsPathSkipped(base: os.Path, path: os.SubPath, isDir: Boolean) = {
       // During the initial scan, we want to look up the git index and gitignore
       // files early, rather than waiting for them to turn up in our folder walk,
       // so we can get an up to date skipper as soon as possible. Otherwise we
@@ -108,14 +108,14 @@ object Skipper{
       // later that they are all ignored
       if (isDir) updateIgnoreCache(base, path / ".gitignore")
       if (path == os.sub) updateIndexCache(base, os.sub / ".git" / "index")
-      !checkFileSkipped(base, path, isDir)
+      !checkFileActive(base, path, isDir)
     }
 
-    def processBatch(base: os.Path, paths: PathMap[Boolean]) = {
-      for(p <- ignorePaths.keySet){
-        if (!os.isFile(base / p) && ignorePaths.contains(p)) {
-          ignorePaths.remove(p)
-          ignoreCache.clear()
+    def batchRemoveSkippedPaths(base: os.Path, paths: PathMap[Boolean]) = {
+      for(p <- ignoreNodeCache.keySet){
+        if (!os.isFile(base / p / ".gitignore") && ignoreNodeCache.contains(p)) {
+          ignoreNodeCache.remove(p)
+          isPathIgnoredCache.clear()
         }
       }
 
@@ -128,7 +128,7 @@ object Skipper{
       PathSet.from(
         paths
           .walkValues()
-          .collect{ case (p, isDir) if checkFileSkipped(base, os.SubPath(p), isDir) => p }
+          .collect{ case (p, isDir) if checkFileActive(base, os.SubPath(p), isDir) => p }
       )
     }
   }

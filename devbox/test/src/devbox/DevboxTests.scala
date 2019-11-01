@@ -301,7 +301,7 @@ object DevboxTests extends TestSuite{
         .map{case (p, attrs) => (p.subRelativeTo(base).segments, attrs.isDir)}
     )
 
-    skip.processBatch(base, rawPaths)
+    skip.batchRemoveSkippedPaths(base, rawPaths)
   }
 
   def computeSig(p: os.Path, buffer: Array[Byte]) = {

@@ -10,10 +10,13 @@ object GitIgnoreTests extends TestSuite {
       for((p, attrs) <- os.walk.attrs(base))
       yield (p.subRelativeTo(base).segments, attrs.isDir)
 
-    skip.processBatch(base, PathMap.from(existingFiles))
+    skip.batchRemoveSkippedPaths(base, PathMap.from(existingFiles))
 
     def apply(p: os.SubPath, isDir: Boolean): Boolean = {
-      skip.processBatch(base, PathMap(p.segments -> isDir)).size != 0
+      val res1 = skip.batchRemoveSkippedPaths(base, PathMap(p.segments -> isDir))
+      val res2 = skip.initialScanIsPathSkipped(base, p, isDir)
+      assert((res1.size == 0) == res2)
+      res2
     }
   }
 
@@ -46,15 +49,44 @@ object GitIgnoreTests extends TestSuite {
         check(os.sub / "folder" / "directory", true) ==> false
         check(os.sub / "nested", true) ==> false
       }
+      'remove - {
+        os.write(base / ".gitignore", "out")
+        os.write(base / "target" / ".gitignore", "lols", createFolders = true)
+        os.write(base / "out" / "lols", "lols", createFolders = true)
+        os.write(base / "target" / "lols", "lols", createFolders = true)
+        val check = new Checker(base)
+
+        check(os.sub / "out", true) ==> true
+        check(os.sub / "out" / "lols", false) ==> true
+        check(os.sub / "target", true) ==> false
+        check(os.sub / "target" / "lols", false) ==> true
+
+        os.remove(base / ".gitignore")
+
+        check(os.sub / "out", true) ==> false
+        check(os.sub / "out" / "lols", false) ==> false
+        check(os.sub / "target", true) ==> false
+        check(os.sub / "target" / "lols", false) ==> true
+
+        os.remove(base / "target" / ".gitignore")
+
+        check(os.sub / "out", true) ==> false
+        check(os.sub / "out" / "lols", false) ==> false
+        check(os.sub / "target", true) ==> false
+        check(os.sub / "target" / "lols", false) ==> false
+      }
     }
     def checkIgnore(gitIgnoreLine: String, gitIgnorePrefix: String, path: String) = {
       val skip = new Skipper.GitIgnore()
       val base = os.temp.dir()
       val gitIgnorePath = os.SubPath(gitIgnorePrefix) / ".gitignore"
       os.write(base / gitIgnorePath, gitIgnoreLine, createFolders = true)
-      skip.processBatch(base, PathMap(gitIgnorePath.segments -> false))
+      skip.batchRemoveSkippedPaths(base, PathMap(gitIgnorePath.segments -> false))
 
-      skip.processBatch(base, PathMap(os.SubPath(path).segments -> (path.last == '/'))).size == 0
+      val res1 = skip.batchRemoveSkippedPaths(base, PathMap(os.SubPath(path).segments -> (path.last == '/')))
+      val res2 = skip.initialScanIsPathSkipped(base, os.SubPath(path), path.last == '/')
+      assert((res1.size == 0) == res2)
+      res2
     }
 
     'simple - {
