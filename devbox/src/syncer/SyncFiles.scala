@@ -40,9 +40,7 @@ object SyncFiles {
     } yield {
       SyncFiles.synchronizeRepo(
         logger, vfsArr(i), src, dest,
-        eventPaths
-          .walkSubPathsValues(Nil)
-          .map{case (segments, sig) => (os.SubPath(segments), sig)},
+        eventPaths,
         send,
         logStartFile
       )
@@ -53,13 +51,14 @@ object SyncFiles {
                       vfs: Vfs[Sig],
                       src: os.Path,
                       dest: os.RelPath,
-                      eventPaths: geny.Generator[(os.SubPath, Option[Sig])],
+                      eventPaths: PathMap[Option[Sig]],
                       send: Msg => Unit,
                       logStartFile: () => Unit)
                      (implicit ec: ExecutionContext): Unit = {
 
     val signatureMapping0 = for{
-      (sub, newSig) <- eventPaths
+      (sub0, newSig) <- eventPaths.walkValues()
+      sub = os.SubPath(sub0)
       oldSig = vfs.resolve(sub).map(_.value)
       if newSig != oldSig
     } yield (sub, newSig, oldSig)
@@ -69,7 +68,7 @@ object SyncFiles {
     logger("signatureMapping", signatureMapping)
 
     logger.incrementFileTotal(src, PathSet.from(signatureMapping.map(_._1.segments)))
-    val sortedSignatures = sortSignatureChanges(signatureMapping.toSeq)
+    val sortedSignatures = sortSignatureChanges(signatureMapping)
 
     syncAllFiles(vfs, send, sortedSignatures, src, dest, logger, logStartFile)
   }
@@ -132,19 +131,16 @@ object SyncFiles {
       case Some(Sig.File(_, otherBlockHashes, otherSize)) => (otherBlockHashes, Some(otherSize))
       case _ => (Nil, None)
     }
-    logger("syncFileChunks", (subPath, size, otherSizeOpt, remoteSig))
-    val chunkIndices = for {
+
+    for {
       i <- blockHashes.indices
       if i >= otherHashes.length || blockHashes(i) != otherHashes(i)
-    } yield {
+    } {
       Vfs.updateVfs(
         Action.WriteChunk(subPath, i, blockHashes(i)),
         vfs
       )
-      i
-    }
-    for (chunkIndex <- chunkIndices) {
-      send(SendChunkMsg(src, dest, subPath, chunkIndex, blockHashes.size))
+      send(SendChunkMsg(src, dest, subPath, i, blockHashes.size))
     }
 
     // We need to update the Vfs with the Rpc.SetSize every time, because it
