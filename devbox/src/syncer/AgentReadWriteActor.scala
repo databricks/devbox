@@ -104,12 +104,8 @@ class AgentReadWriteActor(agent: AgentApi,
 
       startError.getOrElse{
         spawnReaderThread()
-        val newMsg =
-          if (buffer.nonEmpty) None
-          else{
-            ac.reportSchedule()
-            Some(Right(SyncFiles.Complete()))
-          }
+        ac.reportSchedule()
+        val newMsg = Some(Right(SyncFiles.Complete()))
 
         val newBuffer = buffer ++ newMsg
         val failState = newBuffer.foldLeft(Option.empty[State]){
