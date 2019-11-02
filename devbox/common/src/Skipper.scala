@@ -74,29 +74,32 @@ object Skipper{
     }
 
     def checkFileActive(base: os.Path, path: os.SubPath, isDir: Boolean) = {
-      lazy val indexed = gitIndexCache.containsPathPrefix(path.segments)
-      lazy val ignoredEntries = for {
-        (enclosingPartialPath, i) <- path.segments.inits.zipWithIndex
-        if enclosingPartialPath.nonEmpty
-        gitIgnoreRoot <- enclosingPartialPath.inits.drop(1)
-        (linesHash, ignoreNode) <- ignoreNodeCache.get(os.sub / gitIgnoreRoot)
-      } yield {
-        val enclosedPartialPathStr = enclosingPartialPath.drop(gitIgnoreRoot.length).mkString("/")
+      if (path == os.sub / ".git" / "index.lock") false
+      else {
+        lazy val indexed = gitIndexCache.containsPathPrefix(path.segments)
+        lazy val ignoredEntries = for {
+          (enclosingPartialPath, i) <- path.segments.inits.zipWithIndex
+          if enclosingPartialPath.nonEmpty
+          gitIgnoreRoot <- enclosingPartialPath.inits.drop(1)
+          (linesHash, ignoreNode) <- ignoreNodeCache.get(os.sub / gitIgnoreRoot)
+        } yield {
+          val enclosedPartialPathStr = enclosingPartialPath.drop(gitIgnoreRoot.length).mkString("/")
 
-        val ignored = isPathIgnoredCache.getOrElseUpdate(
-          (enclosingPartialPath, gitIgnoreRoot.length, isDir),
-          ignoreNode.isIgnored(enclosedPartialPathStr, if (i == 0) isDir else true) match{
-            case IgnoreNode.MatchResult.IGNORED => true
-            case IgnoreNode.MatchResult.NOT_IGNORED => false
-            case _ => false
-          }
-        )
-        ignored
+          val ignored = isPathIgnoredCache.getOrElseUpdate(
+            (enclosingPartialPath, gitIgnoreRoot.length, isDir),
+            ignoreNode.isIgnored(enclosedPartialPathStr, if (i == 0) isDir else true) match {
+              case IgnoreNode.MatchResult.IGNORED => true
+              case IgnoreNode.MatchResult.NOT_IGNORED => false
+              case _ => false
+            }
+          )
+          ignored
 
+        }
+
+        lazy val notIgnored = !ignoredEntries.exists(identity)
+        indexed || notIgnored
       }
-
-      lazy val notIgnored = !ignoredEntries.exists(identity)
-      indexed || notIgnored
     }
 
     def initialScanIsPathSkipped(base: os.Path, path: os.SubPath, isDir: Boolean) = {
