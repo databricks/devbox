@@ -75,7 +75,7 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
   })
 
   def executeSync(paths: Map[os.Path, PathMap[Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) = {
-    if (paths.size == 0) Idle(vfsArr)
+    if (paths.map(_._2.size).sum == 0) Idle(vfsArr)
     else {
       Future {
         SyncFiles.executeSync(
