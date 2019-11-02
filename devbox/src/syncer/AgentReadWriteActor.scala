@@ -67,9 +67,7 @@ class AgentReadWriteActor(agent: AgentApi,
         val Right(msg) = filtered1.head
         val filtered2 = filtered1.tail.dropWhile(_.isLeft)
 
-        if (filtered2.isEmpty) {
-          if (msg == SyncFiles.Complete()) logger.done()
-        }
+        if (filtered2.isEmpty) logger.done()
 
         Active(filtered2)
       }
@@ -164,7 +162,7 @@ class AgentReadWriteActor(agent: AgentApi,
     val suffix = if (suffix0 == "") "" else "\n" + suffix0
     msg match{
       case SyncFiles.Complete() =>
-        logger.progress("Syncing paths complete", "waiting for confirmation from Devbox")
+
       case SyncFiles.RemoteScan(paths) =>
         logger.info("Scanning directories", paths.mkString("\n"))
 
