@@ -43,7 +43,8 @@ class AgentReadWriteActor(agent: AgentApi,
             case Some(rpc) =>
               val newBuffer = buffer :+ Right(r)
               ac.reportSchedule()
-              sendRpc(newBuffer, 0, rpc).getOrElse(Active(newBuffer))
+              if (sendRpc(rpc)) Active(newBuffer)
+              else restart(newBuffer, 0)
           }
 
         case _ => Active(buffer)
@@ -112,10 +113,9 @@ class AgentReadWriteActor(agent: AgentApi,
             buffered match{
               case Right(msg) =>
                 logStatusMsgForRpc(msg, "(Replaying)")
-                getRpcFor(msg, buf) match{
-                  case None => None
-                  case Some(rpc) => sendRpc(newBuffer, retryCount, rpc)
-                }
+                val rpc = getRpcFor(msg, buf).getOrElse(Rpc.Complete())
+                if (sendRpc(rpc)) None
+                else Some(restart(newBuffer, retryCount))
               case Left(startFile) =>
                 logger.filesAndBytes(1, 0)
                 None
@@ -227,12 +227,12 @@ class AgentReadWriteActor(agent: AgentApi,
     }, "DevboxAgentOutputThread").start()
   }
 
-  def sendRpc(buffer: Vector[Buffered], retryCount: Int, msg: Rpc): Option[State] = {
+  def sendRpc(msg: Rpc): Boolean = {
     try {
       client.writeMsg(msg)
-      None
-    } catch{ case e: java.io.IOException =>
-      Some(restart(buffer, retryCount))
+      true
+    }catch{case e: java.io.IOException =>
+      false
     }
   }
 
