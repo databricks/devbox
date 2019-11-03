@@ -2,12 +2,12 @@ package devbox.syncer
 
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.{ActorContext, PathMap, PathSet, Sig, StateMachineActor, Util}
+import devbox.common.{Actor, ActorContext, PathMap, PathSet, Sig, StateMachineActor, Util}
 import devbox.logger.SyncLogger
 
 import scala.concurrent.{ExecutionContext, Future}
 
-class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
+class SigActor(syncActor: Actor[SyncActor.Msg],
                signatureTransformer: (os.SubPath, Sig) => Sig)
               (implicit ac: ActorContext,
                logger: SyncLogger) extends StateMachineActor[SigActor.Msg]{
@@ -21,18 +21,18 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
 
   case class Idle() extends State({
     case SigActor.RemotePath(base, sub, sig) =>
-      sendToSyncActor(SyncActor.RemoteScanned(base, sub, sig))
+      syncActor.send(SyncActor.RemoteScanned(base, sub, sig))
       Idle()
     case SigActor.SinglePath(base, sub) => compute(Map(base -> PathSet(sub.segments)))
     case SigActor.ManyPaths(grouped) => compute(grouped)
     case SigActor.InitialScansComplete() =>
-      sendToSyncActor(SyncActor.InitialScansComplete())
+      syncActor.send(SyncActor.InitialScansComplete())
       Idle()
   })
 
   case class Busy(buffered: Map[os.Path, PathSet]) extends State({
     case SigActor.RemotePath(base, sub, sig) =>
-      sendToSyncActor(SyncActor.RemoteScanned(base, sub, sig))
+      syncActor.send(SyncActor.RemoteScanned(base, sub, sig))
       Busy(buffered)
 
     case SigActor.SinglePath(base, sub) =>
@@ -46,7 +46,7 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
       else Idle()
 
     case SigActor.InitialScansComplete() =>
-      sendToSyncActor(SyncActor.InitialScansComplete())
+      syncActor.send(SyncActor.InitialScansComplete())
       Busy(buffered)
   })
 
@@ -55,16 +55,19 @@ class SigActor(sendToSyncActor: SyncActor.Msg => Unit,
       for((k, vs) <- groups)
       yield SigActor.computeSignatures(vs, k, signatureTransformer, buffers).map((k, _))
 
-    Future.sequence(computeFutures).foreach{ results =>
-      sendToSyncActor(
+    val combined = Future.sequence(computeFutures)
+    ac.pipeTo(combined.map(_ => SigActor.ComputeComplete()), this)
+    ac.pipeTo(
+      combined.map(results =>
         SyncActor.Events(
           results
             .map{case (k, vs) => (k, PathMap.from(vs.map{case (k, v) => (k.segments, v)}))}
             .toMap
         )
-      )
-      this.send(SigActor.ComputeComplete())
-    }
+      ),
+      syncActor
+    )
+
     Busy(Map())
   }
 }

@@ -22,17 +22,17 @@ class Syncer(agent: AgentApi,
   )
 
   val syncActor = new SyncActor(
-    agentActor.send,
+    agentActor,
     mapping
   )
 
   val sigActor = new SigActor(
-    syncActor.send,
+    syncActor,
     signatureTransformer
   )
 
   val skipActor = new SkipScanActor(
-    sigActor.send,
+    sigActor,
     mapping,
     ignoreStrategy
   )

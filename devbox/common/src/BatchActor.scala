@@ -40,6 +40,13 @@ trait ActorContext extends ExecutionContext {
       }
     })
   }
+
+  def pipeTo[T](f: scala.concurrent.Future[T], dest: Actor[T]) = {
+    f.onComplete{
+      case scala.util.Success(v) => dest.send(v)
+      case scala.util.Failure(e) => reportFailure(e)
+    }(this)
+  }
 }
 
 object ActorContext{

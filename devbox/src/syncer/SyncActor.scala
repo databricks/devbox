@@ -12,7 +12,7 @@ object SyncActor{
   case class InitialScansComplete() extends Msg
   case class Done() extends Msg
 }
-class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
+class SyncActor(agentActor: Actor[AgentReadWriteActor.Msg],
                 mapping: Seq[(os.Path, os.RelPath)])
                (implicit ac: ActorContext,
                 logger: SyncLogger)
@@ -77,20 +77,18 @@ class SyncActor(sendAgentMsg: AgentReadWriteActor.Msg => Unit,
   def executeSync(paths: Map[os.Path, PathMap[Option[Sig]]], vfsArr: Seq[Vfs[Sig]]) = {
     if (paths.map(_._2.size).sum == 0) Idle(vfsArr)
     else {
-      Future {
+      val async = Future {
         SyncFiles.executeSync(
           mapping,
           paths,
           vfsArr,
           logger,
-          m => sendAgentMsg(AgentReadWriteActor.Send(m)),
-          () => sendAgentMsg(AgentReadWriteActor.StartFile())
+          m => agentActor.send(AgentReadWriteActor.Send(m)),
+          () => agentActor.send(AgentReadWriteActor.StartFile())
         )
-
-      }.foreach{_ =>
-        sendAgentMsg(AgentReadWriteActor.Send(SyncFiles.Complete()))
-        this.send(SyncActor.Done())
       }
+      ac.pipeTo(async.map(_ => AgentReadWriteActor.Send(SyncFiles.Complete())), agentActor)
+      ac.pipeTo(async.map(_ => SyncActor.Done()), this)
 
       Busy(Map.empty, vfsArr)
     }
