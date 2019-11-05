@@ -88,12 +88,12 @@ object DevboxTestMain {
           val commits = remaining.map(_.toInt)
 
           if (config.label == "manual"){
-            implicit val ac = new ActorContext.Test(ExecutionContext.global, _.printStackTrace())
+            implicit val ac = new cask.actor.Context.Test(ExecutionContext.global, _.printStackTrace())
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
             implicit lazy val logger: devbox.logger.SyncLogger.Impl = new devbox.logger.SyncLogger.Impl(
               n => os.pwd / "out" / "scratch" / config.label / s"log$n.txt",
               5 * 1024 * 1024,
-              new ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
+              new cask.actor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
             )
             lazy val syncer = instantiateSyncer(
               src, dest,

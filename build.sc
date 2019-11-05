@@ -20,6 +20,7 @@ object devbox extends DevboxModule{
       ivy"com.lihaoyi::os-lib:0.4.2",
       ivy"com.lihaoyi::os-lib-watch:0.4.2",
       ivy"com.lihaoyi::upickle:0.8.0",
+      ivy"com.lihaoyi::cask-actor:0.3.5",
       ivy"com.google.re2j:re2j:1.2",
       ivy"com.lihaoyi::pprint:0.5.6",
       ivy"com.github.scopt::scopt:3.7.1",

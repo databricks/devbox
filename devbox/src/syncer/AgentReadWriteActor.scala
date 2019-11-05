@@ -6,6 +6,7 @@ import java.time.Duration
 import devbox.common._
 import devbox.logger.SyncLogger
 
+import cask.actor
 
 object AgentReadWriteActor{
   sealed trait Msg
@@ -19,13 +20,13 @@ object AgentReadWriteActor{
 }
 class AgentReadWriteActor(agent: AgentApi,
                           onResponse: Response => Unit)
-                         (implicit ac: ActorContext,
+                         (implicit ac: actor.Context,
                           logger: SyncLogger)
-  extends StateMachineActor[AgentReadWriteActor.Msg](){
+  extends actor.StateMachineActor[AgentReadWriteActor.Msg](){
 
   def initialState = Active(collection.immutable.Queue())
 
-  type Buffered = Either[AgentReadWriteActor.StartFile, SyncFiles.Msg]
+  type Buffered = Either[AgentReadWriteActor.StartFile, (SyncFiles.Msg, cask.actor.Context.Token)]
   val byteArr = new Array[Byte](Util.blockSize)
   val buf = ByteBuffer.wrap(byteArr)
 
@@ -41,8 +42,9 @@ class AgentReadWriteActor(agent: AgentApi,
           getRpcFor(r, buf) match{
             case None => Active(buffer)
             case Some(rpc) =>
-              val newBuffer = buffer.appended(Right(r))
-              ac.reportSchedule()
+
+              val newBuffer = buffer.appended(Right(r -> ac.reportSchedule()))
+
               if (sendRpc(rpc)) Active(newBuffer)
               else restart(newBuffer, 0)
           }
@@ -58,15 +60,15 @@ class AgentReadWriteActor(agent: AgentApi,
       onResponse(data)
       if (!data.isInstanceOf[Response.Ack]) Active(buffer)
       else {
-        ac.reportComplete()
+
 
         // Drop all the StartFile nodes from the buffer; since we've gotten a
         // response, from a later Msg, we are guaranteed to not need to replay
         // them, and they do not require any logging to be done since they are
         // logged on receive.
         val filtered1 = buffer.dropWhile(_.isLeft)
-        val (Right(msg), filtered2) = filtered1.dequeue
-
+        val (Right((msg, token)), filtered2) = filtered1.dequeue
+        ac.reportComplete(token)
         if (filtered2.isEmpty) logger.done()
 
         Active(filtered2)
@@ -82,8 +84,8 @@ class AgentReadWriteActor(agent: AgentApi,
       RestartSleeping(buffer.appended(Left(AgentReadWriteActor.StartFile())), retryCount)
 
     case AgentReadWriteActor.Send(msg) =>
-      ac.reportSchedule()
-      RestartSleeping(buffer.appended(Right(msg)), retryCount)
+
+      RestartSleeping(buffer.appended(Right(msg -> ac.reportSchedule())), retryCount)
 
     case AgentReadWriteActor.ReadFailed() => RestartSleeping(buffer, retryCount)
 
@@ -100,8 +102,8 @@ class AgentReadWriteActor(agent: AgentApi,
       if (!started) restart(buffer, retryCount)
       else {
         spawnReaderThread()
-        ac.reportSchedule()
-        var remaining = buffer.appended(Right(SyncFiles.Complete()))
+
+        var remaining = buffer.appended(Right(SyncFiles.Complete() -> ac.reportSchedule()))
         var processed = collection.immutable.Queue.empty[Buffered]
         var failState = Option.empty[State]
         while(remaining.nonEmpty && failState.isEmpty){
@@ -109,7 +111,7 @@ class AgentReadWriteActor(agent: AgentApi,
           remaining = newCurrent
           failState = failState.orElse{
             buffered match{
-              case Right(msg) =>
+              case Right((msg, token)) =>
                 logStatusMsgForRpc(msg, "(Replaying)")
                 getRpcFor(msg, buf) match{
                   case None => None
@@ -144,8 +146,8 @@ class AgentReadWriteActor(agent: AgentApi,
         "Unable to connect to devbox, gave up after 5 attempts;",
         "click on this logo to try again"
       )
-      ac.reportSchedule()
-      GivenUp(buffer :+ Right(msg))
+
+      GivenUp(buffer :+ Right(msg -> ac.reportSchedule()))
 
     case AgentReadWriteActor.ForceRestart() =>
       logger.info("Syncing Restarted", "")

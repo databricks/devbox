@@ -2,15 +2,16 @@ package devbox.syncer
 
 import java.util.concurrent.LinkedBlockingQueue
 
-import devbox.common.{Actor, ActorContext, PathMap, PathSet, Sig, StateMachineActor, Util}
+import devbox.common.{PathMap, PathSet, Sig, Util}
+import cask.actor
 import devbox.logger.SyncLogger
 
 import scala.concurrent.{ExecutionContext, Future}
 
-class SigActor(syncActor: Actor[SyncActor.Msg],
+class SigActor(syncActor: actor.Actor[SyncActor.Msg],
                signatureTransformer: (os.SubPath, Sig) => Sig)
-              (implicit ac: ActorContext,
-               logger: SyncLogger) extends StateMachineActor[SigActor.Msg]{
+              (implicit ac: actor.Context,
+               logger: SyncLogger) extends actor.StateMachineActor[SigActor.Msg]{
   def initialState: State = Idle()
 
   val buffers = {
@@ -56,16 +57,15 @@ class SigActor(syncActor: Actor[SyncActor.Msg],
       yield SigActor.computeSignatures(vs, k, signatureTransformer, buffers).map((k, _))
 
     val combined = Future.sequence(computeFutures)
-    ac.pipeTo(combined.map(_ => SigActor.ComputeComplete()), this)
-    ac.pipeTo(
+    this.sendAsync(combined.map(_ => SigActor.ComputeComplete()))
+    syncActor.sendAsync(
       combined.map(results =>
         SyncActor.Events(
           results
             .map{case (k, vs) => (k, PathMap.from(vs.map{case (k, v) => (k.segments, v)}))}
             .toMap
         )
-      ),
-      syncActor
+      )
     )
 
     Busy(Map())

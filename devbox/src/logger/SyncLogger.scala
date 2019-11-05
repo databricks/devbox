@@ -1,8 +1,8 @@
 package devbox.logger
 
 import java.awt.event.{MouseEvent, MouseListener}
-
-import devbox.common.{Actor, ActorContext, BaseLogger, Logger, PathSet, SimpleActor, Util}
+import cask.actor
+import devbox.common.{BaseLogger, Logger, PathSet, Util}
 trait SyncLogger{
   def init(): Unit
   def close(): Unit
@@ -33,8 +33,8 @@ object SyncLogger{
 
   class Impl(val dest: String => os.Path,
              val rotationSize: Long,
-             onClick: => Actor[Unit])
-            (implicit ac: ActorContext) extends SimpleActor[Msg] with SyncLogger {
+             onClick: => actor.Actor[Unit])
+            (implicit ac: actor.Context) extends actor.SimpleActor[Msg] with SyncLogger {
 
     def init() = this.send(Init())
 

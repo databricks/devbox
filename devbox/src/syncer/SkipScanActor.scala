@@ -5,6 +5,7 @@ import devbox.common
 import devbox.logger.SyncLogger
 
 import scala.concurrent.Future
+import cask.actor
 object SkipScanActor{
   sealed trait Msg
   case class Paths(values: PathSet) extends Msg
@@ -14,11 +15,11 @@ object SkipScanActor{
   case class Receive(value: devbox.common.Response) extends Msg
   case class Done() extends Msg
 }
-class SkipScanActor(sigActor: Actor[SigActor.Msg],
+class SkipScanActor(sigActor: actor.Actor[SigActor.Msg],
                     mapping: Seq[(os.Path, os.RelPath)],
                     ignoreStrategy: String)
-                   (implicit ac: ActorContext,
-                    logger: SyncLogger) extends StateMachineActor[SkipScanActor.Msg]{
+                   (implicit ac: actor.Context,
+                    logger: SyncLogger) extends actor.StateMachineActor[SkipScanActor.Msg]{
 
   def initialState = Scanning(
     new PathSet(),
@@ -32,14 +33,13 @@ class SkipScanActor(sigActor: Actor[SigActor.Msg],
                       skippers: Seq[Skipper],
                       scansComplete: Int) extends State({
     case SkipScanActor.StartScan() =>
-      ac.pipeTo(
+      this.sendAsync(
         Future{
           common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
             (base, sub, attrs) => this.send(SkipScanActor.LocalScanned(base, sub))
           }
           SkipScanActor.ScanComplete()
-        },
-        this
+        }
       )
 
       Scanning(buffered, initialScanned, skippers, scansComplete)
@@ -121,8 +121,8 @@ class SkipScanActor(sigActor: Actor[SigActor.Msg],
         yield (src, skipper.batchRemoveSkippedPaths(src, paths))
 
       }
-      ac.pipeTo(future.map(processedGroups => SigActor.ManyPaths(processedGroups.toMap)), sigActor)
-      ac.pipeTo(future.map(_ => SkipScanActor.Done()), this)
+      sigActor.sendAsync(future.map(processedGroups => SigActor.ManyPaths(processedGroups.toMap)))
+      this.sendAsync(future.map(_ => SkipScanActor.Done()))
 
       Busy(new PathSet(), skippers)
     }

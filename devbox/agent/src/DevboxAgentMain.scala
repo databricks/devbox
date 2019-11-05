@@ -62,7 +62,7 @@ object DevboxAgentMain {
 
       case Right((config, remaining)) =>
         os.makeDir.all(os.home / ".devbox")
-        implicit val ac = new common.ActorContext.Simple(
+        implicit val ac = new cask.actor.Context.Simple(
           ExecutionContext.Implicits.global,
           _.printStackTrace()
         )

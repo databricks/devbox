@@ -2,7 +2,7 @@ package devbox.logger
 
 import java.time.Duration
 
-import devbox.common.{ActorContext, PathSet, StateMachineActor, Util}
+import cask.actor
 object StatusActor{
   sealed trait Msg
   case class SetIcon(iconName: String, msg: Seq[String]) extends Msg
@@ -11,7 +11,8 @@ object StatusActor{
 
 class StatusActor(setImage: String => Unit,
                   setTooltip: String => Unit)
-                 (implicit ac: ActorContext) extends StateMachineActor[StatusActor.Msg]{
+                 (implicit ac: actor.Context)
+extends actor.StateMachineActor[StatusActor.Msg]{
 
   def initialState = StatusState(
     StatusActor.SetIcon("blue-tick", Seq("Devbox initializing")),
