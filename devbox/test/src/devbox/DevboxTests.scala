@@ -1,7 +1,6 @@
 package devbox
 
 import java.util.concurrent.Executors
-import cask.actor
 import devbox.common._
 import logger.SyncLogger
 import org.eclipse.jgit.api.Git
@@ -120,7 +119,7 @@ object DevboxTests extends TestSuite{
     val logFileBase = log / os.up
 
     def createSyncer() = {
-      implicit val ac = new cask.actor.Context.Test(
+      implicit val ac = new castor.Context.Test(
         if (parallel) ExecutionContext.global
         else ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
         _.printStackTrace()
@@ -128,7 +127,7 @@ object DevboxTests extends TestSuite{
       implicit lazy val logger: SyncLogger.Impl = new SyncLogger.Impl(
         n => logFileBase / s"$logFileName$n.$logFileExt",
         5 * 1024 * 1024,
-        new actor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
+        new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
       )
 
       lazy val syncer = instantiateSyncer(
@@ -265,7 +264,7 @@ object DevboxTests extends TestSuite{
                         signatureMapping: (os.SubPath, Sig) => Sig,
                         healthCheckInterval: Int = 0,
                         randomKill: Option[Int] = None)
-                       (implicit ac: actor.Context,
+                       (implicit ac: castor.Context,
                         logger: SyncLogger) = {
 
     val syncer = new Syncer(

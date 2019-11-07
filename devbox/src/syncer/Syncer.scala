@@ -14,7 +14,7 @@ class Syncer(agent: AgentApi,
              ignoreStrategy: String = "dotgit",
              debounceMillis: Int,
              signatureTransformer: (os.SubPath, Sig) => Sig)
-            (implicit ac: cask.actor.Context, logger: SyncLogger) extends AutoCloseable{
+            (implicit ac: castor.Context, logger: SyncLogger) extends AutoCloseable{
 
   val agentActor: AgentReadWriteActor = new AgentReadWriteActor(
     agent,

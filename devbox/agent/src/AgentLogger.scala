@@ -1,11 +1,10 @@
 package devbox.agent
 
 import devbox.common.{BaseLogger, Logger}
-import cask.actor
 
 class AgentLogger(val dest: String => os.Path, val rotationSize: Long)
-                 (implicit ac: actor.Context) 
-extends actor.SimpleActor[Logger.PPrinted] with BaseLogger{
+                 (implicit ac: castor.Context)
+extends castor.SimpleActor[Logger.PPrinted] with BaseLogger{
 
   def apply(tag: String, x: Any = Logger.NoOp): Unit = this.send(Logger.PPrinted(tag, x))
 

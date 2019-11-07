@@ -6,8 +6,6 @@ import java.time.Duration
 import devbox.common._
 import devbox.logger.SyncLogger
 
-import cask.actor
-
 object AgentReadWriteActor{
   sealed trait Msg
   case class Send(value: SyncFiles.Msg) extends Msg
@@ -20,13 +18,13 @@ object AgentReadWriteActor{
 }
 class AgentReadWriteActor(agent: AgentApi,
                           onResponse: Response => Unit)
-                         (implicit ac: actor.Context,
+                         (implicit ac: castor.Context,
                           logger: SyncLogger)
-  extends actor.StateMachineActor[AgentReadWriteActor.Msg](){
+  extends castor.StateMachineActor[AgentReadWriteActor.Msg](){
 
   def initialState = Active(collection.immutable.Queue())
 
-  type Buffered = Either[AgentReadWriteActor.StartFile, (SyncFiles.Msg, cask.actor.Context.Token)]
+  type Buffered = Either[AgentReadWriteActor.StartFile, (SyncFiles.Msg, castor.Context.Token)]
   val byteArr = new Array[Byte](Util.blockSize)
   val buf = ByteBuffer.wrap(byteArr)
 

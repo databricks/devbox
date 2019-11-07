@@ -3,15 +3,14 @@ package devbox.syncer
 import java.util.concurrent.LinkedBlockingQueue
 
 import devbox.common.{PathMap, PathSet, Sig, Util}
-import cask.actor
 import devbox.logger.SyncLogger
 
 import scala.concurrent.{ExecutionContext, Future}
 
-class SigActor(syncActor: actor.Actor[SyncActor.Msg],
+class SigActor(syncActor: castor.Actor[SyncActor.Msg],
                signatureTransformer: (os.SubPath, Sig) => Sig)
-              (implicit ac: actor.Context,
-               logger: SyncLogger) extends actor.StateMachineActor[SigActor.Msg]{
+              (implicit ac: castor.Context,
+               logger: SyncLogger) extends castor.StateMachineActor[SigActor.Msg]{
   def initialState: State = Idle()
 
   val buffers = {

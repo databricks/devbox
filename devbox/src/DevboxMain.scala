@@ -70,7 +70,7 @@ object DevboxMain {
           System.out.println(Cli.formatBlock(signature, leftMargin).mkString("\n"))
         }else {
 
-          implicit val ac = new cask.actor.Context.Test(ExecutionContext.global, _.printStackTrace())
+          implicit val ac = new castor.Context.Test(ExecutionContext.global, _.printStackTrace())
           val (prep, connect) = remaining.splitAt(remaining.indexOf("--"))
           val logFile = config.logFile.getOrElse(throw new Exception("config.logFile is None"))
           val s"$logFileName.$logFileExt" = logFile.last
@@ -79,7 +79,7 @@ object DevboxMain {
           implicit lazy val logger: devbox.logger.SyncLogger = new devbox.logger.SyncLogger.Impl(
             n => logFileBase / s"$logFileName$n.$logFileExt",
             50 * 1024 * 1024,
-            new cask.actor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
+            new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
           )
           lazy val syncer = new Syncer(
             new ReliableAgent(prep, connect.drop(1) /* drop the -- */, os.pwd),

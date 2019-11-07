@@ -1,12 +1,11 @@
 package devbox.logger
 
 import devbox.common.{BaseLogger, Logger}
-import cask.actor
 
 class ConsoleLogger(val dest: String => os.Path,
                     val rotationSize: Long)
-                   (implicit ac: actor.Context)
-extends actor.SimpleActor[Logger.Msg] with BaseLogger{
+                   (implicit ac: castor.Context)
+extends castor.SimpleActor[Logger.Msg] with BaseLogger{
   var lastProgressTimestamp = 0L
 
   def run(msg: Logger.Msg): Unit = msg match {

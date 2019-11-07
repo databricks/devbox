@@ -4,7 +4,6 @@ import devbox.common._
 import devbox.logger.SyncLogger
 
 import scala.concurrent.Future
-import cask.actor
 object SyncActor{
   sealed trait Msg
   case class Events(paths: Map[os.Path, PathMap[Option[Sig]]]) extends Msg
@@ -12,11 +11,11 @@ object SyncActor{
   case class InitialScansComplete() extends Msg
   case class Done() extends Msg
 }
-class SyncActor(agentActor: actor.Actor[AgentReadWriteActor.Msg],
+class SyncActor(agentActor: castor.Actor[AgentReadWriteActor.Msg],
                 mapping: Seq[(os.Path, os.RelPath)])
-               (implicit ac: actor.Context,
+               (implicit ac: castor.Context,
                 logger: SyncLogger)
-  extends actor.StateMachineActor[SyncActor.Msg]() {
+  extends castor.StateMachineActor[SyncActor.Msg]() {
 
   def initialState = RemoteScanning(
     Map(),

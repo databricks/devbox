@@ -5,7 +5,6 @@ import devbox.common
 import devbox.logger.SyncLogger
 
 import scala.concurrent.Future
-import cask.actor
 object SkipScanActor{
   sealed trait Msg
   case class Paths(values: PathSet) extends Msg
@@ -15,11 +14,11 @@ object SkipScanActor{
   case class Receive(value: devbox.common.Response) extends Msg
   case class Done() extends Msg
 }
-class SkipScanActor(sigActor: actor.Actor[SigActor.Msg],
+class SkipScanActor(sigActor: castor.Actor[SigActor.Msg],
                     mapping: Seq[(os.Path, os.RelPath)],
                     ignoreStrategy: String)
-                   (implicit ac: actor.Context,
-                    logger: SyncLogger) extends actor.StateMachineActor[SkipScanActor.Msg]{
+                   (implicit ac: castor.Context,
+                    logger: SyncLogger) extends castor.StateMachineActor[SkipScanActor.Msg]{
 
   def initialState = Scanning(
     new PathSet(),
