@@ -190,9 +190,10 @@ class AgentReadWriteActor(agent: AgentApi,
 
 
         try {
+          val offset = chunkIndex.toLong * Util.blockSize
           Util.autoclose(os.read.channel(src / subPath)) { channel =>
             buf.rewind()
-            channel.position(chunkIndex * Util.blockSize)
+            channel.position(offset)
             var n = 0
             while ( {
               if (n == Util.blockSize) false
@@ -207,7 +208,7 @@ class AgentReadWriteActor(agent: AgentApi,
             val msg = Rpc.WriteChunk(
               dest,
               subPath,
-              chunkIndex * Util.blockSize,
+              offset,
               new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
             )
             logger.filesAndBytes(0, n)
