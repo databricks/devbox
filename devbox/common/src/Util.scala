@@ -88,4 +88,8 @@ object Util {
       }
       .toMap
   }
+  def sentryCapture(e: Throwable): Unit = {
+    io.sentry.Sentry.getContext().addTag("whoami", System.getProperty("user.name"))
+    io.sentry.Sentry.capture(e)
+  }
 }

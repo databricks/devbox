@@ -22,6 +22,7 @@ object DevboxAgentMain {
                     randomKill: Option[Int] = None)
 
   def main(args: Array[String]): Unit = {
+
     val signature = Seq(
       Arg[Config, Unit](
         "help", None,
@@ -64,7 +65,10 @@ object DevboxAgentMain {
         os.makeDir.all(os.home / ".devbox")
         implicit val ac = new castor.Context.Simple(
           ExecutionContext.Implicits.global,
-          _.printStackTrace()
+          e => {
+            e.printStackTrace()
+            Util.sentryCapture(e)
+          }
         )
         val logger = new AgentLogger(
           n => {
@@ -178,6 +182,7 @@ object DevboxAgentMain {
         case e: Throwable if !exitOnError =>
           import java.io.PrintWriter
           import java.io.StringWriter
+          Util.sentryCapture(e)
           val sw = new StringWriter()
           val pw = new PrintWriter(sw)
           e.printStackTrace(pw)
@@ -186,6 +191,7 @@ object DevboxAgentMain {
       }
     }
   }
+
   def withWritable[T](p: os.Path)(t: => T) = {
     val perms = os.perms(p)
     if (perms.contains(PosixFilePermission.OWNER_WRITE)) {

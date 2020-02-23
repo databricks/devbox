@@ -19,8 +19,7 @@ object DevboxMain {
                     healthCheckInterval: Int = 0,
                     retryInterval: Int = 0)
 
-  def main(args: Array[String]): Unit = {
-
+  def main(args: Array[String]): Unit = try {
     val signature = Seq(
       Arg[Config, String](
         "repo", None,
@@ -70,7 +69,13 @@ object DevboxMain {
           System.out.println(Cli.formatBlock(signature, leftMargin).mkString("\n"))
         }else {
 
-          implicit val ac = new castor.Context.Test(ExecutionContext.global, _.printStackTrace())
+          implicit val ac = new castor.Context.Test(
+            ExecutionContext.global,
+            e => {
+              e.printStackTrace()
+              Util.sentryCapture(e)
+            }
+          )
           val (prep, connect) = remaining.splitAt(remaining.indexOf("--"))
           val logFile = config.logFile.getOrElse(throw new Exception("config.logFile is None"))
           val s"$logFileName.$logFileExt" = logFile.last
@@ -120,5 +125,11 @@ object DevboxMain {
         System.exit(0)
     }
 
+  }catch{case e: Throwable =>
+    Util.sentryCapture(e)
+    // Give Sentry Client a few moments to upload stuff before we exit the program
+    // This is best effort: if it doesn't manage to upload in time, so be it.
+    Thread.sleep(100)
+    throw e
   }
 }
