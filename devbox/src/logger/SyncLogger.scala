@@ -67,7 +67,7 @@ object SyncLogger{
     val consoleLogger = new ConsoleLogger(dest, rotationSize)
     val statusActor = new StatusActor(
       imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
-      tooltip => IconHandler.icon.setToolTip(tooltip)
+      tooltip => IconHandler.icon.setToolTip(fansi.Str(tooltip).plainText)
     )
 
     def run(msg: Msg) = if (!closed) msg match{

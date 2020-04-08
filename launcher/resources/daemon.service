@@ -1,0 +1,13 @@
+
+[Unit]
+Description=Devbox background daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=$PYTHON_EXECUTABLE -u /home/$DEVBOX_USER/.devbox/daemon.py $DEVBOX_USER
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+import subprocess, sys, os
+import hashlib, urllib2
+devbox_version = "0.1.0"
+sha1_hash = "312c0fea259f9d3f0205e7c3716fabe761dcfc5d"
+
+download_path = os.path.expanduser("~") + "/.devbox/download/" + devbox_version
+
+if not os.path.exists(download_path):
+    url = "https://github.com/databricks/devbox/releases/download/" + devbox_version + "/devbox.jar"
+    print "Downloading Devbox " + devbox_version + " from " + url
+    response = urllib2.urlopen(url)
+    downloaded_data = response.read()
+
+    downloaded_sha1_hash = hashlib.sha1(downloaded_data).hexdigest()
+
+    assert downloaded_sha1_hash == sha1_hash, \
+        "Hash mismatch:\nExpected: " + sha1_hash + "\nDownloaded: " + downloaded_sha1_hash
+
+    os.makedirs(download_path)
+    with open(download_path + "/devbox.jar", "w") as f:
+        f.write(downloaded_data)
+
+
+# I've tested it to run fine on 256mb of heap, even under quite heavy
+# usage like syncing universe over and over, but let's give it 512mb
+# just to be safe
+try:
+    cmd = [
+        "java", "-Xmx512m",
+        "-XX:+HeapDumpOnOutOfMemoryError",
+        "-cp", download_path + "/devbox.jar",
+        "launcher.Main",
+        "--log-file", os.path.expanduser("~") + "/.devbox/log.txt",
+        "--ignore-strategy", "gitignore",
+        "--init-command", "apt-get update && apt-get install -y default-jdk",
+        "--aws-ebs-volume-type", "gp2",
+        "--aws-ebs-volume-size", "500",
+        "--url", "devbox.databricks.com"
+    ] + sys.argv[1:]
+    subprocess.check_call(cmd)
+except KeyboardInterrupt:
+     pass

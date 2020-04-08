@@ -269,7 +269,7 @@ object DevboxTests extends TestSuite{
 
     val syncer = new Syncer(
       new ReliableAgent(
-        Nil,
+        log => /*do nothing*/true,
         Seq(
           System.getenv("AGENT_EXECUTABLE"),
           "--ignore-strategy", ignoreStrategy,

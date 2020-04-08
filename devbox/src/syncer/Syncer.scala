@@ -15,7 +15,7 @@ class Syncer(agent: AgentApi,
              debounceMillis: Int,
              signatureTransformer: (os.SubPath, Sig) => Sig)
             (implicit ac: castor.Context, logger: SyncLogger) extends AutoCloseable{
-
+  println(s"Syncing ${mapping.map{case (from, to) => s"$from:$to"}.mkString(", ")}")
   val agentActor: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
     x => skipActor.send(SkipScanActor.Receive(x)),
@@ -47,7 +47,7 @@ class Syncer(agent: AgentApi,
 
   def start() = {
     logger.init()
-    agent.start(s => logger.info(s"Initializing Devbox\n$s"))
+    agent.start(s => logger.info(fansi.Color.Blue("Initializing Devbox: ") + s))
     agentActor.spawnReaderThread()
 
     agentActor.send(

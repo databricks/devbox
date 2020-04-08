@@ -61,4 +61,51 @@ object Cli{
     }
     rec(flatArgs, initial)
   }
+  def groupArgs2[T, V](flatArgs: List[String],
+                       args1: Seq[Arg[T, _]],
+                       initial1: T,
+                       args2: Seq[Arg[V, _]],
+                       initial2: V): Either[String, (T, V, List[String])] = {
+
+    val argsMap1: Map[String, Arg[T, _]] = args1
+      .flatMap{x => Seq(x.name -> x) ++ x.shortName.map(_.toString -> x)}
+      .toMap
+
+    val argsMap2: Map[String, Arg[V, _]] = args2
+      .flatMap{x => Seq(x.name -> x) ++ x.shortName.map(_.toString -> x)}
+      .toMap
+
+    @tailrec def rec(keywordTokens: List[String],
+                     current1: T, current2: V): Either[String, (T, V, List[String])] = {
+      keywordTokens match{
+        case head :: rest if head(0) == '-' =>
+          val realName = if(head(1) == '-') head.drop(2) else head.drop(1)
+
+          (argsMap1.get(realName), argsMap2.get(realName)) match {
+            case (Some(cliArg), None) =>
+              if (cliArg.reader == scopt.Read.unitRead) {
+                rec(rest, cliArg.runAction(current1, ""), current2)
+              } else rest match{
+                case next :: rest2 => rec(rest2, cliArg.runAction(current1, next), current2)
+                case Nil => Left(s"Expected a value after argument $head")
+              }
+            case (None, Some(cliArg)) =>
+              if (cliArg.reader == scopt.Read.unitRead) {
+                rec(rest, current1, cliArg.runAction(current2, ""))
+              } else rest match{
+                case next :: rest2 => rec(rest2, current1, cliArg.runAction(current2, next))
+                case Nil => Left(s"Expected a value after argument $head")
+              }
+
+            case (None, None) => Right((current1, current2, keywordTokens))
+            case (Some(a1), Some(a2)) =>
+              throw new Exception("Ambiguous argument: " + realName)
+          }
+
+        case _ => Right((current1, current2, keywordTokens))
+
+      }
+    }
+    rec(flatArgs, initial1, initial2)
+  }
 }

@@ -10,6 +10,18 @@ trait DevboxModule extends ScalaModule{
   )
   def scalacPluginIvyDeps = Agg(ivy"com.lihaoyi::acyclic:0.2.0")
 }
+object launcher extends DevboxModule{
+  def moduleDeps = Seq(devbox)
+  def ivyDeps = Agg(
+    ivy"software.amazon.awssdk:ec2:2.7.11",
+    ivy"software.amazon.awssdk:bom:2.7.11",
+    ivy"com.lihaoyi::os-lib:0.4.2",
+  )
+  def resources = T.sources{
+    os.copy(devbox.agent.assembly().path, T.dest / "agent.jar")
+    super.resources() ++ Seq(PathRef(T.dest))
+  }
+}
 object devbox extends DevboxModule{
 
   def moduleDeps = Seq(common)
@@ -27,7 +39,7 @@ object devbox extends DevboxModule{
       ivy"net.java.dev.jna:jna:5.0.0",
       ivy"org.slf4j:slf4j-simple:1.7.25",
       ivy"org.eclipse.jgit:org.eclipse.jgit:5.5.1.201910021850-r",
-      ivy"io.sentry:sentry:1.6.3"
+      ivy"io.sentry:sentry:1.6.3",
     )
   }
 
