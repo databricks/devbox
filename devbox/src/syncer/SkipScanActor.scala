@@ -16,14 +16,14 @@ object SkipScanActor{
 }
 class SkipScanActor(sigActor: castor.Actor[SigActor.Msg],
                     mapping: Seq[(os.Path, os.RelPath)],
-                    ignoreStrategy: String)
+                    skippers: Seq[Skipper])
                    (implicit ac: castor.Context,
                     logger: SyncLogger) extends castor.StateMachineActor[SkipScanActor.Msg]{
 
   def initialState = Scanning(
     new PathSet(),
     new PathSet(),
-    mapping.map(_ => Skipper.fromString(ignoreStrategy)),
+    skippers,
     0
   )
 

@@ -271,7 +271,8 @@ object DevboxTests extends TestSuite{
       new ReliableAgent(
         log => /*do nothing*/true,
         Seq(
-          System.getenv("AGENT_EXECUTABLE"),
+          "java", "-cp",
+          System.getenv("AGENT_EXECUTABLE"), "devbox.agent.DevboxAgentMain",
           "--ignore-strategy", ignoreStrategy,
           "--working-dir", dest.toString,
           "--log-path", (dest / os.up / "agent-log.txt").toString(),
@@ -286,13 +287,14 @@ object DevboxTests extends TestSuite{
       Seq(src -> os.rel),
       ignoreStrategy,
       debounceMillis,
+      proxyGit = false,
       signatureMapping
     )
     syncer
   }
 
   def walkNonSkipped(base: os.Path, ignoreStrategy: String) = {
-    val skip = Skipper.fromString(ignoreStrategy)
+    val skip = Skipper.fromString(ignoreStrategy, new PathSet, proxyGit = false)
     val rawPaths = PathMap.from(
       os
         .walk

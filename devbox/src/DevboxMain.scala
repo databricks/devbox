@@ -1,13 +1,21 @@
 package devbox
-import java.io._
+
 import java.nio.file.attribute.PosixFilePermission
 
-import devbox.common._
-import devbox.common.Cli.{Arg, showArg}
-import Cli.pathScoptRead
-import syncer.{AgentReadWriteActor, ReliableAgent, Syncer}
-
 import scala.concurrent.ExecutionContext
+
+import cmdproxy.ProxyServer
+import devbox.common._
+import devbox.common.Cli.Arg
+import devbox.common.Cli.showArg
+import devbox.common.Cli.pathScoptRead
+import devbox.logger.FileLogger
+import devbox.syncer.AgentReadWriteActor
+import devbox.syncer.ReliableAgent
+import devbox.syncer.Syncer
+import os.Path
+
+
 object DevboxMain {
   case class Config(repos0: List[String] = Nil,
                     stride: Int = 1,
@@ -18,7 +26,8 @@ object DevboxMain {
                     readOnlyRemote: String = null,
                     healthCheckInterval: Int = 0,
                     retryInterval: Int = 0,
-                    noSync: Boolean = false)
+                    noSync: Boolean = false,
+                    proxyGit: Boolean = true)
 
   val signature = Seq(
     Arg[Config, String](
@@ -61,6 +70,12 @@ object DevboxMain {
       "Use to disable syncing entirely if you just want an instance",
       (c, v) => c.copy(noSync = true)
     ),
+    Arg[Config, Boolean](
+      "proxy-git-commands", None,
+      "Don't sync .git directories and proxy git commands back to the laptop",
+      (c, v) => c.copy(proxyGit = v)
+    ),
+
   )
 
   def main(args: Array[String]): Unit = try {
@@ -114,25 +129,29 @@ object DevboxMain {
     val s"$logFileName.$logFileExt" = logFile.last
     val logFileBase = logFile / os.up
 
+    val dirMapping = (config.repos0, config.noSync) match{
+      case (Nil, true) => Nil
+      case (Nil, false) => Seq((os.pwd, os.rel / os.pwd.last))
+      case (snippets, false) =>
+        for(s <- snippets)
+          yield s.split(':') match{
+            case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
+            case Array(src, dest) => (os.Path(src, os.pwd), os.rel / dest.split('/'))
+          }
+    }
+
     implicit lazy val logger: devbox.logger.SyncLogger = new devbox.logger.SyncLogger.Impl(
       n => logFileBase / s"$logFileName$n.$logFileExt",
       50 * 1024 * 1024,
       new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
     )
+
     lazy val syncer = new Syncer(
       new ReliableAgent(prepareWithlogs, connect, os.pwd),
-      (config.repos0, config.noSync) match{
-        case (Nil, true) => Nil
-        case (Nil, false) => Seq((os.pwd, os.rel / os.pwd.last))
-        case (snippets, false) =>
-          for(s <- snippets)
-            yield s.split(':') match{
-              case Array(src) => (os.Path(src, os.pwd), os.rel / os.Path(src, os.pwd).last)
-              case Array(src, dest) => (os.Path(src, os.pwd), os.rel / dest.split('/'))
-            }
-      },
+      dirMapping,
       config.ignoreStrategy,
       config.debounceMillis,
+      config.proxyGit,
       if (config.readOnlyRemote == null) (_, sig) => sig
       else {
         val (regexStr, negate) =
@@ -155,10 +174,29 @@ object DevboxMain {
         }
       }
     )
+
+    if (config.proxyGit)
+      spawnGitProxyServer(dirMapping)
+    else
+      logger.info("Not proxying Git commands back to laptop. Syncing .git may take a long time.")
+
     Util.autoclose(syncer){syncer =>
       syncer.start()
       Thread.sleep(Long.MaxValue)
     }
 
+  }
+
+  def spawnGitProxyServer(dirMapping:  Seq[(Path, os.rel.ThisType)])(implicit ac: castor.Context): Unit = {
+    implicit val logger = new FileLogger(
+      s => os.home / ".devbox" / s"cmdproxy$s.log",
+      1024 * 1024,
+    )
+
+    (new Thread("Git Proxy Thread") {
+      override def run(): Unit = {
+        (new ProxyServer(dirMapping).start())
+      }
+    }).start()
   }
 }

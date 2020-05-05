@@ -1,5 +1,6 @@
 package launcher
 
+import cmdproxy.ProxyServer
 import devbox.DevboxMain
 import devbox.common.Cli
 
@@ -23,37 +24,45 @@ object Main {
               .mkString("\n")
           )
         }
-        else devbox.DevboxMain.main0(
-          config,
-          log => ensureInstanceRunning.prepareInstanceCommand match {
-            case None =>
-              try {
-                ensureInstanceRunning.main0 (log)
-                true
-              } catch {
-                case e: Throwable =>
-                e.printStackTrace ()
-                false
-              }
-            case Some(cmd) =>
-              val prepResult = os.proc(cmd).call(
-                cwd = os.pwd,
-                stderr = os.Pipe,
-                mergeErrIntoOut = true,
-                stdout = os.ProcessOutput.Readlines(log),
-                check = false
-              )
+        else {
+          val portFwdArgs =
+            if (config.proxyGit)
+              Seq("-R", s"${ProxyServer.DEFAULT_PORT}:localhost:${ProxyServer.DEFAULT_PORT}")
+            else
+              Seq()
+          devbox.DevboxMain.main0(
+            config,
+            log => ensureInstanceRunning.prepareInstanceCommand match {
+              case None =>
+                try {
+                  ensureInstanceRunning.main0 (log)
+                  true
+                } catch {
+                  case e: Throwable =>
+                    e.printStackTrace ()
+                    false
+                }
+              case Some(cmd) =>
+                val prepResult = os.proc(cmd).call(
+                  cwd = os.pwd,
+                  stderr = os.Pipe,
+                  mergeErrIntoOut = true,
+                  stdout = os.ProcessOutput.Readlines(log),
+                  check = false
+                )
 
-              prepResult.exitCode == 0
-          },
-          Seq(
-            "ssh", "-C",
-            "-o", "ServerAliveInterval=4",
-            "-o", "ServerAliveCountMax=4",
-            ensureInstanceRunning.url,
-            "java -cp ~/.devbox/agent.jar devbox.agent.DevboxAgentMain --log-path ~/.devbox/log.txt --ignore-strategy gitignore"
+                prepResult.exitCode == 0
+            },
+            Seq(
+              "ssh", "-C",
+              "-o", "ServerAliveInterval=4",
+              "-o", "ServerAliveCountMax=4") ++
+              portFwdArgs ++ Seq(
+              ensureInstanceRunning.url,
+              s"java -cp ~/.devbox/agent.jar devbox.agent.DevboxAgentMain --log-path ~/.devbox/log.txt --ignore-strategy gitignore --proxy-git-commands ${config.proxyGit}"
+            )
           )
-        )
+        }
     }
   }
 }

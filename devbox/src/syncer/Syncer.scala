@@ -1,6 +1,7 @@
 package devbox.syncer
 
 import devbox.common._
+import devbox.common.Skipper.GitIgnore
 import devbox.logger.SyncLogger
 
 /**
@@ -13,9 +14,14 @@ class Syncer(agent: AgentApi,
              mapping: Seq[(os.Path, os.RelPath)],
              ignoreStrategy: String = "dotgit",
              debounceMillis: Int,
+             proxyGit: Boolean,
              signatureTransformer: (os.SubPath, Sig) => Sig)
             (implicit ac: castor.Context, logger: SyncLogger) extends AutoCloseable{
   println(s"Syncing ${mapping.map{case (from, to) => s"$from:$to"}.mkString(", ")}")
+
+  /** Skippers to use on each repository, used by the SkipScan actor and also sent to the remote endpoint */
+  val skippers = mapping.map { case (base, _) => Skipper.fromString(ignoreStrategy, base, proxyGit) }
+
   val agentActor: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
     x => skipActor.send(SkipScanActor.Receive(x)),
@@ -34,7 +40,7 @@ class Syncer(agent: AgentApi,
   val skipActor = new SkipScanActor(
     sigActor,
     mapping,
-    ignoreStrategy
+    skippers
   )
 
   val watcher = os.watch.watch(
@@ -50,9 +56,15 @@ class Syncer(agent: AgentApi,
     agent.start(s => logger.info(fansi.Color.Blue("Initializing Devbox: ") + s))
     agentActor.spawnReaderThread()
 
+    // get the force included paths as immutable path sets to be sent over the wire
+    val allForceIncludes: Seq[PathSet] = skippers map {
+      case gi: GitIgnore => gi.initForceInclude
+      case _ => new PathSet()
+    }
+
     agentActor.send(
       AgentReadWriteActor.Send(
-        SyncFiles.RemoteScan(mapping.map(_._2))
+        SyncFiles.RemoteScan(mapping.map(_._2), allForceIncludes, proxyGit)
       )
     )
     skipActor.send(SkipScanActor.StartScan())

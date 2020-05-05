@@ -1,25 +1,39 @@
 package devbox.agent
 
-import java.io.{DataInputStream, DataOutputStream, EOFException}
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.EOFException
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.StandardOpenOption
 
+import scala.concurrent.ExecutionContext
+import scala.util.Try
+
+import devbox.common._
 import devbox.common.Cli
 import devbox.common.Cli.Arg
-import devbox.common._
-import Cli.pathScoptRead
-import Util.relpathRw
-import devbox.common
+import devbox.common.Cli.pathScoptRead
+import os.Path
 
-import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, ExecutionContext}
 object DevboxAgentMain {
   case class Config(logFile: Option[os.Path] = None,
                     help: Boolean = false,
                     ignoreStrategy: String = "",
                     workingDir: String = "",
                     exitOnError: Boolean = false,
-                    randomKill: Option[Int] = None)
+                    randomKill: Option[Int] = None,
+                    proxyGit: Boolean = true)
+
+  private val pathToGit: Path = os.home / "bin" / "git"
+
+  def setupGitShim(proxyGit: Boolean): Unit = Try {
+    if (proxyGit) {
+      os.makeDir.all(pathToGit / os.up)
+      os.symlink(pathToGit, os.home / ".devbox" / "git-shim.py")
+    } else if (os.isLink(pathToGit)) {
+      os.remove(pathToGit)
+    }
+  }
 
   def main(args: Array[String]): Unit = {
 
@@ -54,6 +68,11 @@ object DevboxAgentMain {
         "",
         (c, v) => c.copy(randomKill = Some(v))
       ),
+      Arg[Config, Boolean](
+        "proxy-git-commands", None,
+        "Don't sync .git directories and proxy git commands back to the laptop",
+        (c, v) => c.copy(proxyGit = v)
+      ),
     )
 
     Cli.groupArgs(args.toList, signature, Config()) match {
@@ -63,6 +82,9 @@ object DevboxAgentMain {
 
       case Right((config, remaining)) =>
         os.makeDir.all(os.home / ".devbox")
+
+        setupGitShim(config.proxyGit)
+
         implicit val ac = new castor.Context.Simple(
           ExecutionContext.Implicits.global,
           e => {
@@ -98,6 +120,7 @@ object DevboxAgentMain {
         )
     }
   }
+
   def mainLoop(logger: AgentLogger,
                client: RpcClient,
                wd: os.Path,
@@ -115,11 +138,18 @@ object DevboxAgentMain {
     }) {
       count += 1
       try client.readMsg[Rpc]() match {
-        case Rpc.FullScan(paths) =>
+        case Rpc.FullScan(paths, forceIncludes, proxyGit) =>
+
+          // write the managed directories to a file, so our git shim can decide when to hijack git
+          os.write.over(os.home / ".devbox" / "managed_dirs", paths.map(wd / _).mkString("\n"))
+
           val skippers = collection.mutable.Map.empty[os.RelPath, Skipper]
           val newSkippers =
-            for(p <- paths)
-            yield skippers.getOrElseUpdate(p, Skipper.fromString(ignoreStrategy))
+            for((p, fi) <- paths.zip(forceIncludes))
+            yield {
+              val whitelist = fi.foldLeft(new PathSet)((acc, sp) => acc.withPath(sp.segments))
+              skippers.getOrElseUpdate(p, new Skipper.GitIgnore(whitelist, proxyGit))
+            }
 
           val buffer = new Array[Byte](Util.blockSize)
           InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (base, p, attrs) =>
