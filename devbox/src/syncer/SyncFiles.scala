@@ -11,7 +11,7 @@ object SyncFiles {
   sealed trait Msg
 
   case class Complete() extends Msg
-  case class RemoteScan(paths: Seq[os.RelPath]) extends Msg
+  case class RemoteScan(paths: Seq[os.RelPath], forceIncludes: Seq[PathSet], proxyGit: Boolean) extends Msg
   case class RpcMsg(value: Rpc with PathRpc) extends Msg
 
   case class SendChunkMsg(src: os.Path,

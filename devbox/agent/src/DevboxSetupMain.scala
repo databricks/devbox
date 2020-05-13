@@ -25,7 +25,7 @@ object DevboxSetupMain {
           case s"~/$rest" => os.home / os.SubPath(rest)
           case dest => os.Path(dest)
         }
-        os.write(expandedDestination, bytes)
+        os.write.over(expandedDestination, bytes)
         os.perms.set(expandedDestination, "rwxrwxrwx")
       case Right(cmd) =>
         println("Running remote command: " + cmd)

@@ -230,8 +230,13 @@ case class EnsureInstanceRunning(userName: String = os.proc("whoami").call().out
             .replace("$DEVBOX_USER", userName)
             .replace("$PYTHON_EXECUTABLE", pythonExecutable)
       ),
+      Left(
+        s"/home/$userName/.devbox/git-shim.py" ->
+          os.read(os.resource / "git-shim.py")
+      ),
       Right("systemctl enable devbox_daemon"),
       Right("systemctl start devbox_daemon"),
+      Right(s"chmod a+x /home/$userName/.devbox/git-shim.py")
     ) ++ initFilesAndCommands
 
     val userdata = s"""#!/bin/bash

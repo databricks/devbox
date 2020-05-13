@@ -25,6 +25,7 @@ trait BaseLogger extends AutoCloseable{
     }
 
     output.write(s)
+    output.flush()
     size += s.length + 1
   }
 
