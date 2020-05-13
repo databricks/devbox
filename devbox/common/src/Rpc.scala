@@ -13,7 +13,10 @@ object Action{
 
 object Rpc{
   /** Perform a full scan of each root path, including any gitignored files appearing in the cooresponding forceIncludes */
-  case class FullScan(roots: Seq[os.RelPath], forceIncludes: Seq[Seq[os.SubPath]], proxyGit: Boolean) extends Rpc
+  case class FullScan(roots: Seq[os.RelPath],
+                      forceIncludes: Seq[Seq[os.SubPath]],
+                      proxyGit: Boolean,
+                      syncIgnore: Option[String]) extends Rpc
   object FullScan{ implicit val rw: ReadWriter[FullScan] = macroRW }
 
 

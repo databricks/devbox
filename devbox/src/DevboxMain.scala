@@ -24,6 +24,7 @@ object DevboxMain {
                     logFile: Option[os.Path] = None,
                     ignoreStrategy: String = "",
                     readOnlyRemote: String = null,
+                    syncIgnore: String = null,
                     healthCheckInterval: Int = 0,
                     retryInterval: Int = 0,
                     noSync: Boolean = false,
@@ -59,6 +60,11 @@ object DevboxMain {
       "readonly-remote", None,
       "",
       (c, v) => c.copy(readOnlyRemote = v)
+    ),
+    Arg[Config, String](
+      "sync-ignore", None,
+      "",
+      (c, v) => c.copy(syncIgnore = v)
     ),
     Arg[Config, Int](
       "health-check-interval", None,
@@ -172,7 +178,8 @@ object DevboxMain {
             )
           case (path, sig) => sig
         }
-      }
+      },
+      Option(config.syncIgnore)
     )
 
     if (config.proxyGit)

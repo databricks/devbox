@@ -138,7 +138,7 @@ object DevboxAgentMain {
     }) {
       count += 1
       try client.readMsg[Rpc]() match {
-        case Rpc.FullScan(paths, forceIncludes, proxyGit) =>
+        case Rpc.FullScan(paths, forceIncludes, proxyGit, syncIgnore) =>
 
           // write the managed directories to a file, so our git shim can decide when to hijack git
           os.write.over(os.home / ".devbox" / "managed_dirs", paths.map(wd / _).mkString("\n"))
@@ -152,7 +152,11 @@ object DevboxAgentMain {
             }
 
           val buffer = new Array[Byte](Util.blockSize)
-          InitialScan.initialSkippedScan(paths.map(wd / _), newSkippers){ (base, p, attrs) =>
+          InitialScan.initialSkippedScan(
+            paths.map(wd / _),
+            newSkippers,
+            syncIgnore.map(com.google.re2j.Pattern.compile)
+          ){ (base, p, attrs) =>
             for(sig <- Sig.compute(base / p, buffer, attrs.fileType)){
               client.writeMsg(Response.Scanned(base.relativeTo(wd), p, sig))
             }

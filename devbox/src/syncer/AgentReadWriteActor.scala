@@ -169,7 +169,7 @@ class AgentReadWriteActor(agent: AgentApi,
     msg match{
       case SyncFiles.Complete() =>
 
-      case SyncFiles.RemoteScan(paths, _, _) =>
+      case SyncFiles.RemoteScan(paths, _, _, _) =>
         logger.info("Scanning directories", paths.mkString("\n"))
 
       case SyncFiles.RpcMsg(rpc) =>
@@ -183,12 +183,12 @@ class AgentReadWriteActor(agent: AgentApi,
   def getRpcFor(msg: SyncFiles.Msg, buf: ByteBuffer): Option[Rpc] = {
     msg match{
       case SyncFiles.Complete() => Some(Rpc.Complete())
-      case SyncFiles.RemoteScan(paths, forceIncludes, proxyGit) =>
+      case SyncFiles.RemoteScan(paths, forceIncludes, proxyGit, syncIgnore) =>
         // convert each PathSet to a Seq, which is what the RPC message expects
         val seqs = for (pathset <- forceIncludes) yield {
           pathset.walk(Seq.empty).map(segs => os.SubPath.apply(segs: IndexedSeq[String])).toVector
         }
-        Some(Rpc.FullScan(paths, seqs, proxyGit))
+        Some(Rpc.FullScan(paths, seqs, proxyGit, syncIgnore))
       case SyncFiles.RpcMsg(rpc) => Some(rpc)
 
       case SyncFiles.SendChunkMsg(src, dest, subPath, chunkIndex, chunkCount) =>

@@ -16,7 +16,8 @@ object SkipScanActor{
 }
 class SkipScanActor(sigActor: castor.Actor[SigActor.Msg],
                     mapping: Seq[(os.Path, os.RelPath)],
-                    skippers: Seq[Skipper])
+                    skippers: Seq[Skipper],
+                    syncIgnoreRegex: Option[com.google.re2j.Pattern])
                    (implicit ac: castor.Context,
                     logger: SyncLogger) extends castor.StateMachineActor[SkipScanActor.Msg]{
 
@@ -34,7 +35,7 @@ class SkipScanActor(sigActor: castor.Actor[SigActor.Msg],
     case SkipScanActor.StartScan() =>
       this.sendAsync(
         Future{
-          common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers){
+          common.InitialScan.initialSkippedScan(mapping.map(_._1), skippers, syncIgnoreRegex){
             (base, sub, attrs) => this.send(SkipScanActor.LocalScanned(base, sub))
           }
           SkipScanActor.ScanComplete()
@@ -112,6 +113,12 @@ class SkipScanActor(sigActor: castor.Actor[SigActor.Msg],
               PathMap.from(
                 paths
                   .walkSubPaths(src.segments)
+                  .filter(subsegments =>
+                    syncIgnoreRegex match {
+                      case None => true
+                      case Some(r) => !r.matches(subsegments.mkString("/"))
+                    }
+                  )
                   .map { subSegments =>(subSegments, os.isDir(src / subSegments))}
               )
             )
