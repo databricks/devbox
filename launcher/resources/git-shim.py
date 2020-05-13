@@ -1,4 +1,5 @@
 #!/usr/bin/python
+from __future__ import print_function
 import socket, os, os.path, sys, json, subprocess
 
 PORT=20280
@@ -63,5 +64,5 @@ s.close()
 
 response = json.loads(reply)
 
-print(response.get("output", "No output received from Git Proxy, something went wrong."))
+print(response.get("output", "No output received from Git Proxy, something went wrong."), end="")
 sys.exit(response.get("exitCode", 0))
