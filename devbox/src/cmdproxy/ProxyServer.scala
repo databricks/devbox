@@ -29,8 +29,9 @@ object Request {
  *
  * Request is one line, terminated with \n: "
  *   {"workingDir":"universe","cmd":["git","status"]}
- * Response:
- *   {"exitCode":0,"output":"bla bla"}
+ *
+ * Response is either a Left(line: String) for lines of output, or Right(exitCode: Int) for
+ * the end of the output stream
  */
 class ProxyServer(dirMapping: Seq[(os.Path, os.RelPath)],
                   port: Int = ProxyServer.DEFAULT_PORT)

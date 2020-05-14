@@ -52,6 +52,9 @@ socket_file = s.makefile()
 
 for line in socket_file.readlines():
     response = json.loads(line)
+    # In the server protocol, the first item in the array is a tag, where 0
+    # tells us the second item is a line of text, and 1 tells us the second item
+    # is the exit code of the completed command
     if len(response) == 2:
         if response[0] == 0:
             print(response[1])
