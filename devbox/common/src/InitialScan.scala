@@ -2,7 +2,9 @@ package devbox.common
 
 
 object InitialScan {
-  def initialSkippedScan(bases: Seq[os.Path], skippers: Seq[Skipper])
+  def initialSkippedScan(bases: Seq[os.Path],
+                         skippers: Seq[Skipper],
+                         syncIgnore: Option[com.google.re2j.Pattern])
                         (f: (os.Path, os.SubPath, os.StatInfo) => Unit): Unit = {
     for((base, skipper) <- bases.zip(skippers)) {
 
@@ -12,7 +14,9 @@ object InitialScan {
 
       val fileStream = os.walk.stream.attrs(
         base,
-        (p, attrs) => skipper.initialScanIsPathSkipped(base, p.subRelativeTo(base), attrs.isDir)
+        (p, attrs) =>
+          syncIgnore.fold(false)(regex => regex.matches(p.relativeTo(base).toString())) ||
+          skipper.initialScanIsPathSkipped(base, p.subRelativeTo(base), attrs.isDir)
       )
 
       fileStream.foreach { case (p, attrs) =>
