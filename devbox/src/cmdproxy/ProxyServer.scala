@@ -63,7 +63,11 @@ class ProxyServer(dirMapping: Seq[(os.Path, os.RelPath)], port: Int = ProxyServe
 
     upickle.default.read[Request](in.readLine()) match {
       case Request(dir, args) =>
-        val workingDir = localDir.getOrElse(RelPath(dir), os.home / RelPath(dir))
+        val workingDir = localDir
+          .collect{case (remote, local) if RelPath(dir).startsWith(remote) =>
+            local / RelPath(dir).relativeTo(remote)
+          }
+          .head
 
         // being cautious here and only execute "git" commands
         if (args.headOption.exists((_ == "git"))) {
