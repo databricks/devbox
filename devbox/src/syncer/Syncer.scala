@@ -21,10 +21,6 @@ class Syncer(agent: AgentApi,
 
 
   val syncIgnoreRegex = syncIgnore.map(com.google.re2j.Pattern.compile(_))
-  pprint.log(syncIgnore)
-  val dummy = "apiproxy/deploy/multitenant/zzz_JSONNET_GENERATED/azure/prod/az-brazilsouth/mt-shard/apiproxy.yaml"
-  pprint.log(syncIgnoreRegex.map(_.matches(dummy)))
-
   println(s"Syncing ${mapping.map{case (from, to) => s"$from:$to"}.mkString(", ")}")
 
   /** Skippers to use on each repository, used by the SkipScan actor and also sent to the remote endpoint */
