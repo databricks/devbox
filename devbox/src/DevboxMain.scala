@@ -146,6 +146,8 @@ object DevboxMain {
           }
     }
 
+    var server: Option[ProxyServer] = None
+
     implicit lazy val logger: devbox.logger.SyncLogger = new devbox.logger.SyncLogger.Impl(
       n => logFileBase / s"$logFileName$n.$logFileExt",
       50 * 1024 * 1024,
@@ -153,7 +155,22 @@ object DevboxMain {
     )
 
     lazy val syncer = new Syncer(
-      new ReliableAgent(prepareWithlogs, connect, os.pwd),
+      new ReliableAgent(
+        prepareWithlogs,
+        connect,
+        () => {
+          if (config.proxyGit) {
+            implicit val logger = new FileLogger(
+              s => os.home / ".devbox" / s"cmdproxy$s.log",
+              1024 * 1024,
+            )
+            server.foreach(_.socket.close())
+            server = Some(new ProxyServer(dirMapping))
+            server.foreach(_.start())
+          }
+        },
+        os.pwd
+      ),
       dirMapping,
       config.ignoreStrategy,
       config.debounceMillis,
@@ -182,28 +199,9 @@ object DevboxMain {
       Option(config.syncIgnore)
     )
 
-    if (config.proxyGit)
-      spawnGitProxyServer(dirMapping)
-    else
-      logger.info("Not proxying Git commands back to laptop. Syncing .git may take a long time.")
-
     Util.autoclose(syncer){syncer =>
       syncer.start()
       Thread.sleep(Long.MaxValue)
     }
-
-  }
-
-  def spawnGitProxyServer(dirMapping:  Seq[(Path, os.rel.ThisType)])(implicit ac: castor.Context): Unit = {
-    implicit val logger = new FileLogger(
-      s => os.home / ".devbox" / s"cmdproxy$s.log",
-      1024 * 1024,
-    )
-
-    (new Thread("Git Proxy Thread") {
-      override def run(): Unit = {
-        (new ProxyServer(dirMapping).start())
-      }
-    }).start()
   }
 }

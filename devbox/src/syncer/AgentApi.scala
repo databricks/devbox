@@ -13,7 +13,9 @@ trait AgentApi {
 }
 
 class ReliableAgent(prepareWithLogs: (String => Unit) => Boolean,
-                    cmd: Seq[String], cwd: os.Path) extends AgentApi {
+                    cmd: Seq[String],
+                    postConnect: () => Unit,
+                    cwd: os.Path) extends AgentApi {
   var process: os.SubProcess = _
 
   override def start(logPrepOutput: String => Unit): Boolean = {
@@ -21,7 +23,10 @@ class ReliableAgent(prepareWithLogs: (String => Unit) => Boolean,
 
     val prepPassed = prepareWithLogs(logPrepOutput)
 
-    if (prepPassed) process = os.proc(cmd).spawn(cwd = cwd)
+    if (prepPassed) {
+      process = os.proc(cmd).spawn(cwd = cwd)
+      postConnect()
+    }
 
     prepPassed
   }
