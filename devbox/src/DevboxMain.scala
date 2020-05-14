@@ -96,6 +96,7 @@ object DevboxMain {
         }else {
           val (prep, connect) = remaining.splitAt(remaining.indexOf("--"))
           main0(
+            None,
             config,
             log => {
               val prepResult = os.proc(prep).call(
@@ -122,7 +123,7 @@ object DevboxMain {
     throw e
   }
 
-  def main0(config: Config, prepareWithlogs: (String => Unit) => Boolean, connect: Seq[String]) = {
+  def main0(urlOpt: Option[String], config: Config, prepareWithlogs: (String => Unit) => Boolean, connect: Seq[String]) = {
     implicit val ac = new castor.Context.Test(
       ExecutionContext.global,
       e => {
@@ -156,10 +157,15 @@ object DevboxMain {
 
     lazy val syncer = new Syncer(
       new ReliableAgent(
-        prepareWithlogs,
-        connect,
-        () => {
+        log => {
+          val res = prepareWithlogs(log)
           if (config.proxyGit) {
+            for(url <- urlOpt if res){
+              val res = os.proc("ssh", url, s"kill $$(sudo lsof -ti tcp:${ProxyServer.DEFAULT_PORT})")
+                .call(stderr = os.Pipe, check = false)
+
+              if (res.exitCode == 0) println("Killed zombie port forwards on devbox")
+            }
             implicit val logger = new FileLogger(
               s => os.home / ".devbox" / s"cmdproxy$s.log",
               1024 * 1024,
@@ -168,7 +174,9 @@ object DevboxMain {
             server = Some(new ProxyServer(dirMapping))
             server.foreach(_.start())
           }
+          res
         },
+        connect,
         os.pwd
       ),
       dirMapping,

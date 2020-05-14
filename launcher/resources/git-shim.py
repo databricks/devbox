@@ -42,8 +42,11 @@ handle_intrinsic(root_managed)
 
 # ..otherwise connect to the proxy command server and run it remotely
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect(('127.0.0.1', PORT))
-
+try:
+    s.connect(('127.0.0.1', PORT))
+except socket.error:
+    print("Unable to connect to git proxy; is your devbox syncer running?")
+    sys.exit(1)
 relative_dir = os.path.relpath(os.getcwd(), os.path.expanduser("~"))
 cmd = json.dumps({ "workingDir": relative_dir, "cmd": ["git"] + sys.argv[1:] })
 s.send(cmd.encode('utf-8') + '\n')

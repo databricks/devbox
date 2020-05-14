@@ -31,6 +31,7 @@ object Main {
             else
               Seq()
           devbox.DevboxMain.main0(
+            Some(ensureInstanceRunning.url),
             config,
             log => ensureInstanceRunning.prepareInstanceCommand match {
               case None =>
@@ -55,6 +56,7 @@ object Main {
             },
             Seq(
               "ssh", "-C",
+              "-o", "ExitOnForwardFailure=yes",
               "-o", "ServerAliveInterval=4",
               "-o", "ServerAliveCountMax=4") ++
               portFwdArgs ++ Seq(
