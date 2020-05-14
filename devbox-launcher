@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 import subprocess, sys, os
 import hashlib, urllib2
-devbox_version = "0.1.0"
-sha1_hash = "312c0fea259f9d3f0205e7c3716fabe761dcfc5d"
+devbox_version = "0.1.1"
+sha1_hash = "604d89cf83c09f691ee9e5a7721376f7e912a464"
 
 download_path = os.path.expanduser("~") + "/.devbox/download/" + devbox_version
 
