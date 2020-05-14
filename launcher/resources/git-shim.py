@@ -8,17 +8,6 @@ BUF_SIZE=4096
 # we hard-code the location of the fallback git since we control the devbox AMI
 REAL_GIT="/usr/bin/git"
 
-def receive_all(sock):
-    """Receive all data coming through the socket and return it as bytes."""
-
-    chunk = s.recv(BUF_SIZE)
-    reply = []
-
-    while len(chunk) != 0:
-        reply += chunk
-        chunk = s.recv(BUF_SIZE)
-
-    return bytearray().join(reply)
 
 def find_managed_dir(path):
     """Return the root managed directory if 'path' is under a managed directory, the empty string otherwise."""
@@ -59,10 +48,19 @@ relative_dir = os.path.relpath(os.getcwd(), os.path.expanduser("~"))
 cmd = json.dumps({ "workingDir": relative_dir, "cmd": ["git"] + sys.argv[1:] })
 s.send(cmd.encode('utf-8') + '\n')
 
-reply = receive_all(s).decode("utf-8")
-s.close()
+socket_file = s.makefile()
 
-response = json.loads(reply)
+for line in socket_file.readlines():
+    response = json.loads(line)
+    if len(response) == 2:
+        if response[0] == 0:
+            print(response[1])
+        elif response[0] == 1:
+            sys.exit(response[1])
+        else:
+            raise Exception("Unexpected response: " + reply)
+    else:
+        raise Exception("Unexpected response: " + reply)
 
-print(response.get("output", "No output received from Git Proxy, something went wrong."), end="")
-sys.exit(response.get("exitCode", 0))
+
+

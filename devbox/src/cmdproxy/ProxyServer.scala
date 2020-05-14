@@ -20,11 +20,6 @@ object Request {
   implicit val rw: ReadWriter[Request] = macroRW
 }
 
-case class Response(exitCode: Int, output: String)
-object Response {
-  implicit val rw: ReadWriter[Response] = macroRW
-}
-
 /**
  * Simple server that runs commands on the local system and responds with the output of that command.
  *
@@ -37,7 +32,9 @@ object Response {
  * Response:
  *   {"exitCode":0,"output":"bla bla"}
  */
-class ProxyServer(dirMapping: Seq[(os.Path, os.RelPath)], port: Int = ProxyServer.DEFAULT_PORT)(implicit logger: FileLogger) {
+class ProxyServer(dirMapping: Seq[(os.Path, os.RelPath)],
+                  port: Int = ProxyServer.DEFAULT_PORT)
+                 (implicit logger: FileLogger) {
 
   // this may throw when binding if the socket is used, but for the moment we just assume there is no other
   // syncer process on this machine
@@ -48,12 +45,19 @@ class ProxyServer(dirMapping: Seq[(os.Path, os.RelPath)], port: Int = ProxyServe
 
   def start(): Unit = {
     logger.info(s"Starting command proxy server, listening at ${socket.getInetAddress}:${socket.getLocalPort}")
-    while (true) {
-      Using(socket.accept()) { handleConnection } recover {
-        case e: Exception =>
-          logger.error(s"Error handling request ${e.getMessage}")
+    (new Thread("Git Proxy Thread") {
+      override def run(): Unit = {
+        while (!socket.isClosed) {
+          Using(socket.accept()) { handleConnection } recover {
+            case e: Exception =>
+              logger.error(s"Error handling request ${e.getMessage}")
+            case e: java.net.SocketException if e.getMessage == "Socket closed" =>
+              logger.error(s"Git proxy socket closed")
+          }
+        }
       }
-    }
+    }).start()
+
   }
 
   def handleConnection(conn: Socket): Unit = try {
@@ -76,15 +80,18 @@ class ProxyServer(dirMapping: Seq[(os.Path, os.RelPath)], port: Int = ProxyServe
           val proc = os.proc(args).call(
             workingDir,
             mergeErrIntoOut = true,
+            stdout = os.ProcessOutput.Readlines(str =>
+              out.println(upickle.default.write(Left[String, Int](str)))
+            ),
             check = false,
-            timeout = 10000)
+            timeout = 10000
+          )
 
-          out.println(
-            upickle.default.write(Response(proc.exitCode, proc.out.string(ProxyServer.CHARSET_NAME))))
+          out.println(upickle.default.write(Right[String, Int](proc.exitCode)))
         } else {
           val msg = s"Not executing non-git commend: `${args.mkString(" ")}`."
           logger.info(msg)
-          out.println(upickle.default.write(Response(-1, msg)))
+          out.println(upickle.default.write(Right[String, Int](1)))
         }
 
         out.flush()
