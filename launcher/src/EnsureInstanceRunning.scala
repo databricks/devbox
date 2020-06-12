@@ -450,7 +450,7 @@ case class EnsureInstanceRunning(userName: String = os.proc("whoami").call().out
     os.proc(
       "ssh",
       url,
-      s"HOME=/root sudo java -cp /home/$userName/.devbox/agent.jar devbox.agent.DevboxSetupMain"
+      s"sudo HOME=/root DEVBOX_USER=$userName java -cp /home/$userName/.devbox/agent.jar devbox.agent.DevboxSetupMain"
     ).call(
       mergeErrIntoOut = true,
       stdin = upickle.default.writeBinary(setupFilesAndCommands),
