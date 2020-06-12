@@ -25,6 +25,10 @@ object Main {
           )
         }
         else {
+          if (!remaining.isEmpty) {
+            println(s"Unknown arguments: ${remaining.mkString(", ")}")
+            System.exit(1)
+          }
           val portFwdArgs =
             if (config.proxyGit)
               Seq("-R", s"${ProxyServer.DEFAULT_PORT}:localhost:${ProxyServer.DEFAULT_PORT}")
