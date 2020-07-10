@@ -343,10 +343,22 @@ case class EnsureInstanceRunning(userName: String = os.proc("whoami").call().out
     val (sshPublicKey, sshPrivateKey) = (sshPublicKeyOpt, sshPrivateKeyOpt) match{
       case (Some(pub), Some(priv)) => (pub, priv)
       case (None, None) => (os.home / ".ssh" / "id_rsa.pub", os.home / ".ssh" / "id_rsa")
-      case _ => throw new Exception(
+      case _ =>
+        System.err.println(
         "--ssh-private-key and --ssh-public-key must be passed in together, or not at all. " +
-          "Make sure you set both if you want to configure them"
-      )
+          "Make sure you set both if you want to configure them")
+        System.exit(1)
+        (os.root, os.root) // just to satisfy the type-checker, this line is never executed
+    }
+
+    if (!os.exists(sshPublicKey)) {
+      Console.err.println(s"Could not find ssh public key in $sshPublicKey")
+      System.exit(1)
+    }
+
+    if (!os.exists(sshPrivateKey)) {
+      Console.err.println(s"Could not find ssh private key in $sshPrivateKey")
+      System.exit(1)
     }
 
     val pubKey = os.read(sshPublicKey)
