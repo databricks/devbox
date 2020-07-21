@@ -125,7 +125,7 @@ object DevboxMain {
 
   def main0(urlOpt: Option[String], config: Config, prepareWithlogs: (String => Unit) => Boolean, connect: Seq[String]) = {
     implicit val ac = new castor.Context.Test(
-      ExecutionContext.global,
+      castor.Context.Simple.executionContext,
       e => {
         e.printStackTrace()
         Util.sentryCapture(e)

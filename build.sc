@@ -3,7 +3,7 @@ import mill.define.Ctx
 import scalalib._
 
 trait DevboxModule extends ScalaModule{
-  def scalaVersion = "2.13.1"
+  def scalaVersion = "2.13.3"
   def compileIvyDeps = Agg(ivy"com.lihaoyi::acyclic:0.2.0")
   def scalacOptions = Seq(
     "-P:acyclic:force",
@@ -15,7 +15,7 @@ object launcher extends DevboxModule{
   def ivyDeps = Agg(
     ivy"software.amazon.awssdk:ec2:2.7.11",
     ivy"software.amazon.awssdk:bom:2.7.11",
-    ivy"com.lihaoyi::os-lib:0.4.2",
+    ivy"com.lihaoyi::os-lib:0.7.1",
   )
   def resources = T.sources{
     os.copy(devbox.agent.assembly().path, T.dest / "agent.jar")
@@ -26,15 +26,15 @@ object devbox extends DevboxModule{
 
   def moduleDeps = Seq(common)
   object common extends DevboxModule{
-    def scalaVersion = "2.13.1"
+    def scalaVersion = "2.13.3"
     def ivyDeps = Agg(
-      ivy"com.lihaoyi::sourcecode:0.1.8",
-      ivy"com.lihaoyi::os-lib:0.4.2",
-      ivy"com.lihaoyi::os-lib-watch:0.4.2",
-      ivy"com.lihaoyi::upickle:0.8.0",
-      ivy"com.lihaoyi::castor:0.1.0",
+      ivy"com.lihaoyi::sourcecode:0.2.1",
+      ivy"com.lihaoyi::os-lib:0.7.1",
+      ivy"com.lihaoyi::os-lib-watch:0.7.1",
+      ivy"com.lihaoyi::upickle:1.2.0",
+      ivy"com.lihaoyi::castor:0.1.4",
       ivy"com.google.re2j:re2j:1.2",
-      ivy"com.lihaoyi::pprint:0.5.6",
+      ivy"com.lihaoyi::pprint:0.5.9",
       ivy"com.github.scopt::scopt:3.7.1",
       ivy"net.java.dev.jna:jna:5.0.0",
       ivy"org.slf4j:slf4j-simple:1.7.25",
@@ -44,7 +44,7 @@ object devbox extends DevboxModule{
   }
 
   object agent extends DevboxModule{
-    def scalaVersion = "2.13.1"
+    def scalaVersion = "2.13.3"
     def moduleDeps = Seq(common)
   }
 
@@ -78,7 +78,7 @@ object devbox extends DevboxModule{
 
     def testFrameworks = Seq("devbox.UTestFramework")
     def ivyDeps = Agg(
-      ivy"com.lihaoyi::utest:0.7.1"
+      ivy"com.lihaoyi::utest:0.7.4"
     )
     def forkEnv = Map(
       "AGENT_EXECUTABLE" -> agent.assembly().path.toString,

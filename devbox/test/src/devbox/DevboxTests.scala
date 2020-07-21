@@ -120,7 +120,7 @@ object DevboxTests extends TestSuite{
 
     def createSyncer() = {
       implicit val ac = new castor.Context.Test(
-        if (parallel) ExecutionContext.global
+        if (parallel) castor.Context.Simple.executionContext
         else ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
         _.printStackTrace()
       )
@@ -288,7 +288,8 @@ object DevboxTests extends TestSuite{
       ignoreStrategy,
       debounceMillis,
       proxyGit = false,
-      signatureMapping
+      signatureTransformer = signatureMapping,
+      syncIgnore = None
     )
     syncer
   }

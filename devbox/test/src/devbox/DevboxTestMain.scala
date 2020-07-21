@@ -88,7 +88,7 @@ object DevboxTestMain {
           val commits = remaining.map(_.toInt)
 
           if (config.label == "manual"){
-            implicit val ac = new castor.Context.Test(ExecutionContext.global, _.printStackTrace())
+            implicit val ac = new castor.Context.Test(castor.Context.Simple.executionContext, _.printStackTrace())
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
             implicit lazy val logger: devbox.logger.SyncLogger.Impl = new devbox.logger.SyncLogger.Impl(
               n => os.pwd / "out" / "scratch" / config.label / s"log$n.txt",
