@@ -86,7 +86,7 @@ object DevboxAgentMain {
         setupGitShim(config.proxyGit)
 
         implicit val ac = new castor.Context.Simple(
-          ExecutionContext.Implicits.global,
+          castor.Context.Simple.executionContext,
           e => {
             e.printStackTrace()
             Util.sentryCapture(e)

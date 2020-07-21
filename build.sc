@@ -32,7 +32,7 @@ object devbox extends DevboxModule{
       ivy"com.lihaoyi::os-lib:0.7.1",
       ivy"com.lihaoyi::os-lib-watch:0.7.1",
       ivy"com.lihaoyi::upickle:1.2.0",
-      ivy"com.lihaoyi::castor:0.1.4",
+      ivy"com.lihaoyi::castor:0.1.7",
       ivy"com.google.re2j:re2j:1.2",
       ivy"com.lihaoyi::pprint:0.5.9",
       ivy"com.github.scopt::scopt:3.7.1",
