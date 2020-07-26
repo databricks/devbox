@@ -210,6 +210,8 @@ case class EnsureInstanceRunning(userName: String = os.proc("whoami").call().out
     val ec2 = prepareEc2Client(awsRegion)
     val (instanceName, sshPrivateKey, pubKey) = prepareKeysAndNames()
 
+    val ephemeralFsSetupScript = s"/home/$userName/.devbox/setup_ephemeral_filesystem.py"
+
     val allInitFilesAndCommands = Seq(
       Left(s"/home/$userName/.ssh/authorized_keys" -> pubKey),
       Left(
@@ -221,7 +223,7 @@ case class EnsureInstanceRunning(userName: String = os.proc("whoami").call().out
           os.read(os.resource / "daemon.py")
       ),
       Left(
-        s"/home/$userName/.devbox/setup_ephemeral_filesystem.py" ->
+        ephemeralFsSetupScript ->
           os.read(os.resource / "setup_ephemeral_filesystem.py")
       ),
       Left(
@@ -255,7 +257,7 @@ case class EnsureInstanceRunning(userName: String = os.proc("whoami").call().out
           }
           .mkString("\n")
       }
-      ${if (ephemeral) s"$pythonExecutable /home/$userName/setup_ephemeral_filesystem.py" else ""}
+      ${if (ephemeral) s"$pythonExecutable $ephemeralFsSetupScript" else ""}
     """
 
     val instanceInfo = launcher.Instance.ensureInstanceRunning(
