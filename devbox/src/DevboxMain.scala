@@ -109,7 +109,7 @@ object DevboxMain {
 
               prepResult.exitCode == 0
             },
-            connect
+            (_ => connect)
           )
         }
         System.exit(0)
@@ -123,7 +123,7 @@ object DevboxMain {
     throw e
   }
 
-  def main0(urlOpt: Option[String], config: Config, prepareWithlogs: (String => Unit) => Boolean, connect: Seq[String]) = {
+  def main0(urlOpt: Option[String], config: Config, prepareWithlogs: (String => Unit) => Boolean, connect: Option[Int] => Seq[String]) = {
     implicit val ac = new castor.Context.Test(
       castor.Context.Simple.executionContext,
       e => {
@@ -152,11 +152,12 @@ object DevboxMain {
     implicit lazy val logger: devbox.logger.SyncLogger = new devbox.logger.SyncLogger.Impl(
       n => logFileBase / s"$logFileName$n.$logFileExt",
       50 * 1024 * 1024,
-      new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
+      new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor),
+      urlOpt.map(url => s"$url:")
     )
 
     lazy val syncer = new Syncer(
-      new ReliableAgent(
+      new ReliableAgent[Option[Int]](
         log => {
           val res = prepareWithlogs(log)
           if (config.proxyGit) {
@@ -170,11 +171,17 @@ object DevboxMain {
               s => os.home / ".devbox" / s"cmdproxy$s.log",
               1024 * 1024,
             )
-            server.foreach(_.socket.close())
-            server = Some(new ProxyServer(dirMapping))
+            var port = 0
+            server.foreach { s =>
+              val p = s.socket.getLocalPort
+              if(p > 0) port = p // make sure to rebind to same port
+              s.socket.close()
+            }
+            server = Some(new ProxyServer(dirMapping, port))
             server.foreach(_.start())
           }
-          res
+          if(res) Some(server.map(_.socket.getLocalPort))
+          else None
         },
         connect,
         os.pwd

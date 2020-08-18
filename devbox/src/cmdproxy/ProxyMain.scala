@@ -19,6 +19,6 @@ object ProxyMain {
       1024 * 1024
     )
 
-    new ProxyServer(dirMapping = Seq.empty)(logger).start()
+    new ProxyServer(dirMapping = Seq.empty, ProxyServer.DEFAULT_PORT)(logger).start()
   }
 }

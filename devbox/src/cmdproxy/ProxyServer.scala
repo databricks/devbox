@@ -34,7 +34,7 @@ object Request {
  * the end of the output stream
  */
 class ProxyServer(dirMapping: Seq[(os.Path, os.RelPath)],
-                  port: Int = ProxyServer.DEFAULT_PORT)
+                  port: Int)
                  (implicit logger: FileLogger) {
 
   // this may throw when binding if the socket is used, but for the moment we just assume there is no other
