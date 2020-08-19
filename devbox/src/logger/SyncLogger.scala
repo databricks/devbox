@@ -32,7 +32,8 @@ object SyncLogger{
 
   class Impl(val dest: String => os.Path,
              val rotationSize: Long,
-             onClick: => castor.Actor[Unit])
+             onClick: => castor.Actor[Unit],
+             titleOpt: Option[String])
             (implicit ac: castor.Context) extends castor.SimpleActor[Msg] with SyncLogger {
 
     def init() = this.send(Init())
@@ -67,7 +68,7 @@ object SyncLogger{
     val consoleLogger = new ConsoleLogger(dest, rotationSize)
     val statusActor = new StatusActor(
       imageName => IconHandler.icon.setImage(IconHandler.images(imageName)),
-      tooltip => IconHandler.icon.setToolTip(fansi.Str(tooltip).plainText)
+      tooltip => IconHandler.setToolTip(fansi.Str(tooltip).plainText)
     )
 
     def run(msg: Msg) = if (!closed) msg match{
@@ -135,10 +136,12 @@ object SyncLogger{
 
       val icon = new java.awt.TrayIcon(images("blue-sync"))
 
-      icon.setToolTip("Devbox Initializing")
+      setToolTip("Devbox Initializing")
 
       val tray = java.awt.SystemTray.getSystemTray()
 
+      def setToolTip(s: String) =
+        icon.setToolTip(titleOpt.map(_ + "\n").getOrElse("") + s)
 
       icon.addMouseListener(new MouseListener {
         def mouseClicked(e: MouseEvent): Unit = onClick.send(())

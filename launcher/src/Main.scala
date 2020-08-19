@@ -29,11 +29,12 @@ object Main {
             println(s"Unknown arguments: ${remaining.mkString(", ")}")
             System.exit(1)
           }
-          val portFwdArgs =
-            if (config.proxyGit)
-              Seq("-R", s"${ProxyServer.DEFAULT_PORT}:localhost:${ProxyServer.DEFAULT_PORT}")
-            else
+          def portFwdArgs(port: Option[Int]): Seq[String] = port match {
+            case Some(p) if(config.proxyGit) =>
+              Seq("-R", s"${ProxyServer.DEFAULT_PORT}:localhost:$p")
+            case _ =>
               Seq()
+          }
           devbox.DevboxMain.main0(
             Some(ensureInstanceRunning.url),
             config,
@@ -58,15 +59,16 @@ object Main {
 
                 prepResult.exitCode == 0
             },
-            Seq(
-              "ssh", "-C",
-              "-o", "ExitOnForwardFailure=yes",
-              "-o", "ServerAliveInterval=4",
-              "-o", "ServerAliveCountMax=4") ++
-              portFwdArgs ++ Seq(
-              ensureInstanceRunning.url,
-              s"java -cp ~/.devbox/agent.jar devbox.agent.DevboxAgentMain --log-path ~/.devbox/log.txt --ignore-strategy gitignore --proxy-git-commands ${config.proxyGit}"
-            )
+            { (port: Option[Int]) => Seq(
+                "ssh", "-C",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=4",
+                "-o", "ServerAliveCountMax=4"
+              ) ++ portFwdArgs(port) ++ Seq(
+                ensureInstanceRunning.url,
+                s"java -cp ~/.devbox/agent.jar devbox.agent.DevboxAgentMain --log-path ~/.devbox/log.txt --ignore-strategy gitignore --proxy-git-commands ${config.proxyGit}"
+              )
+            }
           )
         }
     }

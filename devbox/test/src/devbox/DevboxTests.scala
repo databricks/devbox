@@ -127,7 +127,8 @@ object DevboxTests extends TestSuite{
       implicit lazy val logger: SyncLogger.Impl = new SyncLogger.Impl(
         n => logFileBase / s"$logFileName$n.$logFileExt",
         5 * 1024 * 1024,
-        new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor)
+        new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor),
+        None
       )
 
       lazy val syncer = instantiateSyncer(
@@ -268,9 +269,9 @@ object DevboxTests extends TestSuite{
                         logger: SyncLogger) = {
 
     val syncer = new Syncer(
-      new ReliableAgent(
-        log => /*do nothing*/true,
-        Seq(
+      new ReliableAgent[Unit](
+        log => /*do nothing*/ Some(()),
+        _ => Seq(
           "java", "-cp",
           System.getenv("AGENT_EXECUTABLE"), "devbox.agent.DevboxAgentMain",
           "--ignore-strategy", ignoreStrategy,
