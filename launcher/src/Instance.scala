@@ -104,7 +104,7 @@ object Instance{
           }
         case multiple =>
           throw new Exception(
-            s"More than one running instance found: ${multiple.map(_.instanceId()).mkString(", ")}"
+            s"More than one running instance found: ${multiple.map(_.instanceId()).mkString(", ")}. You can delete extra instances in the aws-dev-admin us-west-2 console."
           )
       }
       forceNewInstance = false
