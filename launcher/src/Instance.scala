@@ -80,7 +80,7 @@ object Instance{
 
               if ((!noTerminate && (existingDevboxVersion != devboxVmVersion)) || forceNewInstance){
                 if (!forceNewInstance) {
-                  log(s"Devbox instance out of data, existingDevboxVersion:$existingDevboxVersion devboxVmVersion:$devboxVmVersion")
+                  log(s"Devbox instance out of date, existingDevboxVersion:$existingDevboxVersion devboxVmVersion:$devboxVmVersion")
                   log(
                     "Press Enter to terminate instances and spin up a fresh one, or Ctrl-C to stop. " +
                       "Run the devbox with --no-terminate if you want to spin up the existing devbox " +
