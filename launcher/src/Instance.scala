@@ -175,6 +175,17 @@ object Instance{
                 .build()
             }:_*
           )
+          .build(),
+        TagSpecification.builder()
+          .resourceType(ResourceType.VOLUME)
+          .tags(
+            tags.map{case (k, v) =>
+              Tag.builder()
+                .key(k)
+                .value(v)
+                .build()
+            }:_*
+          )
           .build()
       )
       .userData(java.util.Base64.getEncoder.encodeToString(userdata.getBytes))
