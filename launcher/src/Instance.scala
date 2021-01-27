@@ -1,8 +1,13 @@
 package launcher
+import java.io.EOFException
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
 import software.amazon.awssdk.services.ec2.Ec2Client
 import software.amazon.awssdk.services.ec2.model._
 
 import scala.collection.JavaConverters._
+import scala.concurrent.duration._
 
 object Instance{
   def ensureInstanceRunning(ec2: Ec2Client,
@@ -35,8 +40,7 @@ object Instance{
           .build()
       )
 
-      val instances = described.reservations().asScala.flatMap(_.instances().asScala)
-          .filter(_.state().name != InstanceStateName.TERMINATED)
+      val instances = nonTerminatedInstances(described)
 
       val continue = instances.toSeq match{
         case Nil =>
@@ -59,7 +63,7 @@ object Instance{
           true
         case Seq(currentInstance: Instance) =>
           currentInstance.state().name match {
-            case InstanceStateName.PENDING | InstanceStateName.STOPPING | InstanceStateName.SHUTTING_DOWN =>
+            case InstanceStateName.PENDING | InstanceStateName.STOPPING =>
               log(
                 s"Instance ${currentInstance.instanceId()} currently "+
                 s"${currentInstance.state().name}, waiting for it to complete"
@@ -103,14 +107,53 @@ object Instance{
             case _ => ???
           }
         case multiple =>
-          throw new Exception(
-            s"More than one running instance found: ${multiple.map(_.instanceId()).mkString(", ")}. You can delete extra instances in the aws-dev-admin console (double check your region!)."
-          )
+          val instanceOptions = multiple.zipWithIndex.map { case (instance, idx) =>
+            val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z").withZone(ZoneId.systemDefault())
+            s"\t[${idx + 1}] ${instance.instanceId()} (${instance.placement().availabilityZone()}) launched at ${dateFormatter.format(instance.launchTime())}"
+          }.mkString("\n")
+          log(s"Multiple Devbox instances found. Which one would you like to keep? (enter 0 to discard all and get a new one)\n" + instanceOptions)
+          val chosen = readChoice(log)
+          val idsToDelete = (multiple.take(chosen) ++ multiple.drop(chosen + 1)).map(_.instanceId())
+          log(s"Terminating instances: ${idsToDelete.mkString(", ")}")
+          ec2.terminateInstances(TerminateInstancesRequest.builder().instanceIds(idsToDelete:_*).build())
+
+          // Wait for the instances to terminate
+          val timeout = 60.seconds.fromNow
+          while ({
+            Thread.sleep(2000)
+            val instances = nonTerminatedInstances(ec2.describeInstances(
+              DescribeInstancesRequest.builder().instanceIds(idsToDelete:_*)
+                .build()
+            ))
+            !instances.isEmpty && timeout.hasTimeLeft()
+          })()
+          true
       }
       forceNewInstance = false
       continue
     })()
     ???
+  }
+
+  def readChoice(log: String => Unit): Int = {
+    while(true) {
+      try {
+        val choice = scala.io.StdIn.readInt() - 1
+        return choice
+      } catch {
+        case _: NumberFormatException => log("Please enter a number")
+        case _: EOFException => System.exit(1)
+      }
+    }
+    ???
+  }
+
+  def nonTerminatedInstances(response: DescribeInstancesResponse) = {
+    response.reservations().asScala.flatMap(_.instances().asScala)
+      .filter(instance => {
+        val name = instance.state().name
+        name != InstanceStateName.SHUTTING_DOWN && name != InstanceStateName.TERMINATED
+      })
   }
 
 
