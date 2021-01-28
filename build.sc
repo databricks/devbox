@@ -65,15 +65,15 @@ object devbox extends DevboxModule{
     }
 
     def scalatagsBundle = T {
-      bundleRepo("git@github.com:lihaoyi/scalatags.git", "scalatags", "f66d4216ac0a00e52acae21a336aec24d68c1e97")
+      bundleRepo("git://github.com/lihaoyi/scalatags.git", "scalatags", "f66d4216ac0a00e52acae21a336aec24d68c1e97")
     }
 
     def oslibBundle = T {
-      bundleRepo("git@github.com:lihaoyi/os-lib.git", "os-lib", "3806c2e03fd7fa600469d5d82b549fd27ac28e3a")
+      bundleRepo("git://github.com/lihaoyi/os-lib.git", "os-lib", "3806c2e03fd7fa600469d5d82b549fd27ac28e3a")
     }
 
     def millBundle = T{
-      bundleRepo("git@github.com:lihaoyi/mill.git", "mill", "3cc21b24e4c16a934cb76edb2937045b41662f46")
+      bundleRepo("git://github.com/lihaoyi/mill.git", "mill", "3cc21b24e4c16a934cb76edb2937045b41662f46")
     }
 
     def testFrameworks = Seq("devbox.UTestFramework")
