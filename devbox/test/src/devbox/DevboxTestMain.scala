@@ -90,12 +90,7 @@ object DevboxTestMain {
           if (config.label == "manual"){
             implicit val ac = new castor.Context.Test(castor.Context.Simple.executionContext, _.printStackTrace())
             val (src, dest, log) = prepareFolders(config.label, config.preserve)
-            implicit lazy val logger: devbox.logger.SyncLogger.Impl = new devbox.logger.SyncLogger.Impl(
-              n => os.pwd / "out" / "scratch" / config.label / s"log$n.txt",
-              5 * 1024 * 1024,
-              new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor),
-              None
-            )
+            implicit lazy val logger: devbox.logger.SyncLogger.NoOp = new devbox.logger.SyncLogger.NoOp()
             lazy val syncer = instantiateSyncer(
               src, dest,
               config.debounceMillis,
