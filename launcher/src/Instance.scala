@@ -3,10 +3,14 @@ import java.io.EOFException
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+import devbox.common.Util
+import io.sentry.event.Event.Level
+import io.sentry.event.EventBuilder
 import software.amazon.awssdk.services.ec2.Ec2Client
 import software.amazon.awssdk.services.ec2.model._
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.HashMap
 import scala.concurrent.duration._
 
 object Instance{
@@ -107,10 +111,22 @@ object Instance{
             case _ => ???
           }
         case multiple =>
+          val event = new EventBuilder()
+            .withMessage("Multiple devbox instances running")
+            .withLevel(Level.WARNING)
+            .withTag("whoami", System.getProperty("user.name"))
           val instanceOptions = multiple.zipWithIndex.map { case (instance, idx) =>
             val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z").withZone(ZoneId.systemDefault())
-            s"\t[${idx + 1}] ${instance.instanceId()} (${instance.placement().availabilityZone()}) launched at ${dateFormatter.format(instance.launchTime())}"
+            val launchTime = dateFormatter.format(instance.launchTime())
+            event.withExtra(s"instance-${idx}", Map(
+              "id" -> instance.instanceId,
+              "region" -> instance.placement().availabilityZone(),
+              "launchTime" -> launchTime,
+              "state" -> instance.state().nameAsString()
+            ))
+            s"\t[${idx + 1}] ${instance.instanceId()} (${instance.placement().availabilityZone()}) launched at ${launchTime}"
           }.mkString("\n")
+          Util.sentryCapture(event.build())
           log(s"Multiple Devbox instances found. Which one would you like to keep? (enter 0 to discard all and get a new one)\n" + instanceOptions)
           val chosen = readChoice(log)
           val idsToDelete = (multiple.take(chosen) ++ multiple.drop(chosen + 1)).map(_.instanceId())
