@@ -1,7 +1,9 @@
 package devbox.logger
 
 import java.awt.event.{MouseEvent, MouseListener}
+
 import devbox.common.{BaseLogger, Logger, PathSet, Util}
+import os.Path
 trait SyncLogger{
   def init(): Unit
   def close(): Unit
@@ -152,5 +154,31 @@ object SyncLogger{
       })
     }
 
+  }
+
+  class NoOp() (implicit ac: castor.Context) extends castor.SimpleActor[Msg] with SyncLogger {
+    override def run(msg: Msg): Unit = {}
+
+    override def init(): Unit = {}
+
+    override def close(): Unit = {}
+
+    override def apply(tag: String, x: Any): Unit = {}
+
+    override def info(chunks: String*): Unit = {}
+
+    override def error(chunks: String*): Unit = {}
+
+    override def grey(chunks: String*): Unit = {}
+
+    override def progress(chunks: String*): Unit = {}
+
+    override def done(): Unit = {}
+
+    override def syncingFile(chunkMsg: String, subPath: String, suffix: String): Unit = {}
+
+    override def incrementFileTotal(base: Path, subs: PathSet): Unit = {}
+
+    override def filesAndBytes(files: Long, bytes: Long): Unit = {}
   }
 }

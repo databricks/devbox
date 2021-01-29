@@ -86,5 +86,9 @@ object devbox extends DevboxModule{
       "OSLIB_BUNDLE" -> oslibBundle().path.toString,
       "MILL_BUNDLE" -> millBundle().path.toString
     )
+
+    def forkArgs = Seq(
+      "-Djava.awt.headless=true"
+    )
   }
 }

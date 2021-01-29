@@ -124,12 +124,7 @@ object DevboxTests extends TestSuite{
         else ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
         _.printStackTrace()
       )
-      implicit lazy val logger: SyncLogger.Impl = new SyncLogger.Impl(
-        n => logFileBase / s"$logFileName$n.$logFileExt",
-        5 * 1024 * 1024,
-        new castor.ProxyActor((_: Unit) => AgentReadWriteActor.ForceRestart(), syncer.agentActor),
-        None
-      )
+      implicit lazy val logger: SyncLogger.NoOp = new SyncLogger.NoOp()
 
       lazy val syncer = instantiateSyncer(
         src, dest, 50,
