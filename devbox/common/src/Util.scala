@@ -3,6 +3,8 @@ package devbox.common
 import java.time.ZoneId
 import java.time.format.{DateTimeFormatter, FormatStyle}
 
+import io.sentry.event.Event
+
 object Util {
   val blockSize = 4 * 1024 * 1024
 
@@ -88,8 +90,13 @@ object Util {
       }
       .toMap
   }
+
   def sentryCapture(e: Throwable): Unit = {
     io.sentry.Sentry.getContext().addTag("whoami", System.getProperty("user.name"))
+    io.sentry.Sentry.capture(e)
+  }
+
+  def sentryCapture(e: Event): Unit = {
     io.sentry.Sentry.capture(e)
   }
 }
