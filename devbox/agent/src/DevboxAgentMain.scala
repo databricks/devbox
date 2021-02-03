@@ -172,7 +172,7 @@ object DevboxAgentMain {
           val targetPath = wd / root / path
 
           if (!os.exists(targetPath, followLinks = false)) {
-            os.write(targetPath, "", perms)
+            os.write(targetPath, "", perms, createFolders = true)
           }
           client.writeMsg(Response.Ack())
 

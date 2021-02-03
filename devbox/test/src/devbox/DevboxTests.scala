@@ -126,7 +126,10 @@ object DevboxTests extends TestSuite{
         else ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
         _.printStackTrace()
       )
-      implicit lazy val logger: SyncLogger.NoOp = new SyncLogger.NoOp()
+      implicit lazy val logger: SyncLogger.ConsoleOnly = new devbox.logger.SyncLogger.ConsoleOnly(
+        n => logFileBase / s"$logFileName$n.$logFileExt",
+        5 * 1024 * 1024,
+      )
 
       lazy val syncer = instantiateSyncer(
         src, dest, 50,
@@ -156,7 +159,7 @@ object DevboxTests extends TestSuite{
         // system is inactive since the filesystem events haven't occurred yet
 
         logger("TEST CHECKOUT DONE", commit.getShortMessage)
-        Thread.sleep(50)
+        Thread.sleep(1000)
         if (syncer == null) {
           logger("TEST RESTART SYNCER")
           val (newLogger, newAc, newSyncer) = createSyncer()
