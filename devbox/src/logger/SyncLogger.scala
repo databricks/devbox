@@ -156,29 +156,56 @@ object SyncLogger{
 
   }
 
-  class NoOp() (implicit ac: castor.Context) extends castor.SimpleActor[Msg] with SyncLogger {
-    override def run(msg: Msg): Unit = {}
+  // Only used for tests
+  class ConsoleOnly(val dest: String => os.Path,
+                    val rotationSize: Long)
+                   (implicit ac: castor.Context) extends castor.SimpleActor[Msg] with SyncLogger {
 
-    override def init(): Unit = {}
+    val consoleLogger = new ConsoleLogger(dest, rotationSize)
+    var closed = false
 
-    override def close(): Unit = {}
+    override def init() = this.send(Init())
 
-    override def apply(tag: String, x: Any): Unit = {}
+    override def close() = this.send(Close())
 
-    override def info(chunks: String*): Unit = {}
+    override def apply(tag: String, x: Any = Logger.NoOp): Unit = this.send(Apply(tag, x))
 
-    override def error(chunks: String*): Unit = {}
+    override def info(chunks: String*) = this.send(Info(chunks))
 
-    override def grey(chunks: String*): Unit = {}
+    override def error(chunks: String*) = this.send(Error(chunks))
 
-    override def progress(chunks: String*): Unit = {}
+    override def grey(chunks: String*) = this.send(Grey(chunks))
 
-    override def done(): Unit = {}
+    override def progress(chunks: String*) = this.send(Progress(chunks))
 
-    override def syncingFile(chunkMsg: String, subPath: String, suffix: String): Unit = {}
+    override def done() = this.send(Done())
 
-    override def incrementFileTotal(base: Path, subs: PathSet): Unit = {}
+    override def filesAndBytes(files: Long, bytes: Long) = {
+      this.send(FilesAndBytes(files, bytes))
+    }
 
-    override def filesAndBytes(files: Long, bytes: Long): Unit = {}
+    override def incrementFileTotal(base: os.Path, subs: PathSet) = {
+      this.send(IncrementFileTotal(base, subs))
+    }
+
+    override def syncingFile(chunkMsg: String, subPath: String, suffix: String): Unit = {
+      this.send(SyncingFile(chunkMsg, subPath, suffix))
+    }
+
+    def run(msg: Msg) = if (!closed) msg match {
+      case Init() => ()
+      case Close() =>
+        closed = true
+        consoleLogger.send(Logger.Close())
+      case Apply(tag, x) => consoleLogger.send(Logger.PPrinted(tag, x))
+      case Info(chunks) => consoleLogger.send(Logger.Info(chunks))
+      case Error(chunks) => consoleLogger.send(Logger.Info(chunks))
+      case Grey(chunks) => consoleLogger.send(Logger.Info(chunks))
+      case Progress(chunks) => consoleLogger.send(Logger.Progress(chunks))
+      case Done() => consoleLogger.send(Logger.Info(Seq("Sync complete")))
+      case SyncingFile(newChunkMsg, newPath, newSuffix) => ()
+      case IncrementFileTotal(base, subs) => ()
+      case FilesAndBytes(files, bytes) => ()
+    }
   }
 }

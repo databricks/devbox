@@ -124,7 +124,10 @@ object DevboxTests extends TestSuite{
         else ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()),
         _.printStackTrace()
       )
-      implicit lazy val logger: SyncLogger.NoOp = new SyncLogger.NoOp()
+      implicit lazy val logger: SyncLogger.ConsoleOnly = new devbox.logger.SyncLogger.ConsoleOnly(
+        n => logFileBase / s"$logFileName$n.$logFileExt",
+        5 * 1024 * 1024,
+      )
 
       lazy val syncer = instantiateSyncer(
         src, dest, 50,
