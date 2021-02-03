@@ -242,10 +242,10 @@ object DevboxTests extends TestSuite{
 
   def prepareFolders(label: String, preserve: Boolean = false) = {
     // On Github Actions, the pwd is a symlink so we resolve it fully here
-    val pwd = os.Path(os.pwd.toNIO.toRealPath())
-    val src = pwd / "out" / "scratch" / label / "src"
-    val dest = pwd / "out" / "scratch" / label / "dest"
-    val log = pwd / "out" / "scratch" / label / "events.log"
+//    val pwd = os.Path(os.pwd.toNIO.toRealPath())
+    val src = os.pwd / "out" / "scratch" / label / "src"
+    val dest = os.pwd / "out" / "scratch" / label / "dest"
+    val log = os.pwd / "out" / "scratch" / label / "events.log"
 
     if (!preserve){
       os.remove.all(src)
