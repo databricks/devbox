@@ -1,9 +1,11 @@
 package devbox
 
+import java.io.File
 import java.util.concurrent.Executors
 import devbox.common._
 import logger.SyncLogger
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.util.FS
 import org.eclipse.jgit.revwalk.RevCommit
 
 import syncer.{AgentReadWriteActor, ReliableAgent, Syncer}
@@ -199,6 +201,20 @@ object DevboxTests extends TestSuite{
                      stride: Int,
                      commitIndicesToCheck0: Seq[Int]) = {
     val (src, dest, log) = prepareFolders(label)
+
+    // .gitconfig lives on the user's home dir. This file contains some importation information
+    // to avoid race conditions (surprisingly):
+    // [filesystem "Private Build|1.8.0_275|tmpfs"]
+    //	 timestampResolution = 1001 microseconds
+    //	 minRacyThreshold = 4884 microseconds
+    //
+    // On Github Actions, the home dir doesn't seem to be writable, so we use the workspace instead:
+    // https://docs.github.com/en/actions/reference/environment-variables#default-environment-variables
+    //
+    // Unfortunately we also need to change this global FS because jgit always use it:
+    // https://git.eclipse.org/r/plugins/gitiles/jgit/jgit/+/master/org.eclipse.jgit/src/org/eclipse/jgit/util/SystemReader.java#311
+    sys.env.get("GITHUB_WORKSPACE").map(dir => FS.DETECTED.setUserHome(new File(dir)))
+
     val repo = Git.cloneRepository()
       .setURI(uri)
       .setDirectory(src.toIO)
@@ -225,9 +241,11 @@ object DevboxTests extends TestSuite{
   }
 
   def prepareFolders(label: String, preserve: Boolean = false) = {
-    val src = os.pwd / "out" / "scratch" / label / "src"
-    val dest = os.pwd / "out" / "scratch" / label / "dest"
-    val log = os.pwd / "out" / "scratch" / label / "events.log"
+    // On Github Actions, the pwd is a symlink so we resolve it fully here
+    val pwd = os.Path(os.pwd.toNIO.toRealPath())
+    val src = pwd / "out" / "scratch" / label / "src"
+    val dest = pwd / "out" / "scratch" / label / "dest"
+    val log = pwd / "out" / "scratch" / label / "events.log"
 
     if (!preserve){
       os.remove.all(src)

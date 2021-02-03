@@ -38,7 +38,7 @@ object devbox extends DevboxModule{
       ivy"com.github.scopt::scopt:3.7.1",
       ivy"net.java.dev.jna:jna:5.0.0",
       ivy"org.slf4j:slf4j-simple:1.7.25",
-      ivy"org.eclipse.jgit:org.eclipse.jgit:5.5.1.201910021850-r",
+      ivy"org.eclipse.jgit:org.eclipse.jgit:5.10.0.202012080955-r",
       ivy"io.sentry:sentry:1.6.3",
     )
   }
