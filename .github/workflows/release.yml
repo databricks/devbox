@@ -42,3 +42,4 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./out/launcher/assembly/dest/out.jar
           asset_name: devbox.jar
+          asset_content_type: application/zip
