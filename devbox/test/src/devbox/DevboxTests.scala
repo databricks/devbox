@@ -153,13 +153,7 @@ object DevboxTests extends TestSuite{
         logger("TEST CHECKOUT", commit.getShortMessage)
         repo.checkout().setName(commit.getName).call()
 
-        // Make sure we wait a moment so the filesystem has time to notice the
-        // changes and put the events back into our ActorSystem. Otherwise if we
-        // waitForInactivity too early, we may stop waiting too early as the
-        // system is inactive since the filesystem events haven't occurred yet
-
         logger("TEST CHECKOUT DONE", commit.getShortMessage)
-        Thread.sleep(1000)
         if (syncer == null) {
           logger("TEST RESTART SYNCER")
           val (newLogger, newAc, newSyncer) = createSyncer()
@@ -168,7 +162,6 @@ object DevboxTests extends TestSuite{
           ac = newAc
           syncer.start()
         }
-
 
         ac.waitForInactivity()
         logger("TEST INACTIVE")
@@ -184,7 +177,18 @@ object DevboxTests extends TestSuite{
         // validation anyway.
         if (count % validateInterval == 0) {
           logger("TEST VALIDATE")
-          validate(src, dest, ignoreStrategy)
+          var backoffMs = 100
+          var valid = false
+          for (a <- 1 to 7) {
+            try {
+              validate(src, dest, ignoreStrategy)
+              valid = true
+            } catch { case _ : Throwable =>
+              Thread.sleep(backoffMs)
+              backoffMs = 2 * backoffMs
+            }
+          }
+          if (!valid) validate(src, dest, ignoreStrategy)
         }
       }
     }catch{case e: Throwable =>
