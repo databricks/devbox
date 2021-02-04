@@ -31,7 +31,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.event.inputs.version }}
-          release_name: Release ${{ github.event.inputs.version }} (sha ${{ steps.caculate_sha1.outputs.sha1 }})
+          release_name: Release ${{ github.event.inputs.version }}
+          body: SHA-1 ${{ steps.caculate_sha1.outputs.sha1 }}
           draft: false
           prerelease: false
       - name: Upload devbox.jar
