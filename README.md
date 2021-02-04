@@ -25,3 +25,10 @@ $ ./mill devbox.test
 ```
 $ ./mill -i devbox.repl
 ```
+
+## Release
+
+There is a [Github Action](https://github.com/databricks/devbox/actions?query=workflow%3ARelease) to release Devbox.
+
+Just run the workflow on the target branch (usually master) with the new version number and check
+the [releases](https://github.com/databricks/devbox/releases) page
