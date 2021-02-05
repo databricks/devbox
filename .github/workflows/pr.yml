@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Print fs
+      run: df -Th
     - name: Symlink /dev/shm
       run: ln -s /dev/shm tmpfs
     - uses: actions/checkout@v2
