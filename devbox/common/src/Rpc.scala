@@ -33,7 +33,7 @@ object Rpc{
   case class PutLink(root: os.RelPath, path: os.SubPath, dest: String) extends Rpc with PathRpc with Action
   object PutLink{ implicit val rw: ReadWriter[PutLink] = macroRW }
 
-  case class WriteChunk(root: os.RelPath, path: os.SubPath, offset: Long, data: Bytes) extends Rpc
+  case class WriteChunk(root: os.RelPath, path: os.SubPath, offset: Long, data: Bytes, compression: CompressionMode.Value) extends Rpc
   object WriteChunk{ implicit val rw: ReadWriter[WriteChunk] = macroRW }
 
   case class SetSize(root: os.RelPath, path: os.SubPath, offset: Long) extends Rpc with PathRpc with Action

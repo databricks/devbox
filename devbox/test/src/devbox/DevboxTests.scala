@@ -33,6 +33,12 @@ object DevboxTests extends TestSuite{
       test("git") - testCase(1, ignoreStrategy = "")
       test("restart") - testCase(1, restartInterval = Some(1))
       test("reconnect") - testCase(1, randomKillInterval = Some(50))
+
+      // Test different compression modes
+      test("compression-gzip") - testCase(1, compression = CompressionMode.gzip)
+      // ssh compression here doesn't do anything since we don't ssh anywhere.
+      test("compression-ssh") - testCase(1, compression = CompressionMode.ssh)
+      test("compression-none") - testCase(1, compression = CompressionMode.none)
     }
 
     test("oslib") {
@@ -89,7 +95,8 @@ object DevboxTests extends TestSuite{
                ignoreStrategy: String = "dotgit",
                restartInterval: Option[Int] = None,
                randomKillInterval: Option[Int] = None,
-               parallel: Boolean = true)
+               parallel: Boolean = true,
+               compression: CompressionMode.Value = CompressionMode.none)
               (implicit tp: TestPath) = {
     walkValidate(
       tp.value.mkString("-"),
@@ -99,7 +106,8 @@ object DevboxTests extends TestSuite{
       ignoreStrategy = ignoreStrategy,
       restartInterval = restartInterval,
       randomKillInterval = randomKillInterval,
-      parallel = parallel
+      parallel = parallel,
+      compression = compression,
     )
   }
   def walkValidate(label: String,
@@ -110,7 +118,8 @@ object DevboxTests extends TestSuite{
                    ignoreStrategy: String = "dotgit",
                    restartInterval: Option[Int] = None,
                    randomKillInterval: Option[Int] = None,
-                   parallel: Boolean = true) = {
+                   parallel: Boolean = true,
+                   compression: CompressionMode.Value = CompressionMode.none) = {
 
     val (src, dest, log, commits, commitsIndicesToCheck, repo) =
       initializeWalk(label, uri, validateInterval, commitIndicesToCheck0)
@@ -134,7 +143,8 @@ object DevboxTests extends TestSuite{
         ignoreStrategy,
         exitOnError = true,
         signatureMapping = (_, sig) => sig,
-        randomKill = randomKillInterval
+        randomKill = randomKillInterval,
+        compression = compression,
       )
 
       (logger, ac, syncer)
@@ -262,7 +272,8 @@ object DevboxTests extends TestSuite{
                         exitOnError: Boolean,
                         signatureMapping: (os.SubPath, Sig) => Sig,
                         healthCheckInterval: Int = 0,
-                        randomKill: Option[Int] = None)
+                        randomKill: Option[Int] = None,
+                        compression: CompressionMode.Value = CompressionMode.none)
                        (implicit ac: castor.Context,
                         logger: SyncLogger) = {
 
@@ -288,7 +299,8 @@ object DevboxTests extends TestSuite{
       debounceMillis,
       proxyGit = false,
       signatureTransformer = signatureMapping,
-      syncIgnore = None
+      syncIgnore = None,
+      compression = compression
     )
     syncer
   }

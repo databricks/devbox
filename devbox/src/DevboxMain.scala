@@ -28,7 +28,8 @@ object DevboxMain {
                     healthCheckInterval: Int = 0,
                     retryInterval: Int = 0,
                     noSync: Boolean = false,
-                    proxyGit: Boolean = true)
+                    proxyGit: Boolean = true,
+                    compression: CompressionMode.Value = CompressionMode.ssh)
 
   val signature = Seq(
     Arg[Config, String](
@@ -80,6 +81,11 @@ object DevboxMain {
       "proxy-git-commands", None,
       "Don't sync .git directories and proxy git commands back to the laptop",
       (c, v) => c.copy(proxyGit = v)
+    ),
+    Arg[Config, String](
+      "compression", None,
+      s"Enables compression. Possible values are ${CompressionMode.values.mkString(",")}. Defaults to ssh.",
+      (c, v) => c.copy(compression = CompressionMode.withName(v))
     ),
 
   )
@@ -211,7 +217,8 @@ object DevboxMain {
           case (path, sig) => sig
         }
       },
-      Option(config.syncIgnore)
+      Option(config.syncIgnore),
+      config.compression
     )
 
     Util.autoclose(syncer){syncer =>
