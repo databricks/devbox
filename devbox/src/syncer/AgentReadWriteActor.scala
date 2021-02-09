@@ -17,7 +17,8 @@ object AgentReadWriteActor{
   case class Close() extends Msg
 }
 class AgentReadWriteActor(agent: AgentApi,
-                          onResponse: Response => Unit)
+                          onResponse: Response => Unit,
+                          compression: CompressionMode.Value)
                          (implicit ac: castor.Context,
                           logger: SyncLogger)
   extends castor.StateMachineActor[AgentReadWriteActor.Msg](){
@@ -210,11 +211,19 @@ class AgentReadWriteActor(agent: AgentApi,
               }
             }) ()
 
+            val data = if (n < byteArr.length) byteArr.take(n) else byteArr
+            val bytes = new Bytes(
+              compression match {
+                case CompressionMode.gzip => Util.gzip(data)
+                case _ => data
+              }
+            )
             val msg = Rpc.WriteChunk(
               dest,
               subPath,
               offset,
-              new Bytes(if (n < byteArr.length) byteArr.take(n) else byteArr)
+              bytes,
+              compression,
             )
             logger.filesAndBytes(0, n)
             Some(msg)

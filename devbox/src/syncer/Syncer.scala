@@ -16,12 +16,14 @@ class Syncer(agent: AgentApi,
              debounceMillis: Int,
              proxyGit: Boolean,
              signatureTransformer: (os.SubPath, Sig) => Sig,
-             syncIgnore: Option[String])
+             syncIgnore: Option[String],
+             compression: CompressionMode.Value)
             (implicit ac: castor.Context, logger: SyncLogger) extends AutoCloseable{
 
 
   val syncIgnoreRegex = syncIgnore.map(com.google.re2j.Pattern.compile(_))
   println(s"Syncing ${mapping.map{case (from, to) => s"$from:$to"}.mkString(", ")}")
+  println(s"Compression mode: ${compression}")
 
   /** Skippers to use on each repository, used by the SkipScan actor and also sent to the remote endpoint */
   val skippers = mapping.map { case (base, _) => Skipper.fromString(ignoreStrategy, base, proxyGit) }
@@ -29,6 +31,7 @@ class Syncer(agent: AgentApi,
   val agentActor: AgentReadWriteActor = new AgentReadWriteActor(
     agent,
     x => skipActor.send(SkipScanActor.Receive(x)),
+    compression,
   )
 
   val syncActor = new SyncActor(

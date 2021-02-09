@@ -13,6 +13,7 @@ import devbox.common._
 import devbox.common.Cli
 import devbox.common.Cli.Arg
 import devbox.common.Cli.pathScoptRead
+import devbox.common.CompressionMode
 import os.Path
 
 object DevboxAgentMain {
@@ -190,11 +191,15 @@ object DevboxAgentMain {
           }
           client.writeMsg(Response.Ack())
 
-        case Rpc.WriteChunk(root, path, offset, data) =>
+        case Rpc.WriteChunk(root, path, offset, data, compressed) =>
           val p = wd / root / path
 
+          val bytes = compressed match {
+            case CompressionMode.gzip => Util.gunzip(data.value)
+            case _ => data.value
+          }
           withWritable(p){
-            os.write.write(p, data.value, Seq(StandardOpenOption.WRITE), 0, offset)
+            os.write.write(p, bytes, Seq(StandardOpenOption.WRITE), 0, offset)
           }
           client.writeMsg(Response.Ack())
 

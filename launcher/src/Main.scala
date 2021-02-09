@@ -3,6 +3,7 @@ package launcher
 import cmdproxy.ProxyServer
 import devbox.DevboxMain
 import devbox.common.Cli
+import devbox.common.CompressionMode
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -60,7 +61,8 @@ object Main {
                 prepResult.exitCode == 0
             },
             { (port: Option[Int]) => Seq(
-                "ssh", "-C",
+                "ssh",
+                "-o", s"Compression=${if (config.compression == CompressionMode.ssh) "yes" else "no"}",
                 "-o", "ExitOnForwardFailure=yes",
                 "-o", "ServerAliveInterval=4",
                 "-o", "ServerAliveCountMax=4"
