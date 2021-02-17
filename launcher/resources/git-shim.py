@@ -60,7 +60,7 @@ for line in socket_file.readlines():
     # is the exit code of the completed command
     if len(response) == 2:
         if response[0] == 0:
-            print(response[1])
+            print(response[1].encode('utf-8'))
         elif response[0] == 1:
             sys.exit(response[1])
         else:
