@@ -1,3 +1,7 @@
+# The Databricks main line of development is now in the monorepo. Please see `devtools/devbox`
+
+---
+
 # Devbox syncer
 
 A one-way sync from laptop to an EC2 instance.
